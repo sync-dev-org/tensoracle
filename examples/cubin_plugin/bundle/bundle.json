@@ -1,0 +1,745 @@
+{
+  "bundle_sha256": "86816421d8f6f66a19dcf3469677d7656f33c3c5398024c5b7d7882ba98c5571",
+  "entries": [
+    {
+      "bytes": 5408,
+      "embedded_symbol": "tensoracle_cubin_sm86_dot_specialized",
+      "entry_symbol": "dot_ieee",
+      "file": "cubins/sm86/dot.specialized.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm86.dot.specialized",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 45
+      },
+      "sha256": "85d6bebc0d77074a5eac1806c36af79fc971ac8fd34151708edcf0f1259c69ba",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "ea0a8e273c7c1f447c71b6de9a5d936662b78c6188e307e733806bee9ebe0e12",
+      "specialization": {
+        "divisible_by": {
+          "out_ptr": 16,
+          "rows": 16,
+          "weight_ptr": 16,
+          "x_ptr": 16
+        }
+      },
+      "target_sm": "sm86"
+    },
+    {
+      "bytes": 5536,
+      "embedded_symbol": "tensoracle_cubin_sm86_dot_unspecialized",
+      "entry_symbol": "dot_ieee",
+      "file": "cubins/sm86/dot.unspecialized.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm86.dot.unspecialized",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 42
+      },
+      "sha256": "8efd410ba0a4a11bdaf07d899e77ec3f457ef802eec70e17147d31f40fd5cc70",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "ea0a8e273c7c1f447c71b6de9a5d936662b78c6188e307e733806bee9ebe0e12",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm86"
+    },
+    {
+      "bytes": 5024,
+      "embedded_symbol": "tensoracle_cubin_sm86_dot_tf32_control",
+      "entry_symbol": "dot_tf32",
+      "file": "cubins/sm86/dot.tf32-control.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm86.dot.tf32-control",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 32
+      },
+      "sha256": "c82682d70e0faadfd887d375ea47af986a48e9fc461f5553aad49cf5b38f2df9",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "a41caa5c1eece2ce2b7cea98d4c61cf18a4a15377f68d06320c928e5f483b94d",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm86"
+    },
+    {
+      "bytes": 2984,
+      "embedded_symbol": "tensoracle_cubin_sm86_scale",
+      "entry_symbol": "scale",
+      "file": "cubins/sm86/scale.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm86.scale",
+      "resources": {
+        "compiled_shared_memory_bytes": 0,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 0,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 8
+      },
+      "sha256": "4cf2b9ef6566485fd82d80242ce8b81a48ccb89f9d59df4fe74e59c9e5abb3e3",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "factor",
+          "type": "fp32"
+        },
+        {
+          "name": "count",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "818fa4164a3e88b31f1fef5bd8e29ca8911fb78210073b21f44e7e6cef7f37a0",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm86"
+    },
+    {
+      "bytes": 3112,
+      "embedded_symbol": "tensoracle_cubin_sm86_bias",
+      "entry_symbol": "add_bias",
+      "file": "cubins/sm86/bias.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm86.bias",
+      "resources": {
+        "compiled_shared_memory_bytes": 0,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 0,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 12
+      },
+      "sha256": "6517e724d8549044a93bb7e6bd90b6311583b6dff2c74722762fbf0910dcda23",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "bias_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "count",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "0e3a20bae76fbafc11f030f12217ef1cdbb5dd5a8b84c4d62e54606cce687a19",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm86"
+    },
+    {
+      "bytes": 5408,
+      "embedded_symbol": "tensoracle_cubin_sm89_dot_specialized",
+      "entry_symbol": "dot_ieee",
+      "file": "cubins/sm89/dot.specialized.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm89.dot.specialized",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 45
+      },
+      "sha256": "6b8936775841bbaaf6bfc8e9f14cf638895627816f4635501fa09c7271b2177d",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "ea0a8e273c7c1f447c71b6de9a5d936662b78c6188e307e733806bee9ebe0e12",
+      "specialization": {
+        "divisible_by": {
+          "out_ptr": 16,
+          "rows": 16,
+          "weight_ptr": 16,
+          "x_ptr": 16
+        }
+      },
+      "target_sm": "sm89"
+    },
+    {
+      "bytes": 5536,
+      "embedded_symbol": "tensoracle_cubin_sm89_dot_unspecialized",
+      "entry_symbol": "dot_ieee",
+      "file": "cubins/sm89/dot.unspecialized.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm89.dot.unspecialized",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 42
+      },
+      "sha256": "eb934afea33c5aeb20bb6f7d494d130c86696c14090c010137a270a1616c3ec0",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "ea0a8e273c7c1f447c71b6de9a5d936662b78c6188e307e733806bee9ebe0e12",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm89"
+    },
+    {
+      "bytes": 5024,
+      "embedded_symbol": "tensoracle_cubin_sm89_dot_tf32_control",
+      "entry_symbol": "dot_tf32",
+      "file": "cubins/sm89/dot.tf32-control.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm89.dot.tf32-control",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 32
+      },
+      "sha256": "2787cdbdda25c1f1386e5bcd25ea2c60e6258925f3a701fec96116e91b5bbb70",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "a41caa5c1eece2ce2b7cea98d4c61cf18a4a15377f68d06320c928e5f483b94d",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm89"
+    },
+    {
+      "bytes": 2984,
+      "embedded_symbol": "tensoracle_cubin_sm89_scale",
+      "entry_symbol": "scale",
+      "file": "cubins/sm89/scale.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm89.scale",
+      "resources": {
+        "compiled_shared_memory_bytes": 0,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 0,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 8
+      },
+      "sha256": "34acd1e182431442b08d22ed473a677028512de1120be776930cd06e63a1eaab",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "factor",
+          "type": "fp32"
+        },
+        {
+          "name": "count",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "818fa4164a3e88b31f1fef5bd8e29ca8911fb78210073b21f44e7e6cef7f37a0",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm89"
+    },
+    {
+      "bytes": 3112,
+      "embedded_symbol": "tensoracle_cubin_sm89_bias",
+      "entry_symbol": "add_bias",
+      "file": "cubins/sm89/bias.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm89.bias",
+      "resources": {
+        "compiled_shared_memory_bytes": 0,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 0,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 12
+      },
+      "sha256": "83dcf3cd17d061f3fac6f1a37400a0af7fc142f309fe1508dbeda838a953a58d",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "bias_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "count",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "0e3a20bae76fbafc11f030f12217ef1cdbb5dd5a8b84c4d62e54606cce687a19",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm89"
+    },
+    {
+      "bytes": 8712,
+      "embedded_symbol": "tensoracle_cubin_sm120_dot_specialized",
+      "entry_symbol": "dot_ieee",
+      "file": "cubins/sm120/dot.specialized.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm120.dot.specialized",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 44
+      },
+      "sha256": "4dc3099f88689c8f4e6d3ae70c6461627e18929080c5ba57473c44fffe5b4023",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "ea0a8e273c7c1f447c71b6de9a5d936662b78c6188e307e733806bee9ebe0e12",
+      "specialization": {
+        "divisible_by": {
+          "out_ptr": 16,
+          "rows": 16,
+          "weight_ptr": 16,
+          "x_ptr": 16
+        }
+      },
+      "target_sm": "sm120"
+    },
+    {
+      "bytes": 8832,
+      "embedded_symbol": "tensoracle_cubin_sm120_dot_unspecialized",
+      "entry_symbol": "dot_ieee",
+      "file": "cubins/sm120/dot.unspecialized.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm120.dot.unspecialized",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 42
+      },
+      "sha256": "73bd259a0ddd24af747af7810ab68baa25c0f7f31f67ddfec39f73b212801f75",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "ea0a8e273c7c1f447c71b6de9a5d936662b78c6188e307e733806bee9ebe0e12",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm120"
+    },
+    {
+      "bytes": 8872,
+      "embedded_symbol": "tensoracle_cubin_sm120_dot_tf32_control",
+      "entry_symbol": "dot_tf32",
+      "file": "cubins/sm120/dot.tf32-control.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm120.dot.tf32-control",
+      "resources": {
+        "compiled_shared_memory_bytes": 4096,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 4096,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 38
+      },
+      "sha256": "3eaae0d9b10a78d37a4b6064a17844abe499fbcd90b22a7e7e87482ba36cac39",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "weight_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "rows",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "a41caa5c1eece2ce2b7cea98d4c61cf18a4a15377f68d06320c928e5f483b94d",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm120"
+    },
+    {
+      "bytes": 5616,
+      "embedded_symbol": "tensoracle_cubin_sm120_scale",
+      "entry_symbol": "scale",
+      "file": "cubins/sm120/scale.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm120.scale",
+      "resources": {
+        "compiled_shared_memory_bytes": 0,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 0,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 10
+      },
+      "sha256": "b5cff0c872f188998a42b1a2770b79dc469ef5fe7d68992018b217b16dbe5312",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "factor",
+          "type": "fp32"
+        },
+        {
+          "name": "count",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "818fa4164a3e88b31f1fef5bd8e29ca8911fb78210073b21f44e7e6cef7f37a0",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm120"
+    },
+    {
+      "bytes": 5864,
+      "embedded_symbol": "tensoracle_cubin_sm120_bias",
+      "entry_symbol": "add_bias",
+      "file": "cubins/sm120/bias.cubin",
+      "hidden_trailing_parameters": [
+        {
+          "name": "global_scratch",
+          "parameter_bytes": 8
+        },
+        {
+          "name": "profile_scratch",
+          "parameter_bytes": 8
+        }
+      ],
+      "id": "sm120.bias",
+      "resources": {
+        "compiled_shared_memory_bytes": 0,
+        "global_scratch_bytes": 0,
+        "launch_dynamic_shared_memory_bytes": 0,
+        "profile_scratch_bytes": 0,
+        "registers_per_thread": 14
+      },
+      "sha256": "4a7446bc8c63d7ca3e9094052f02b00b7436f5aa64fd236f9358ef6c7ff99edf",
+      "signature": [
+        {
+          "name": "x_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "bias_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "out_ptr",
+          "type": "*fp32"
+        },
+        {
+          "name": "count",
+          "type": "i32"
+        }
+      ],
+      "source_sha256": "0e3a20bae76fbafc11f030f12217ef1cdbb5dd5a8b84c4d62e54606cce687a19",
+      "specialization": {
+        "divisible_by": {}
+      },
+      "target_sm": "sm120"
+    }
+  ],
+  "producer": {
+    "ptxas": "12.9.86",
+    "triton": "3.8.0"
+  },
+  "schema_version": 1
+}

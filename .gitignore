@@ -1,0 +1,6 @@
+.nf/tmp/
+.nf/logs/
+.venv/
+__pycache__/
+src/tensoracle/_version.py
+site/

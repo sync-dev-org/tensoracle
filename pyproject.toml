@@ -1,0 +1,84 @@
+[project]
+name = "tensoracle"
+dynamic = ["version"]
+description = "Build, save, reuse, and execute TensorRT engines from safetensors weights"
+authors = [{ name = "minamik", email = "mia@sync.dev" }]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: GPU :: NVIDIA CUDA :: 13",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=2.0",
+    "safetensors>=0.4",
+    "tensorrt-cu13>=11.0,<12",
+]
+
+[project.urls]
+documentation = "https://sync-dev-org.github.io/tensoracle/"
+repository = "https://github.com/sync-dev-org/tensoracle"
+issues = "https://github.com/sync-dev-org/tensoracle/issues"
+
+[project.optional-dependencies]
+convert = ["torch>=2.6"]
+producer = [
+    "triton==3.8.0",
+    "nvidia-cuda-nvcc-cu12==12.9.86",
+    "nvidia-cuda-cuobjdump>=13.3.73,<13.4",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0.dev0"
+
+[tool.hatch.version.raw-options]
+version_scheme = "only-version"
+local_scheme = "no-local-version"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/tensoracle/_version.py"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/.nf/", "/.github/", "/AGENTS.md", "/CLAUDE.md", "/tools/"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tensoracle"]
+
+[tool.hatch.build.targets.wheel.force-include]
+cpp = "tensoracle/cpp"
+
+[dependency-groups]
+dev = [
+    "cuda-python>=13.0",
+    "cupy-cuda13x>=14.2.0",
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers"]
+markers = [
+    "gpu: tests that build or load a TensorRT engine on a CUDA GPU",
+    "req(id): parent requirement ID in .nf/docs/requirements.md",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["src/tensoracle/_version.py"]

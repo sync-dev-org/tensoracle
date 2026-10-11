@@ -1,0 +1,29 @@
+include_guard(GLOBAL)
+
+function(tensoracle_add_cubin_plugin)
+    cmake_parse_arguments(ARG "" "TARGET;TENSORRT_ROOT;BUNDLE_ROOT" "SOURCES" ${ARGN})
+    if(NOT ARG_TARGET OR NOT ARG_TENSORRT_ROOT OR NOT ARG_BUNDLE_ROOT OR NOT ARG_SOURCES)
+        message(FATAL_ERROR "TARGET, TENSORRT_ROOT, BUNDLE_ROOT, and SOURCES are required")
+    endif()
+
+    get_filename_component(_tensoracle_cpp "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
+    find_package(CUDAToolkit REQUIRED)
+    find_path(TENSORACLE_NVINFER_INCLUDE NvInfer.h
+        PATHS "${ARG_TENSORRT_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
+    find_library(TENSORACLE_NVINFER_LIBRARY NAMES nvinfer
+        PATHS "${ARG_TENSORRT_ROOT}/lib" "${ARG_TENSORRT_ROOT}/lib64"
+        NO_DEFAULT_PATH REQUIRED)
+
+    add_library(${ARG_TARGET} SHARED
+        ${ARG_SOURCES}
+        "${_tensoracle_cpp}/src/cubin_plugin.cpp"
+        "${ARG_BUNDLE_ROOT}/bundle.cpp")
+    target_compile_features(${ARG_TARGET} PRIVATE cxx_std_17)
+    target_compile_options(${ARG_TARGET} PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-declarations>)
+    target_include_directories(${ARG_TARGET} PRIVATE
+        "${_tensoracle_cpp}/include" "${TENSORACLE_NVINFER_INCLUDE}" ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(${ARG_TARGET} PRIVATE "${TENSORACLE_NVINFER_LIBRARY}" CUDA::cuda_driver)
+    set_target_properties(${ARG_TARGET} PROPERTIES
+        CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+endfunction()
