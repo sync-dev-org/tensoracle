@@ -72,7 +72,7 @@ def test_read_large_saved_plan_keeps_other_threads_running(tmp_path):
 
     measurements = []
     for _ in range(3):
-        loaded, measured = _heartbeat_during(lambda: cache._read_plan(path, conditions))
+        (loaded, _), measured = _heartbeat_during(lambda: cache._read_plan(path, conditions))
         assert len(loaded) == 512 * 1024 * 1024
         assert hashlib.sha256(loaded).hexdigest() == digest
         measurements.append(measured)
@@ -97,7 +97,7 @@ def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
     builder = SimpleNamespace(
-        create_network=lambda flags: SimpleNamespace(num_inputs=0),
+        create_network=lambda flags: SimpleNamespace(num_inputs=0, num_outputs=0),
         create_builder_config=lambda: SimpleNamespace(
             clear_flag=lambda flag: None,
             set_memory_pool_limit=lambda pool, limit: None,
@@ -131,7 +131,7 @@ def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch
     for _ in range(3):
         handle, measured = _heartbeat_during(save)
         conditions = cache._conditions("heartbeat", "1", (weights,), (), declaration)
-        loaded = cache._read_plan(handle.path, conditions)
+        loaded, _ = cache._read_plan(handle.path, conditions)
         assert len(loaded) == len(plan)
         assert hashlib.sha256(loaded).digest() == hashlib.sha256(plan).digest()
         measurements.append(measured)
@@ -422,7 +422,7 @@ def test_build_failure_removes_placeholder_and_partial_files(tmp_path, monkeypat
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
     monkeypatch.setattr(
-        cache, "build_serialized_engine", lambda graph, declaration, plugins, logger: graph(None)
+        cache, "_build_serialized_engine", lambda graph, declaration, plugins, logger: graph(None)
     )
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
@@ -537,6 +537,7 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
 
     class FakeNetwork:
         num_inputs = 1
+        num_outputs = 0
 
         def get_input(self, index):
             return type("Input", (), {"name": "features", "shape": state["shape"]})()

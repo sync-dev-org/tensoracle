@@ -15,6 +15,7 @@ __all__ = [
     "InputShape",
     "OutputComparison",
     "PluginLibraryError",
+    "ShapeTensorOutputWarning",
     "TensorSpec",
     "build_serialized_engine",
     "compare_outputs",
@@ -23,7 +24,14 @@ __all__ = [
 
 _MODULES = {
     **dict.fromkeys(
-        ("BuilderSettings", "EngineBuild", "InputShape", "build_serialized_engine"), "._build"
+        (
+            "BuilderSettings",
+            "EngineBuild",
+            "InputShape",
+            "ShapeTensorOutputWarning",
+            "build_serialized_engine",
+        ),
+        "._build",
     ),
     **dict.fromkeys(
         (

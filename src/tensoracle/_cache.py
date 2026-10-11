@@ -9,12 +9,13 @@ import platform
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import tensorrt as trt
 
-from ._build import EngineBuild, build_serialized_engine
+from ._build import EngineBuild, _build_serialized_engine
 from ._plugins import register_libraries
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ class EngineHandle:
     engine: trt.ICudaEngine
     runtime: trt.Runtime
     path: Path
+    _shape_tensor_outputs: tuple[str, ...] = dataclass_field(default=(), repr=False)
 
     def create_execution(self) -> "EngineExecution":
         """Create an independent execution context with explicit close semantics."""
@@ -103,16 +105,29 @@ def open_engine(
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
-            plan = _read_plan(path, conditions)
-            return _open_plan(plan, path, declaration, io, actual_logger)
+            plan, shape_tensor_outputs = _read_plan(path, conditions)
+            return _open_plan(
+                plan,
+                path,
+                declaration,
+                io,
+                actual_logger,
+                shape_tensor_outputs=shape_tensor_outputs,
+            )
         else:
             os.close(fd)
 
     temporary: Path | None = None
     try:
-        plan = build_serialized_engine(graph, declaration, plugins=plugins, logger=actual_logger)
-        handle = _open_plan(plan, path, declaration, io, actual_logger)
+        plan, shape_tensor_outputs = _build_serialized_engine(
+            graph, declaration, plugins=plugins, logger=actual_logger
+        )
+        handle = _open_plan(
+            plan, path, declaration, io, actual_logger, shape_tensor_outputs=shape_tensor_outputs
+        )
         header = {"conditions": conditions, "plan_sha256": hashlib.sha256(plan).hexdigest()}
+        if shape_tensor_outputs:
+            header["shape_tensor_outputs"] = list(shape_tensor_outputs)
         header_bytes = _json_bytes(header)
         fd, filename = tempfile.mkstemp(prefix=f".{digest}.", dir=path.parent)
         temporary = Path(filename)
@@ -279,7 +294,7 @@ def _conditions(
     }
 
 
-def _read_plan(path: Path, conditions: dict) -> memoryview:
+def _read_plan(path: Path, conditions: dict) -> tuple[memoryview, tuple[str, ...]]:
     data = path.read_bytes()
     offset = len(_MAGIC)
     if not data.startswith(_MAGIC) or len(data) < offset + 8:
@@ -294,12 +309,17 @@ def _read_plan(path: Path, conditions: dict) -> memoryview:
         raise CorruptEngineError(f"invalid TensorRT engine header: {path}") from error
     if not isinstance(header, dict) or not isinstance(header.get("conditions"), dict):
         raise CorruptEngineError(f"invalid TensorRT engine header: {path}")
+    shape_tensor_outputs = header.get("shape_tensor_outputs", [])
+    if not isinstance(shape_tensor_outputs, list) or any(
+        not isinstance(name, str) for name in shape_tensor_outputs
+    ):
+        raise CorruptEngineError(f"invalid TensorRT engine header: {path}")
     if header["conditions"] != conditions:
         raise EngineConditionError(f"TensorRT engine conditions differ: {path}")
     plan = memoryview(data)[header_end:]
     if header.get("plan_sha256") != hashlib.sha256(plan).hexdigest():
         raise CorruptEngineError(f"TensorRT engine checksum differs: {path}")
-    return plan
+    return plan, tuple(shape_tensor_outputs)
 
 
 def _open_plan(
@@ -308,6 +328,8 @@ def _open_plan(
     declaration: EngineBuild,
     io: EngineIO,
     logger: trt.ILogger,
+    *,
+    shape_tensor_outputs: tuple[str, ...] = (),
 ) -> EngineHandle:
     runtime = trt.Runtime(logger)
     engine = runtime.deserialize_cuda_engine(plan)
@@ -349,7 +371,7 @@ def _open_plan(
             actual_range = (io.inputs[name].shape,) * 3
         if actual_range != expected_range:
             _io_mismatch(path, name, "profile range", actual_range, expected_range)
-    return EngineHandle(engine, runtime, path)
+    return EngineHandle(engine, runtime, path, _shape_tensor_outputs=shape_tensor_outputs)
 
 
 def _io_mismatch(path: Path, name: str, field: str, observed: object, expected: object) -> None:

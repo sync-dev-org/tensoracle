@@ -1,5 +1,6 @@
 """Build serialized TensorRT engines from caller-defined network graphs."""
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,6 +10,21 @@ import tensorrt as trt
 
 from ._memory import release_host_memory
 from ._plugins import register_libraries
+
+
+class ShapeTensorOutputWarning(UserWarning):
+    """Shape tensor outputs cannot be handled by tensoracle execution units."""
+
+
+def _warn_shape_tensor_outputs(names: tuple[str, ...], *, stacklevel: int) -> None:
+    if names:
+        warnings.warn(
+            f"TensorRT outputs {', '.join(repr(name) for name in names)} are shape tensors; "
+            "tensoracle.create_execution() cannot handle this engine and calling it will "
+            "crash the process.",
+            ShapeTensorOutputWarning,
+            stacklevel=stacklevel + 1,
+        )
 
 
 @dataclass(frozen=True)
@@ -76,6 +92,17 @@ def build_serialized_engine(
     logger: trt.ILogger | None = None,
 ) -> bytes:
     """Register ``plugins`` before calling ``graph`` and serializing its engine."""
+    plan, _ = _build_serialized_engine(graph, declaration, plugins=plugins, logger=logger)
+    return plan
+
+
+def _build_serialized_engine(
+    graph: Callable[[trt.INetworkDefinition], None],
+    declaration: EngineBuild,
+    *,
+    plugins: Sequence[Path] = (),
+    logger: trt.ILogger | None = None,
+) -> tuple[bytes, tuple[str, ...]]:
     if declaration.precision not in ("fp32", "fp16"):
         raise ValueError(f"unsupported precision: {declaration.precision}")
     if declaration.settings.tf32:
@@ -93,6 +120,13 @@ def build_serialized_engine(
         builder = trt.Builder(logger or trt.Logger(trt.Logger.ERROR))
         network = builder.create_network(0)
         graph(network)
+        shape_tensor_outputs = []
+        for index in range(network.num_outputs):
+            tensor = network.get_output(index)
+            if tensor.is_shape_tensor:
+                shape_tensor_outputs.append(tensor.name)
+        output_names = tuple(shape_tensor_outputs)
+        _warn_shape_tensor_outputs(output_names, stacklevel=3)
         config = builder.create_builder_config()
         config.clear_flag(trt.BuilderFlag.TF32)
         config.set_memory_pool_limit(
@@ -129,7 +163,7 @@ def build_serialized_engine(
         serialized = builder.build_serialized_network(network, config)
         if serialized is None:
             raise RuntimeError("TensorRT failed to build the serialized engine")
-        return bytes(serialized)
+        return bytes(serialized), output_names
     finally:
         # Tensor references also keep the network alive, including in exception frames.
         inputs.clear()

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Self
 
 import tensorrt as trt
 
+from ._build import _warn_shape_tensor_outputs
+
 if TYPE_CHECKING:
     from ._cache import EngineHandle
 
@@ -51,6 +53,7 @@ class EngineExecution:
             self._context = engine.create_execution_context()
             if self._context is None:
                 raise RuntimeError("TensorRT failed to create an execution context")
+            _warn_shape_tensor_outputs(handle._shape_tensor_outputs, stacklevel=2)
             # Probe output dimensions before accepting the engine. A ranged engine
             # still requires an explicit caller setting after this capability check.
             self._set_shapes(initial_shapes, creating=True)

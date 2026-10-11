@@ -223,6 +223,8 @@ The caller selects the CUDA device and context, orders inputs written on other s
 
 Tensoracle neither allocates or frees device buffers, copies data, nor calls stream or device synchronization. TensorRT itself may allocate internal resources or act synchronously for some networks and plugins. Execution units reject HOST-location tensors, externally supplied shape tensor values, and data-dependent output sizes at creation. Ordinary networks that compute shapes internally from input dimensions are supported. CUDA graphs, profile switching, and caller-owned TensorRT workspace memory are outside this API.
 
+Networks with outputs marked as shape tensors emit `tensoracle.ShapeTensorOutputWarning` during building and when creating an execution unit (`create_execution()` or `EngineExecution(handle)`). The warning names the affected tensors: `create_execution()` cannot handle these engines, and calling it crashes the process. Building continues by default. To stop either operation safely, turn this warning into an exception with `warnings.filterwarnings("error", category=tensoracle.ShapeTensorOutputWarning)` after importing `warnings` and `tensoracle`. Saved engines retain the shape output names outside the cache conditions; older files without these names are reused without an execution warning.
+
 ## Build a cubin plugin
 
 Follow [Prepare a TensorRT SDK](https://github.com/sync-dev-org/tensoracle/blob/main/docs/tensorrt-sdk.md) to acquire and verify the headers and native library for a build SDK, including the fixed inputs for SDK 11.2.1.2 and the `TENSORRT_ROOT` setup.

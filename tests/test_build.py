@@ -202,6 +202,7 @@ def test_tf32_is_disabled_and_other_builder_settings_are_applied(monkeypatch):
 
     class Network:
         num_inputs = 1
+        num_outputs = 0
 
         def get_input(self, index):
             return type("Input", (), {"name": "features", "shape": (1, 3, 2)})()

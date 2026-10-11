@@ -64,7 +64,7 @@ def test_unavailable_host_memory_release_preserves_the_build_result(monkeypatch,
         return b"serialized plan"
 
     builder = SimpleNamespace(
-        create_network=lambda flags: SimpleNamespace(num_inputs=0),
+        create_network=lambda flags: SimpleNamespace(num_inputs=0, num_outputs=0),
         create_builder_config=lambda: SimpleNamespace(
             clear_flag=lambda flag: None,
             set_memory_pool_limit=lambda pool, limit: None,
