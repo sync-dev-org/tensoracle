@@ -41,13 +41,31 @@ private:
     nvinfer1::PluginFieldCollection collection_{};
 };
 
-// Implements TensorRT V3 lifecycle and the format/serialization boilerplate.
+struct TensorSpec {
+    nvinfer1::DataType type{nvinfer1::DataType::kFLOAT};
+    nvinfer1::TensorFormat format{nvinfer1::TensorFormat::kLINEAR};
+};
+
+// Declares the input count, each tensor's type and format, and the input whose
+// shape is copied to the single output. For configurations this cannot express
+// (multiple outputs or computed output shapes), developers can override virtual
+// V3 methods or ask tensoracle's maintainers to extend the declaration.
+struct PluginIO {
+    std::vector<TensorSpec> inputs{TensorSpec{}};
+    TensorSpec output{};
+    std::int32_t shape_input_index{0};
+};
+
+// Implements TensorRT V3 lifecycle and format/serialization boilerplate using
+// a PluginIO declaration. For other configurations, developers can override
+// virtual V3 methods or ask tensoracle's maintainers to extend the declaration.
 class PluginBase : public nvinfer1::IPluginV3,
                    public nvinfer1::IPluginV3OneCore,
                    public nvinfer1::IPluginV3OneBuild,
                    public nvinfer1::IPluginV3OneRuntime {
 public:
-    PluginBase(char const* name, char const* plugin_namespace, Fields fields);
+    // Throws std::invalid_argument for no inputs or an out-of-range shape input.
+    PluginBase(char const* name, char const* plugin_namespace, Fields fields, PluginIO io = {});
     ~PluginBase() noexcept override = default;
 
     nvinfer1::IPluginCapability* getCapabilityInterface(nvinfer1::PluginCapabilityType type) noexcept override;
@@ -79,13 +97,16 @@ public:
 
 protected:
     Fields const& fields() const noexcept { return fields_; }
-    virtual std::int32_t validate_shape(nvinfer1::Dims const& input,
+    // Inputs are in declaration order; the array is valid only during this call.
+    // configurePlugin may provide wildcard (-1) dimensions.
+    virtual std::int32_t validate_shape(nvinfer1::Dims const* inputs, std::int32_t input_count,
         nvinfer1::Dims const& output) const noexcept = 0;
 
 private:
     char const* name_;
     char const* namespace_;
     Fields fields_;
+    PluginIO io_;
 };
 
 enum class ArgumentKind : std::uint8_t { kPointer, kInt32, kFloat32 };

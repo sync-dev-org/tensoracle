@@ -70,7 +70,7 @@ handle = open_engine(
 )
 ```
 
-`my_model` represents the application's model package. On a valid cache hit, `open_engine` does not call `graph`; on a miss, it builds and saves a new engine. `open_engine` itself does not execute the engine or manage GPU buffers. Create an execution unit from its returned handle to enqueue inference. Saved engines live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when `XDG_CACHE_HOME` is unset. See the [complete cache example](https://github.com/sync-dev-org/tensoracle#save-and-reopen-an-engine) for the declaration and expected input and output types.
+`my_model` represents the application's model package. On a valid cache hit, `open_engine` does not call `graph`; on a miss, it builds and saves a new engine. Raise `graph_version` when the graph code changes or when any other caller value that changes the engine contents but is not part of the cache identity changes, such as a plugin manifest or a build recipe. `open_engine` itself does not execute the engine or manage GPU buffers. Create an execution unit from its returned handle to enqueue inference. Saved engines live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when `XDG_CACHE_HOME` is unset. See the [complete cache example](https://github.com/sync-dev-org/tensoracle#save-and-reopen-an-engine) for the declaration and expected input and output types.
 
 ### Execute an engine
 
@@ -174,6 +174,23 @@ pip install 'tensoracle[producer]'
 ```
 
 `tensoracle.producer.compile_bundle` uses the extra's Triton 3.8.0, `ptxas` 12.9.86, and `cuobjdump` 13.3 to produce cubins for sm86, sm89, and sm120. It finds the NVIDIA wheel executables by default and accepts explicit paths as overrides. Cubin production does not need a GPU or import torch; run it without importing torch first. Build the native plugin with a TensorRT 11 SDK, CUDA toolkit, CMake, and a C++17 compiler. Inspect the resulting bundle or wheel with `tensoracle.bundle`. The [cubin plugin example](https://github.com/sync-dev-org/tensoracle/tree/main/examples/cubin_plugin) covers rebuilding from a repository clone, packaging, and runtime use. Normal import, engine building, and engine reuse do not import the producer or Triton, and do not need the producer extra or native build tools.
+
+Pass a `tensoracle::cubin::PluginIO` declaration as the fourth argument to `PluginBase(name, plugin_namespace, fields, io)`. The `inputs` vector determines the input count and declares each input's TensorRT `type` and `format` through `TensorSpec`; `output` declares the single output's type and format. `shape_input_index` selects the input whose shape the output copies. This example declares two fp16 / HWC8 inputs and an fp16 / HWC8 output with input 0's shape:
+
+```cpp
+#include "tensoracle/cubin_plugin.hpp"
+
+tensoracle::cubin::PluginIO residual_io()
+{
+    using namespace tensoracle::cubin;
+    TensorSpec half{nvinfer1::DataType::kHALF, nvinfer1::TensorFormat::kHWC8};
+    return PluginIO{{half, half}, half, 0};
+}
+```
+
+Use `PluginBase(name, plugin_namespace, std::move(fields), residual_io())` in the derived plugin's constructor; use `PluginIO{{half}, half, 0}` for one fp16 / HWC8 input. The common implementation negotiates the declared types and formats, sets the output type and shape, and checks counts, types, and formats during configuration and shape changes. Implement `validate_shape(nvinfer1::Dims const* inputs, std::int32_t input_count, nvinfer1::Dims const& output) const noexcept` to check all input dimensions in declaration order and the output dimensions, including wildcard dimensions (`-1`) during configuration. A residual plugin can reject mismatched input shapes in this callback. The kernel must handle the declared storage format. Omitting `io` keeps one fp32 / LINEAR input and output with input 0's shape; the original three-argument constructor call remains valid. An empty input list or an out-of-range `shape_input_index` throws `std::invalid_argument` at construction.
+
+For configurations the declaration cannot express, such as multiple outputs or computed output shapes, developers can override the virtual V3 methods in a derived class or ask tensoracle's maintainers to extend the declaration.
 
 ## API reference
 

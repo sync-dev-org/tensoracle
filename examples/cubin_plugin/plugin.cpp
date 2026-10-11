@@ -117,7 +117,7 @@ public:
     {
         if (!valid_ || input_descriptors == nullptr || output_descriptors == nullptr ||
             inputs == nullptr || outputs == nullptr || inputs[0] == nullptr || outputs[0] == nullptr ||
-            validate_shape(input_descriptors[0].dims, output_descriptors[0].dims) != 0) return -1;
+            validate_shape(&input_descriptors[0].dims, 1, output_descriptors[0].dims) != 0) return -1;
         int rows = input_descriptors[0].dims.d[0];
         if (rows < 1 || rows > INT_MAX / 16) return -1;
         int const index = sm_index();
@@ -141,9 +141,10 @@ public:
     }
 
 protected:
-    std::int32_t validate_shape(Dims const& input, Dims const& output) const noexcept override
+    std::int32_t validate_shape(Dims const* inputs, std::int32_t input_count,
+        Dims const& output) const noexcept override
     {
-        return shape_matches(input, output, 32) ? 0 : -1;
+        return input_count == 1 && shape_matches(inputs[0], output, 32) ? 0 : -1;
     }
 
 private:
@@ -178,7 +179,7 @@ public:
     {
         if (!valid_ || input_descriptors == nullptr || output_descriptors == nullptr ||
             inputs == nullptr || outputs == nullptr || inputs[0] == nullptr || outputs[0] == nullptr ||
-            validate_shape(input_descriptors[0].dims, output_descriptors[0].dims) != 0) return -1;
+            validate_shape(&input_descriptors[0].dims, 1, output_descriptors[0].dims) != 0) return -1;
         int const rows = input_descriptors[0].dims.d[0];
         if (rows < 1 || rows > INT_MAX / 16) return -1;
         int const index = sm_index();
@@ -194,9 +195,10 @@ public:
     }
 
 protected:
-    std::int32_t validate_shape(Dims const& input, Dims const& output) const noexcept override
+    std::int32_t validate_shape(Dims const* inputs, std::int32_t input_count,
+        Dims const& output) const noexcept override
     {
-        return shape_matches(input, output, 16) ? 0 : -1;
+        return input_count == 1 && shape_matches(inputs[0], output, 16) ? 0 : -1;
     }
 
 private:

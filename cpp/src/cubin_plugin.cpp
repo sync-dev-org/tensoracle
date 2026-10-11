@@ -4,10 +4,47 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace tensoracle::cubin {
 namespace {
+
+nvinfer1::PluginTensorDesc const& tensor_desc(nvinfer1::PluginTensorDesc const& value) noexcept
+{
+    return value;
+}
+
+nvinfer1::PluginTensorDesc const& tensor_desc(nvinfer1::DynamicPluginTensorDesc const& value) noexcept
+{
+    return value.desc;
+}
+
+bool matches_tensor(nvinfer1::PluginTensorDesc const& descriptor, TensorSpec const& spec) noexcept
+{
+    return descriptor.type == spec.type && descriptor.format == spec.format;
+}
+
+template <typename Descriptor, typename Validate>
+std::int32_t validate_tensors(Descriptor const* inputs, std::int32_t input_count,
+    Descriptor const* outputs, std::int32_t output_count, PluginIO const& io,
+    Validate validate) noexcept
+{
+    if (inputs == nullptr || outputs == nullptr || input_count < 0 || output_count != 1 ||
+        static_cast<std::size_t>(input_count) != io.inputs.size()) return -1;
+    for (std::int32_t index = 0; index < input_count; ++index)
+        if (!matches_tensor(tensor_desc(inputs[index]), io.inputs[index])) return -1;
+    if (!matches_tensor(tensor_desc(outputs[0]), io.output)) return -1;
+    try {
+        std::vector<nvinfer1::Dims> dims;
+        dims.reserve(io.inputs.size());
+        for (std::int32_t index = 0; index < input_count; ++index)
+            dims.push_back(tensor_desc(inputs[index]).dims);
+        return validate(dims.data(), input_count, tensor_desc(outputs[0]).dims);
+    } catch (...) {
+        return -1;
+    }
+}
 
 std::size_t field_size(nvinfer1::PluginFieldType type) noexcept
 {
@@ -102,8 +139,14 @@ void Fields::rebuild()
 
 nvinfer1::PluginFieldCollection const* Fields::collection() noexcept { return &collection_; }
 
-PluginBase::PluginBase(char const* name, char const* plugin_namespace, Fields fields)
-    : name_(name), namespace_(plugin_namespace), fields_(std::move(fields)) {}
+PluginBase::PluginBase(char const* name, char const* plugin_namespace, Fields fields, PluginIO io)
+    : name_(name), namespace_(plugin_namespace), fields_(std::move(fields)), io_(std::move(io))
+{
+    if (io_.inputs.empty() || io_.inputs.size() > static_cast<std::size_t>(
+            std::numeric_limits<std::int32_t>::max()) || io_.shape_input_index < 0 ||
+        static_cast<std::size_t>(io_.shape_input_index) >= io_.inputs.size())
+        throw std::invalid_argument("PluginIO requires inputs and a valid shape_input_index");
+}
 
 nvinfer1::IPluginCapability* PluginBase::getCapabilityInterface(
     nvinfer1::PluginCapabilityType type) noexcept
@@ -124,20 +167,23 @@ bool PluginBase::supportsFormatCombination(std::int32_t position,
     nvinfer1::DynamicPluginTensorDesc const* in_out,
     std::int32_t input_count, std::int32_t output_count) noexcept
 {
-    if (in_out == nullptr || input_count != 1 || output_count != 1 || position < 0 || position > 1)
+    if (in_out == nullptr || input_count < 0 ||
+        static_cast<std::size_t>(input_count) != io_.inputs.size() ||
+        output_count != 1 || position < 0 || position > input_count)
         return false;
-    auto const& descriptor = in_out[position].desc;
-    return descriptor.type == nvinfer1::DataType::kFLOAT &&
-        descriptor.format == nvinfer1::TensorFormat::kLINEAR;
+    auto const& spec = position < input_count ? io_.inputs[position] : io_.output;
+    return matches_tensor(in_out[position].desc, spec);
 }
 
 std::int32_t PluginBase::getOutputDataTypes(nvinfer1::DataType* output_types,
     std::int32_t output_count, nvinfer1::DataType const* input_types,
     std::int32_t input_count) const noexcept
 {
-    if (output_types == nullptr || input_types == nullptr || output_count != 1 || input_count != 1 ||
-        input_types[0] != nvinfer1::DataType::kFLOAT) return -1;
-    output_types[0] = nvinfer1::DataType::kFLOAT;
+    if (output_types == nullptr || input_types == nullptr || output_count != 1 || input_count < 0 ||
+        static_cast<std::size_t>(input_count) != io_.inputs.size()) return -1;
+    for (std::int32_t index = 0; index < input_count; ++index)
+        if (input_types[index] != io_.inputs[index].type) return -1;
+    output_types[0] = io_.output.type;
     return 0;
 }
 
@@ -146,9 +192,10 @@ std::int32_t PluginBase::getOutputShapes(nvinfer1::DimsExprs const* inputs,
     nvinfer1::DimsExprs* outputs, std::int32_t output_count,
     nvinfer1::IExprBuilder&) noexcept
 {
-    if (inputs == nullptr || outputs == nullptr || input_count != 1 ||
+    if (inputs == nullptr || outputs == nullptr || input_count < 0 ||
+        static_cast<std::size_t>(input_count) != io_.inputs.size() ||
         shape_input_count != 0 || output_count != 1) return -1;
-    outputs[0] = inputs[0];
+    outputs[0] = inputs[io_.shape_input_index];
     return 0;
 }
 
@@ -156,8 +203,10 @@ std::int32_t PluginBase::configurePlugin(nvinfer1::DynamicPluginTensorDesc const
     std::int32_t input_count, nvinfer1::DynamicPluginTensorDesc const* outputs,
     std::int32_t output_count) noexcept
 {
-    if (inputs == nullptr || outputs == nullptr || input_count != 1 || output_count != 1) return -1;
-    return validate_shape(inputs[0].desc.dims, outputs[0].desc.dims);
+    return validate_tensors(inputs, input_count, outputs, output_count, io_,
+        [this](nvinfer1::Dims const* dims, std::int32_t count, nvinfer1::Dims const& output) {
+            return validate_shape(dims, count, output);
+        });
 }
 
 std::size_t PluginBase::getWorkspaceSize(nvinfer1::DynamicPluginTensorDesc const*, std::int32_t,
@@ -169,8 +218,10 @@ std::int32_t PluginBase::onShapeChange(nvinfer1::PluginTensorDesc const* inputs,
     std::int32_t input_count, nvinfer1::PluginTensorDesc const* outputs,
     std::int32_t output_count) noexcept
 {
-    if (inputs == nullptr || outputs == nullptr || input_count != 1 || output_count != 1) return -1;
-    return validate_shape(inputs[0].dims, outputs[0].dims);
+    return validate_tensors(inputs, input_count, outputs, output_count, io_,
+        [this](nvinfer1::Dims const* dims, std::int32_t count, nvinfer1::Dims const& output) {
+            return validate_shape(dims, count, output);
+        });
 }
 
 nvinfer1::IPluginV3* PluginBase::attachToContext(nvinfer1::IPluginResourceContext*) noexcept
