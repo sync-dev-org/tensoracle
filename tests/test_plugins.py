@@ -31,7 +31,7 @@ def _library(tmp_path: Path, name: str, source: str) -> Path:
     return path
 
 
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_library_without_get_creators_is_rejected_before_loading(tmp_path, monkeypatch):
     """A library with only a static constructor cannot destabilize the registry."""
     marker = tmp_path / "loaded"
@@ -47,7 +47,7 @@ def test_library_without_get_creators_is_rejected_before_loading(tmp_path, monke
     assert not marker.exists()
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_library_is_registered_once_before_graph_and_kept_alive(tmp_path, monkeypatch):
     """Repeated calls register one library once before a graph needs its creator."""
     library = _library(
@@ -87,7 +87,7 @@ def test_library_is_registered_once_before_graph_and_kept_alive(tmp_path, monkey
     assert observed == [library.resolve()]
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_changed_library_at_same_path_is_not_silently_reused(tmp_path, monkeypatch):
     """Changing loaded library bytes cannot label a new engine with an old creator."""
     library = _library(tmp_path, "versioned", "void *getCreators(int *n) { *n = 0; return 0; }\n")
@@ -103,7 +103,7 @@ def test_changed_library_at_same_path_is_not_silently_reused(tmp_path, monkeypat
         register_libraries((library,))
 
 
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_missing_plugin_has_a_library_error_before_engine_work(tmp_path, monkeypatch):
     """A missing plugin is reported as a plugin problem, not a damaged engine."""
     monkeypatch.setattr(trt, "get_plugin_registry", lambda: pytest.fail("registry was used"))
@@ -111,7 +111,7 @@ def test_missing_plugin_has_a_library_error_before_engine_work(tmp_path, monkeyp
         register_libraries((tmp_path / "missing.so",))
 
 
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_open_engine_reports_missing_plugin_before_cache_or_graph(tmp_path):
     """A missing library is identified without reading a saved engine or building a graph."""
     declaration = EngineBuild("fp32", {"x": InputShape.fixed((1,))})
@@ -128,7 +128,7 @@ def test_open_engine_reports_missing_plugin_before_cache_or_graph(tmp_path):
         )
 
 
-@pytest.mark.req("REQ-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-015")
 def test_pe_export_inspection_uses_names_and_data_without_loading(monkeypatch):
     """Windows export names and bundle data can be inspected without running a DLL."""
     dll = bytearray(1024)

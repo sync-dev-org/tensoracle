@@ -82,7 +82,7 @@ def _cached_open(tmp_path, monkeypatch, engine, declaration, io):
     )
 
 
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 @pytest.mark.parametrize(
     "field",
     [
@@ -157,7 +157,7 @@ def test_each_io_mismatch_reports_tensor_field_observed_and_expected(tmp_path, m
     assert str(tmp_path / "cache") in message
 
 
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_unspecified_location_and_format_are_not_queried(tmp_path, monkeypatch):
     """Omitting optional location and format preserves the existing opening checks."""
     engine = Engine()
@@ -171,7 +171,7 @@ def test_unspecified_location_and_format_are_not_queried(tmp_path, monkeypatch):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_device_linear_declarations_open_and_mismatches_are_rejected(tmp_path, monkeypatch):
     """A real engine opens with matching or omitted optional declarations and rejects differences."""
     handle = _open_sum(tmp_path, monkeypatch)

@@ -66,7 +66,7 @@ def _bundle(tmp_path, sm=86):
     return path, manifest
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_distinguishes_missing_corrupt_and_false_sm(tmp_path):
     """Missing bytes, damaged bytes, and an architecture claim each give their own error."""
     cubin, _ = _bundle(tmp_path)
@@ -85,7 +85,7 @@ def test_inspector_distinguishes_missing_corrupt_and_false_sm(tmp_path):
         inspect_bundle(tmp_path)
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_rejects_unsupported_launch_contract(tmp_path):
     """A nonzero scratch requirement cannot be accepted by the current launcher."""
     _bundle(tmp_path)
@@ -96,7 +96,7 @@ def test_inspector_rejects_unsupported_launch_contract(tmp_path):
         inspect_bundle(tmp_path)
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_rejects_unknown_argument_or_specialization(tmp_path):
     """An unsupported ABI type or specialization rule cannot reach a launcher."""
     _bundle(tmp_path)
@@ -113,7 +113,7 @@ def test_inspector_rejects_unknown_argument_or_specialization(tmp_path):
         inspect_bundle(tmp_path)
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_detects_plugin_from_another_bundle(tmp_path):
     """A native plugin cannot claim a different bundle from its inspected cubins."""
     if sys.platform != "linux" or shutil.which("cc") is None:
@@ -131,7 +131,7 @@ def test_inspector_detects_plugin_from_another_bundle(tmp_path):
         inspect_bundle(tmp_path, plugin=library)
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_checks_embedded_cubin_bytes_in_plugin(tmp_path):
     """A plugin with the right bundle name cannot hide a different embedded cubin."""
     if sys.platform != "linux" or shutil.which("cc") is None:
@@ -155,7 +155,7 @@ def test_inspector_checks_embedded_cubin_bytes_in_plugin(tmp_path):
         inspect_bundle(tmp_path, plugin=library)
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_checks_a_synthetic_wheel(tmp_path):
     """A wheel missing its declared cubin is rejected without installation or a GPU."""
     cubin, _ = _bundle(tmp_path)

@@ -52,7 +52,15 @@ local_scheme = "no-local-version"
 version-file = "src/tensoracle/_version.py"
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/.nf/", "/.github/", "/AGENTS.md", "/CLAUDE.md", "/tools/"]
+exclude = [
+    "/.nf/",
+    "/.github/",
+    "/AGENTS.md",
+    "/CLAUDE.md",
+    "/tools/",
+    "/noren.yaml",
+    "/noren-words.txt",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tensoracle"]
@@ -66,6 +74,7 @@ dev = [
     "cupy-cuda13x>=14.2.0",
     "mkdocs-material>=9.7.7",
     "mkdocstrings[python]>=1.0.6",
+    "noren==0.2.0",
     "pytest>=8.0",
     "ruff>=0.8",
 ]
@@ -75,7 +84,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers"]
 markers = [
     "gpu: tests that build or load a TensorRT engine on a CUDA GPU",
-    "req(id): parent requirement ID in .nf/docs/requirements.md",
+    "req(id): ID of the adopted spec item in .nf/docs/spec.md that the test verifies",
 ]
 
 [tool.ruff]

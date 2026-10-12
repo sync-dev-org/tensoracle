@@ -59,7 +59,7 @@ def native_contract(native_tools, tmp_path_factory):
     return executable
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.parametrize("case", ["formats", "counts", "types", "shapes", "defaults", "invalid"])
 def test_native_plugin_checks_declared_io(native_contract, case):
     """Plugins enforce each tensor's declared format, type, count, and shape validation."""
@@ -180,7 +180,7 @@ def _execute(plan, inputs):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.parametrize("kind", ["Unary", "Residual"])
 def test_half_hwc8_plugin_matches_numpy(half_plugin, kind, tmp_path, monkeypatch):
     """One-input and two-input fp16 HWC8 plugins execute and match NumPy's output."""
@@ -198,7 +198,7 @@ def test_half_hwc8_plugin_matches_numpy(half_plugin, kind, tmp_path, monkeypatch
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_plugin_output_shape_follows_selected_input(half_plugin, tmp_path, monkeypatch):
     """A plugin can copy input one's shape when input zero has a different shape."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -211,7 +211,7 @@ def test_plugin_output_shape_follows_selected_input(half_plugin, tmp_path, monke
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.parametrize("fault", ["missing-input", "extra-input", "shape", "type"])
 def test_plugin_rejects_network_outside_declaration(half_plugin, fault, tmp_path):
     """A network with wrong input count, differing residual shapes, or wrong types fails."""

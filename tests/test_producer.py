@@ -33,8 +33,8 @@ def producer_tools():
     return tools
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
-@pytest.mark.req("REQ-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
 @pytest.mark.parametrize("explicit_tools", [False, True], ids=["wheel-defaults", "explicit-paths"])
 def test_example_producer_builds_three_architectures_without_torch(
     tmp_path, producer_tools, explicit_tools
@@ -85,8 +85,8 @@ assert 'torch' not in sys.modules
         assert (output / relative).read_bytes() == (committed / relative).read_bytes()
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
-@pytest.mark.req("REQ-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-005")
 def test_package_declares_cubin_tools_only_in_producer_extra():
     """Installed metadata reserves pinned Triton and NVIDIA tools for the producer extra."""
     expected = {
@@ -109,7 +109,7 @@ def test_package_declares_cubin_tools_only_in_producer_extra():
         )
 
 
-@pytest.mark.req("REQ-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-005")
 def test_inference_imports_leave_producer_and_triton_unloaded():
     """Package, build, and reuse imports load neither the producer nor Triton."""
     source = """
@@ -130,7 +130,7 @@ assert not any(name == 'triton' or name.startswith('triton.') for name in sys.mo
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_missing_triton_reports_producer_extra(tmp_path):
     """A call without Triton identifies the missing dependency and producer extra."""
     source = """
@@ -161,7 +161,7 @@ compile_bundle((), Path(sys.argv[1]), ptxas=Path('unused'), cuobjdump=Path('unus
     assert not output.exists()
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.parametrize("tool", ["ptxas", "cuobjdump"])
 @pytest.mark.parametrize("missing", ["wheel", "executable"])
 def test_missing_wheel_tool_reports_producer_extra(tmp_path, tool, missing):

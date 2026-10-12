@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
     """The native helper retains typed fields and computes a real SHA-256 digest."""
     sdk = os.environ.get("TENSORACLE_SDK_ROOT")
@@ -73,7 +73,7 @@ int main() {
     subprocess.run([str(executable)], check=True, timeout=10)
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_cubin_launcher_rejects_launches_outside_generated_contract(tmp_path):
     """Wrong argument counts and unmet specialization rules fail before CUDA work."""
     sdk = os.environ.get("TENSORACLE_SDK_ROOT")

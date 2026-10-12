@@ -1,10 +1,10 @@
 """Check the files and public metadata delivered through PyPI."""
 
 import email
-import runpy
 import subprocess
 import tarfile
 import tomllib
+import unicodedata
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 import markdown
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_REPOSITORY = "https://github.com/sync-dev-org/tensoracle"
@@ -32,7 +33,7 @@ def distributions(tmp_path_factory):
     return {"sdist": next(output.glob("*.tar.gz")), "wheel": next(output.glob("*.whl"))}
 
 
-@pytest.mark.req("REQ-TENSORACLE-015")
+@pytest.mark.req("SP-TENSORACLE-017")
 def test_sdist_contains_public_sources_without_development_files(distributions):
     """The source distribution includes code, tests, docs, and examples without private files."""
     with tarfile.open(distributions["sdist"]) as archive:
@@ -42,28 +43,28 @@ def test_sdist_contains_public_sources_without_development_files(distributions):
             if member.isfile()
         ]
 
-    private = {".nf", ".github", "AGENTS.md", "CLAUDE.md", "tools"}
+    private = {".nf", ".github", "AGENTS.md", "CLAUDE.md", "tools", "noren.yaml", "noren-words.txt"}
     assert not [str(path) for path in paths if path.parts[0] in private]
     assert {"src", "tests", "docs", "examples", "cpp"} <= {path.parts[0] for path in paths}
     assert {"README.md", "LICENSE", "pyproject.toml"} <= {str(path) for path in paths}
 
 
-@pytest.mark.req("REQ-TENSORACLE-015")
+@pytest.mark.req("SP-TENSORACLE-017")
 def test_sdist_exclusions_match_the_public_snapshot():
     """PyPI source archives and the public repository exclude the same development paths."""
-    script = ROOT / "tools/mirror_public.py"
-    if not script.is_file() and not (ROOT / "AGENTS.md").is_file():
+    settings = ROOT / "noren.yaml"
+    if not settings.is_file() and not (ROOT / "AGENTS.md").is_file():
         pytest.skip("the public snapshot does not include development release tooling")
-    assert script.is_file(), "the development repository must include mirror_public.py"
-    exclusions = runpy.run_path(str(script))["_EXCLUSIONS"]
+    assert settings.is_file(), "the development repository must include noren.yaml"
+    exclusions = yaml.safe_load(settings.read_text(encoding="utf-8"))["exclude"].splitlines()
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert set(config["tool"]["hatch"]["build"]["targets"].get("sdist", {}).get("exclude", [])) == {
-        f"/{path}" for path in exclusions
+        path.strip() for path in exclusions if path.strip()
     }
 
 
-@pytest.mark.req("REQ-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-016")
 def test_wheel_contains_only_the_package_and_distribution_metadata(distributions):
     """The wheel delivers the Python package and C++ sources with only its install metadata."""
     with zipfile.ZipFile(distributions["wheel"]) as archive:
@@ -79,10 +80,10 @@ def test_wheel_contains_only_the_package_and_distribution_metadata(distributions
     }
 
 
-@pytest.mark.req("REQ-TENSORACLE-012")
-@pytest.mark.req("REQ-TENSORACLE-015")
-@pytest.mark.req("REQ-TENSORACLE-016")
-@pytest.mark.req("REQ-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-016")
+@pytest.mark.req("SP-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-015")
 def test_wheel_metadata_describes_the_public_package(distributions):
     """PyPI receives the README, author, supported environments, MIT license, and public URLs."""
     with zipfile.ZipFile(distributions["wheel"]) as archive:
@@ -115,14 +116,22 @@ def test_wheel_metadata_describes_the_public_package(distributions):
         f"repository, {PUBLIC_REPOSITORY}",
         f"issues, {PUBLIC_REPOSITORY}/issues",
     }
-    assert "tensoracle-dev" not in raw
+    word_list = ROOT / "noren-words.txt"
+    if word_list.is_file():
+        normalized_metadata = unicodedata.normalize("NFKC", raw).casefold()
+        for word in word_list.read_text(encoding="utf-8").splitlines():
+            if word.strip():
+                assert (
+                    unicodedata.normalize("NFKC", word.strip()).casefold()
+                    not in normalized_metadata
+                )
     assert all(
         word in metadata["Summary"].lower()
         for word in ("build", "save", "reuse", "execute", "tensorrt", "safetensors")
     )
 
 
-@pytest.mark.req("REQ-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-016")
 def test_readme_links_and_images_resolve_on_pypi():
     """README links and images use absolute URLs or same-page anchors on the PyPI page."""
 

@@ -117,7 +117,7 @@ def _ready(engine=None):
     return execution, engine
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize(
     ("shapes", "name", "value"),
     [
@@ -139,7 +139,7 @@ def test_invalid_input_shapes_are_rejected_before_setting_any_tensor(shapes, nam
     assert engine.latest.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("failure", [False, RuntimeError("TensorRT failure")])
 def test_partial_shape_failure_blocks_execution_until_all_shapes_are_set(failure):
     """A partial shape failure requires a complete successful setting before reuse."""
@@ -162,7 +162,7 @@ def test_partial_shape_failure_blocks_execution_until_all_shapes_are_set(failure
     assert ("enqueue", 0) in context.calls
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_ranged_engine_requires_shapes_before_querying_or_enqueuing():
     """A ranged engine requires the caller's input shapes before output sizing or enqueue."""
     engine = Engine()
@@ -175,7 +175,7 @@ def test_ranged_engine_requires_shapes_before_querying_or_enqueuing():
     assert engine.latest.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("address", [0, -1, True, False, 1.5, "1", None])
 def test_invalid_addresses_are_rejected_before_tensor_settings(address):
     """Every device address must be a positive integer excluding bool before TensorRT runs."""
@@ -186,7 +186,7 @@ def test_invalid_addresses_are_rejected_before_tensor_settings(address):
     assert engine.latest.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("stream", [-1, True, False, 1.5, "0", None])
 def test_invalid_streams_are_rejected_before_tensor_settings(stream):
     """The stream must be a nonnegative integer excluding bool before TensorRT runs."""
@@ -197,7 +197,7 @@ def test_invalid_streams_are_rejected_before_tensor_settings(stream):
     assert engine.latest.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize(
     ("addresses", "name", "value"),
     [
@@ -214,7 +214,7 @@ def test_address_names_must_match_every_engine_tensor(addresses, name, value):
     assert engine.latest.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("stage", ["address", "enqueue"])
 def test_false_address_setting_or_enqueue_is_reported_as_failure(stage):
     """TensorRT's rejection of an address or enqueue cannot be reported as success."""
@@ -228,7 +228,7 @@ def test_false_address_setting_or_enqueue_is_reported_as_failure(stage):
         assert not any(call[0] == "enqueue" for call in context.calls)
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize(
     ("kind", "name", "reason"),
     [
@@ -251,7 +251,7 @@ def test_unsupported_engine_is_rejected_when_execution_is_created(kind, name, re
     assert name in str(caught.value) and reason in str(caught.value)
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_context_creation_failure_is_reported():
     """Failure to create a TensorRT execution context raises a useful error."""
     engine = Engine()
@@ -260,7 +260,7 @@ def test_context_creation_failure_is_reported():
         _handle(engine).create_execution()
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_unresolved_output_after_shape_setting_blocks_enqueue():
     """An unresolved output dimension prevents address setting and execution."""
     execution, engine = _ready()
@@ -273,7 +273,7 @@ def test_unresolved_output_after_shape_setting_blocks_enqueue():
     assert engine.latest.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("manager", [False, True])
 def test_closed_execution_rejects_operations_without_touching_tensorrt(manager):
     """Close and context exit are idempotent and reject further operations before TensorRT."""
@@ -297,7 +297,7 @@ def test_closed_execution_rejects_operations_without_touching_tensorrt(manager):
     assert context.calls == []
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_close_releases_context_before_handle_without_waiting_for_gc():
     """Close releases the execution context then its owning handle with no ownership cycle."""
     engine = Engine(fixed=True)
@@ -318,7 +318,7 @@ def test_close_releases_context_before_handle_without_waiting_for_gc():
     assert released == ["context", "handle"]
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_execution_does_not_import_or_call_a_cuda_runtime(monkeypatch):
     """Creation, shape setting, enqueue, and close use TensorRT without CUDA runtime calls."""
     original_import = builtins.__import__
@@ -436,7 +436,7 @@ def _run_sum(execution, rows, *, stream=None):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("point", [False, True])
 def test_fixed_or_point_profile_executes_without_caller_shape_setting(tmp_path, monkeypatch, point):
     """Fixed and single-point profiles expose concrete sizes and compute on a caller's stream."""
@@ -446,8 +446,8 @@ def test_fixed_or_point_profile_executes_without_caller_shape_setting(tmp_path, 
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
-@pytest.mark.req("REQ-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-007")
 def test_multiple_ranged_inputs_resize_outputs_and_keep_shapes(tmp_path, monkeypatch):
     """All ranged inputs change together at min, opt, max, and intermediate sizes before enqueue."""
     handle = _open_sum(tmp_path, monkeypatch, internal_shape=True)
@@ -459,7 +459,7 @@ def test_multiple_ranged_inputs_resize_outputs_and_keep_shapes(tmp_path, monkeyp
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_same_handle_creates_independent_execution_units(tmp_path, monkeypatch):
     """Two execution units keep different input shapes and run on distinct caller streams."""
     handle = _open_sum(tmp_path, monkeypatch)
@@ -478,7 +478,7 @@ def test_same_handle_creates_independent_execution_units(tmp_path, monkeypatch):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_host_shape_input_engine_is_rejected_at_creation(tmp_path):
     """A real host-resident external shape input identifies the tensor at creation."""
     _check_cuda(cudart.cudaFree(0))
@@ -514,7 +514,7 @@ def test_host_shape_input_engine_is_rejected_at_creation(tmp_path):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_data_dependent_output_is_rejected_before_enqueue(tmp_path, monkeypatch):
     """A real NonZero output is rejected at execution creation because its size depends on data."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -547,7 +547,7 @@ def test_data_dependent_output_is_rejected_before_enqueue(tmp_path, monkeypatch)
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_cupy_buffers_execute_on_default_and_nondefault_streams(tmp_path, monkeypatch):
     """CuPy array addresses and both kinds of CuPy streams produce an independent NumPy sum."""
     import cupy as cp

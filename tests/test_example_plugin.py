@@ -69,7 +69,9 @@ def installed_example(tmp_path_factory):
         check=True,
         capture_output=True,
         text=True,
-        timeout=45,
+        # An empty uv cache downloads about 3.85 GB, which takes 3850 s at 1 MB/s (8 Mbps).
+        # Add the 45 s slowest measured cold install and round up to 70 minutes.
+        timeout=4200,
     )
     return {
         "root": root,
@@ -97,8 +99,8 @@ def _run(example, mode, cache, *extra):
     return json.loads(result.stdout)
 
 
-@pytest.mark.req("REQ-TENSORACLE-004")
-@pytest.mark.req("REQ-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-015")
 def test_distributions_ship_cpp_without_torch_or_triton(installed_example):
     """The producer and C++ sources ship while the runtime dependencies omit torch and Triton."""
     with zipfile.ZipFile(installed_example["main_wheel"]) as archive:
@@ -124,10 +126,10 @@ def test_distributions_ship_cpp_without_torch_or_triton(installed_example):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-002")
-@pytest.mark.req("REQ-TENSORACLE-003")
-@pytest.mark.req("REQ-TENSORACLE-004")
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_installed_wheel_builds_and_runs_both_plugins(installed_example):
     """A producer-free wheel builds a dynamic graph and matches its reference output."""
     result = _run(installed_example, "build", installed_example["work"] / "build-cache")
@@ -138,8 +140,8 @@ def test_installed_wheel_builds_and_runs_both_plugins(installed_example):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-007")
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_saved_engine_reopens_without_graph_and_plugin_change_selects_new_cache(installed_example):
     """A later process reuses the plan; changing plugin bytes selects a new engine."""
     cache = installed_example["work"] / "reuse-cache"
@@ -152,7 +154,7 @@ def test_saved_engine_reopens_without_graph_and_plugin_change_selects_new_cache(
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_direct_build_registers_before_graph_and_concurrent_contexts_run(installed_example):
     """Direct builds see both creators, and two execution contexts run together."""
     cache = installed_example["work"] / "concurrent-cache"
@@ -165,8 +167,8 @@ def test_direct_build_registers_before_graph_and_concurrent_contexts_run(install
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-002")
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_different_library_with_same_creator_is_rejected_before_graph(installed_example):
     """A second library with changed bytes cannot build with the first library's creator."""
     result = _run(
@@ -180,15 +182,15 @@ def test_different_library_with_same_creator_is_rejected_before_graph(installed_
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-009")
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-013")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_fp32_example_differs_from_tf32_control(installed_example):
     """The caller's IEEE dot retains a difference that its TF32 control loses."""
     values = _run(installed_example, "control", installed_example["work"] / "control-cache")
     assert abs(values["tf32"] - values["ieee_expected"]) > 0.003
 
 
-@pytest.mark.req("REQ-TENSORACLE-003")
+@pytest.mark.req("SP-TENSORACLE-004")
 def test_wheel_library_with_other_bundle_is_rejected(installed_example, tmp_path):
     """The wheel's bundle validator detects a library claiming another manifest."""
     installed = installed_example["work"] / "runtime/lib"

@@ -16,7 +16,7 @@ from tensoracle import EngineBuild, build_serialized_engine
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-001")
+@pytest.mark.req("SP-TENSORACLE-001")
 @pytest.mark.parametrize("entry", ["build_serialized_engine", "open_engine"])
 @pytest.mark.parametrize("outcome", ["success", "failure"])
 def test_build_returns_unused_host_memory_after_success_or_failure(tmp_path, entry, outcome):
@@ -51,7 +51,7 @@ def test_build_returns_unused_host_memory_after_success_or_failure(tmp_path, ent
     assert measured["reduction"] <= 32 * 1024 * 1024, measured
 
 
-@pytest.mark.req("REQ-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-015")
 @pytest.mark.parametrize("unavailable", ["library", "loader", "symbol"])
 @pytest.mark.parametrize("fail", [False, True], ids=["success", "failure"])
 def test_unavailable_host_memory_release_preserves_the_build_result(monkeypatch, unavailable, fail):

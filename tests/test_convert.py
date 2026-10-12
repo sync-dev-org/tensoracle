@@ -29,7 +29,7 @@ def _assert_tensors_match(destination, expected):
         assert actual[name].equal(tensor)
 
 
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-006")
 @pytest.mark.parametrize("nested", [False, True], ids=["state-dict", "nested-mapping"])
 def test_function_preserves_tensor_names_dtypes_shapes_and_values(tmp_path, torch, nested):
     """Flat and nested mappings retain every tensor's name, dtype, shape, and values."""
@@ -57,7 +57,7 @@ def test_function_preserves_tensor_names_dtypes_shapes_and_values(tmp_path, torc
     _assert_tensors_match(destination, expected)
 
 
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-006")
 def test_command_line_writes_the_same_tensors_as_the_function(tmp_path, torch):
     """The module command writes the same flattened weights as the Python function."""
     source = tmp_path / "weights.pth"
@@ -80,7 +80,7 @@ def test_command_line_writes_the_same_tensors_as_the_function(tmp_path, torch):
     assert from_command.read_bytes() == from_function.read_bytes()
 
 
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-006")
 @pytest.mark.parametrize(
     "invalid", [3, "metadata", None, [1, 2]], ids=["number", "text", "null", "list"]
 )
@@ -97,7 +97,7 @@ def test_checkpoint_metadata_is_rejected_before_writing(tmp_path, torch, invalid
     assert destination.read_bytes() == b"previous output"
 
 
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-006")
 def test_flattened_name_collisions_are_rejected(tmp_path, torch):
     """Dotted keys and nested keys cannot silently overwrite the same tensor name."""
     source = tmp_path / "weights.pth"
@@ -110,7 +110,7 @@ def test_flattened_name_collisions_are_rejected(tmp_path, torch):
     assert not destination.exists()
 
 
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-006")
 def test_non_string_mapping_keys_are_rejected(tmp_path, torch):
     """Mapping keys must be strings rather than silently changing the weight names."""
     source = tmp_path / "weights.pth"
@@ -131,7 +131,7 @@ class _WritesMarkerWhenLoaded:
         return eval, (f"__import__('pathlib').Path({str(self.marker)!r}).write_text('executed')",)
 
 
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-006")
 def test_checkpoint_code_is_rejected_without_execution(tmp_path, torch):
     """A checkpoint object that would write a marker is rejected without writing it."""
     source = tmp_path / "unsafe.pth"
@@ -146,8 +146,8 @@ def test_checkpoint_code_is_rejected_without_execution(tmp_path, torch):
     assert not destination.exists()
 
 
-@pytest.mark.req("REQ-TENSORACLE-004")
-@pytest.mark.req("REQ-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-006")
 @pytest.mark.parametrize("entry", ["function", "command"])
 def test_missing_torch_reports_the_conversion_extra(tmp_path, entry):
     """Both conversion entries explain that torch and tensoracle[convert] are required."""
@@ -185,7 +185,7 @@ else:
     assert not destination.exists()
 
 
-@pytest.mark.req("REQ-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-005")
 def test_inference_and_conversion_imports_leave_torch_unloaded():
     """Importing the package and engine or conversion entries does not load torch."""
     source = """

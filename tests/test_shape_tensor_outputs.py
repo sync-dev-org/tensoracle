@@ -85,8 +85,8 @@ def _assert_warning(message):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_shape_output_build_warns_once_and_returns_plan():
     """A shape tensor output warns about the execution crash while returning plan bytes."""
     with warnings.catch_warnings(record=True) as caught:
@@ -101,9 +101,9 @@ def test_shape_output_build_warns_once_and_returns_plan():
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-007")
-@pytest.mark.req("REQ-TENSORACLE-018")
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_shape_output_cache_records_names_without_changing_conditions(weights):
     """Shape output names are saved outside conditions and do not change the cache identity."""
     with warnings.catch_warnings(record=True) as caught:
@@ -127,8 +127,8 @@ def test_shape_output_cache_records_names_without_changing_conditions(weights):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-002")
 @pytest.mark.parametrize("entry", ["create_execution", "EngineExecution"])
 def test_saved_shape_output_warns_before_inference_in_another_process(weights, entry):
     """A later process can turn the execution warning into an exception before unsafe inference."""
@@ -181,9 +181,9 @@ else:
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
-@pytest.mark.req("REQ-TENSORACLE-002")
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-009")
 @pytest.mark.parametrize("entry", ["build_serialized_engine", "open_engine"])
 def test_shape_output_warning_as_error_stops_build_without_cache_files(weights, entry):
     """Turning the build warning into an error leaves no engine or temporary engine file."""
@@ -201,8 +201,8 @@ def test_shape_output_warning_as_error_stops_build_without_cache_files(weights, 
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-007")
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-012")
 def test_saved_engine_without_shape_output_metadata_is_reused_without_warning(weights):
     """An older header loads without rebuilding or warning when creating an execution unit."""
     first = _open(weights, output_kind="ordinary")
@@ -225,7 +225,7 @@ def test_saved_engine_without_shape_output_metadata_is_reused_without_warning(we
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-018")
+@pytest.mark.req("SP-TENSORACLE-012")
 @pytest.mark.parametrize("output_kind", ["ordinary", "shape-layer"])
 def test_ordinary_outputs_including_shape_layer_outputs_never_warn(weights, output_kind):
     """Ordinary marked outputs stay supported even when their values come from a shape layer."""
@@ -245,8 +245,8 @@ def test_ordinary_outputs_including_shape_layer_outputs_never_warn(weights, outp
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-008")
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-002")
 @pytest.mark.parametrize("metadata", [None, "dimensions", {}, [1], ["dimensions", False]])
 def test_invalid_shape_output_metadata_is_a_corrupt_engine(weights, metadata):
     """A present shape output record must be a list of tensor names to load a saved engine."""
@@ -258,8 +258,8 @@ def test_invalid_shape_output_metadata_is_a_corrupt_engine(weights, metadata):
         _open(weights, output_kind="ordinary")
 
 
-@pytest.mark.req("REQ-TENSORACLE-018")
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_execution_warning_as_error_releases_context_before_inference(monkeypatch):
     """A warning raised as an error releases the new context without probing output shapes."""
     category = tensoracle.ShapeTensorOutputWarning

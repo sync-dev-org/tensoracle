@@ -13,7 +13,7 @@ from safetensors.numpy import load_file, save_file
 from tensoracle import BuilderSettings, EngineBuild, InputShape, build_serialized_engine
 
 
-@pytest.mark.req("REQ-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-005")
 def test_package_requires_torch_only_for_checkpoint_conversion():
     """Only the conversion extra declares torch, leaving inference dependencies unchanged."""
     dependencies = requires("tensoracle") or []
@@ -114,7 +114,7 @@ def _run(plan: bytes, value: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-007")
 def test_fixed_shape_build_runs_at_its_declared_size(tmp_path):
     """A fixed input shape produces a plan that computes the declared graph."""
     path = tmp_path / "weights.safetensors"
@@ -131,7 +131,7 @@ def test_fixed_shape_build_runs_at_its_declared_size(tmp_path):
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-007")
 def test_range_build_runs_at_minimum_optimum_and_maximum_and_rejects_outside(tmp_path):
     """A ranged input accepts its three declared sizes and rejects an outside size."""
     path = tmp_path / "weights.safetensors"
@@ -154,7 +154,7 @@ def test_range_build_runs_at_minimum_optimum_and_maximum_and_rejects_outside(tmp
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-013")
 def test_fp16_build_runs_a_graph_with_fp16_tensors(tmp_path):
     """A declared fp16 plan runs the graph's fp16 tensors."""
     path = tmp_path / "weights.safetensors"
@@ -170,7 +170,7 @@ def test_fp16_build_runs_a_graph_with_fp16_tensors(tmp_path):
     np.testing.assert_allclose(_run(plan, value), expected, rtol=2e-3, atol=2e-3)
 
 
-@pytest.mark.req("REQ-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-013")
 def test_tf32_request_is_rejected_before_graph_is_built():
     """An explicit request to enable TF32 fails without invoking the graph."""
     declaration = EngineBuild(
@@ -182,7 +182,7 @@ def test_tf32_request_is_rejected_before_graph_is_built():
         build_serialized_engine(lambda network: pytest.fail("graph was built"), declaration)
 
 
-@pytest.mark.req("REQ-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-013")
 def test_tf32_is_disabled_and_other_builder_settings_are_applied(monkeypatch):
     """The builder clears TF32 while applying the declared workspace and optimization level."""
     import tensoracle._build as module

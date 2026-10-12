@@ -48,7 +48,7 @@ def _heartbeat_during(operation):
     return result, {"elapsed_ms": elapsed * 1000, "heartbeat_gap_ms": max(gaps) * 1000}
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_read_large_saved_plan_keeps_other_threads_running(tmp_path):
     """Reading a 512 MiB saved plan leaves a heartbeat gap below 50 ms.
 
@@ -81,7 +81,7 @@ def test_read_large_saved_plan_keeps_other_threads_running(tmp_path):
     assert min(item["heartbeat_gap_ms"] for item in measurements) < 50, measurements
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch):
     """Saving a 512 MiB built plan leaves a heartbeat gap below 50 ms.
 
@@ -141,7 +141,7 @@ def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-006")
+@pytest.mark.req("SP-TENSORACLE-008")
 def test_two_named_engines_from_one_weight_file_are_saved_separately(tmp_path, monkeypatch):
     """Two engine roles using one safetensors file have separate usable cache entries."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -182,7 +182,7 @@ def test_two_named_engines_from_one_weight_file_are_saved_separately(tmp_path, m
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_cached_engine_is_reused_in_another_process_without_calling_graph(tmp_path, monkeypatch):
     """A process restart reuses a verified plan while leaving the graph callback untouched."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -229,7 +229,7 @@ print(handle.path)
     assert result.stdout.strip() == str(first.path)
 
 
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_saved_engine_deserialization_failure_guides_caller_to_check_plugins(tmp_path, monkeypatch):
     """An unreadable saved engine reports its path and asks the caller to check plugin libraries."""
     import tensoracle._cache as cache
@@ -284,7 +284,7 @@ def test_saved_engine_deserialization_failure_guides_caller_to_check_plugins(tmp
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_corrupt_plan_and_changed_header_fail_before_deserialization(tmp_path, monkeypatch):
     """Corrupt plan bytes and changed conditions are rejected before TensorRT sees the plan."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -350,8 +350,8 @@ def test_corrupt_plan_and_changed_header_fail_before_deserialization(tmp_path, m
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-002")
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_force_rebuild_uses_changed_weight_contents_and_preserves_old_engine(tmp_path, monkeypatch):
     """A forced rebuild saves under the new digest without replacing the old engine."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -414,7 +414,7 @@ def test_force_rebuild_uses_changed_weight_contents_and_preserves_old_engine(tmp
     assert new_header["conditions"] == new_conditions
 
 
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_build_failure_removes_placeholder_and_partial_files(tmp_path, monkeypatch):
     """A failed graph leaves neither a placeholder nor a complete cache file."""
     import tensoracle._cache as cache
@@ -448,7 +448,7 @@ def test_build_failure_removes_placeholder_and_partial_files(tmp_path, monkeypat
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-010")
 def test_unset_xdg_cache_home_uses_user_cache_directory(tmp_path, monkeypatch):
     """Without XDG_CACHE_HOME, the saved engine is under the user's home."""
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
@@ -475,7 +475,7 @@ def test_unset_xdg_cache_home_uses_user_cache_directory(tmp_path, monkeypatch):
     assert handle.path.parent == tmp_path / "user-home" / ".cache" / "tensoracle"
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkeypatch):
     """Each identity condition independently causes a new build and cache path."""
     import tensoracle._cache as cache
@@ -659,7 +659,7 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_open_rejects_mismatched_names_types_dimensions_and_input_range(tmp_path, monkeypatch):
     """A stored engine must match every declared input and output property."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -746,7 +746,7 @@ def test_open_rejects_mismatched_names_types_dimensions_and_input_range(tmp_path
 
 
 @pytest.mark.gpu
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_second_process_rejects_exclusive_placeholder_and_force_rebuilds_it(tmp_path, monkeypatch):
     """One process builds while another sees its placeholder as a corrupt engine."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))

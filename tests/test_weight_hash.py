@@ -30,7 +30,7 @@ def _records(root: Path) -> list[Path]:
     return list((root / "tensoracle").glob("*.json"))
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_another_process_reuses_weight_digest_without_reading_weight(tmp_path, monkeypatch):
     """A later process uses the stored SHA-256 without opening an unchanged weight file."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -63,7 +63,7 @@ print(json.dumps(conditions['weights']))
     assert json.loads(result.stdout) == [expected]
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_each_weight_file_attribute_change_recomputes_digest(tmp_path, monkeypatch):
     """A changed path, size, modification time, or inode triggers a fresh SHA-256."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -104,7 +104,7 @@ def test_each_weight_file_attribute_change_recomputes_digest(tmp_path, monkeypat
     assert len(reads) == 5
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_relative_weight_path_is_bound_to_working_directory(tmp_path, monkeypatch):
     """The same relative spelling in two directories cannot reuse the other file's digest."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -124,7 +124,7 @@ def test_relative_weight_path_is_bound_to_working_directory(tmp_path, monkeypatc
     assert len(_records(tmp_path / "cache")) == 2
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 @pytest.mark.parametrize(
     "damage", ["removed", "invalid-json", "wrong-format", "wrong-digest", "unreadable"]
 )
@@ -159,7 +159,7 @@ def test_missing_or_unusable_record_is_recomputed(tmp_path, monkeypatch, damage)
     assert _conditions(weight)["weights"] == [expected]
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_unwritable_record_does_not_block_hashing(tmp_path, monkeypatch):
     """A failed record write leaves the computed digest usable and the next call recomputes."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -188,7 +188,7 @@ def test_unwritable_record_does_not_block_hashing(tmp_path, monkeypatch):
     assert not _records(tmp_path / "cache")
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-009")
 def test_concurrent_record_writers_leave_a_complete_digest(tmp_path, monkeypatch):
     """Two processes writing a digest leave one complete record usable by a later process."""
     root = tmp_path / "cache"
@@ -230,7 +230,7 @@ print(cache._conditions('encoder', '1', (Path(sys.argv[1]),), (),
     assert _conditions(weight)["weights"] == [expected]
 
 
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_weight_changed_during_hash_is_not_recorded(tmp_path, monkeypatch):
     """A file changed while hashing does not associate the old metadata with that digest."""
     root = tmp_path / "cache"
@@ -257,7 +257,7 @@ def test_weight_changed_during_hash_is_not_recorded(tmp_path, monkeypatch):
     assert len(reads) == 1
 
 
-@pytest.mark.req("REQ-TENSORACLE-008")
+@pytest.mark.req("SP-TENSORACLE-011")
 def test_force_rebuild_refreshes_digest_even_when_attributes_match(tmp_path, monkeypatch):
     """A requested rebuild rereads content and replaces a stale digest record."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -277,7 +277,7 @@ def test_force_rebuild_refreshes_digest_even_when_attributes_match(tmp_path, mon
     assert _conditions(weight)["weights"] == [refreshed]
 
 
-@pytest.mark.req("REQ-TENSORACLE-007")
+@pytest.mark.req("SP-TENSORACLE-010")
 @pytest.mark.parametrize("xdg", [True, False])
 def test_record_lives_in_user_cache_directory(tmp_path, monkeypatch, xdg):
     """A stored weight digest stays under the configured or default user cache."""
@@ -295,7 +295,7 @@ def test_record_lives_in_user_cache_directory(tmp_path, monkeypatch, xdg):
     assert len(_records(root)) == 1
 
 
-@pytest.mark.req("REQ-TENSORACLE-002")
+@pytest.mark.req("SP-TENSORACLE-002")
 def test_engine_identity_matches_the_original_full_hash_calculation(tmp_path, monkeypatch):
     """Stored digests produce the same conditions and engine name as full file hashing."""
     root = tmp_path / "cache"
