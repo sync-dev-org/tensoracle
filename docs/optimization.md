@@ -4,13 +4,13 @@ Use the same representative inputs, shapes, and corresponding outputs throughout
 
 ## 1. Establish the fp32 reference
 
-- **tensoracle tools:** Build an fp32 TensorRT engine with `EngineBuild(precision="fp32")` and `build_serialized_engine` or `open_engine`. TF32 is disabled for the engine. Run the engine in the application, then use `compare_outputs(candidate, reference, atol=..., rtol=...)` on corresponding CPU NumPy output arrays.
+- **tensoracle tools:** Build an fp32 TensorRT engine from a graph whose tensor types are fp32, using an `EngineBuild` declaration for input shapes and builder settings with `build_serialized_engine` or `open_engine`. TF32 is disabled for the engine. Run the engine in the application, then use `compare_outputs(candidate, reference, atol=..., rtol=...)` on corresponding CPU NumPy output arrays.
 - **You provide:** Run the official PyTorch implementation in fp32 outside `tensoracle` and fix its outputs as the reference. Supply the TensorRT graph, weights, representative inputs, and an acceptance limit for each output. Keep the reference and candidate inputs and preprocessing identical.
 - **Gate:** Reject non-finite outputs and any output that misses your limits. Advance only when every fp32 TensorRT output passes against its fixed PyTorch reference. Correct the graph or inputs before trying lower precision if this gate fails.
 
 ## 2. Accept lower precision by quality
 
-- **tensoracle tools:** Build an fp16 TensorRT engine with `EngineBuild(precision="fp16")`. Use `compare_outputs` with each fp16 output as the candidate and its accepted fp32 TensorRT output as the reference. It reports non-finite counts and, for finite floating point arrays, maximum absolute error, relative L2 error, cosine similarity, and, when both tolerances are supplied, counts and fractions outside tolerance.
+- **tensoracle tools:** Build an fp16 TensorRT engine from a graph whose tensor types are fp16, using the same `EngineBuild` declaration for input shapes and builder settings. The graph function determines precision through its tensor types. When saving with `open_engine`, use a different `name` or `graph_version` from the fp32 engine. Use `compare_outputs` with each fp16 output as the candidate and its accepted fp32 TensorRT output as the reference. It reports non-finite counts and, for finite floating point arrays, maximum absolute error, relative L2 error, cosine similarity, and, when both tolerances are supplied, counts and fractions outside tolerance.
 - **You provide:** Choose limits for those model-independent measurements. Compute any model-specific measurements separately, such as PSNR for images or application-specific time-series quality measures, and choose their limits. Run both engines on the same inputs.
 - **Gate:** Accept the fp16 engine only when its outputs meet all applicable limits, including the model-specific ones. Otherwise keep the accepted fp32 engine or revise the candidate and repeat this stage.
 

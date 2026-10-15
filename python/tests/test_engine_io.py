@@ -102,7 +102,7 @@ def test_each_io_mismatch_reports_tensor_field_observed_and_expected(tmp_path, m
     engine = Engine()
     inputs = {"features": tensoracle.TensorSpec(trt.float32, (3, 2))}
     outputs = {"result": tensoracle.TensorSpec(trt.float32, (3, 2))}
-    declaration = tensoracle.EngineBuild("fp32", {"features": tensoracle.InputShape.fixed((3, 2))})
+    declaration = tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed((3, 2))})
     name = "features"
     if field == "name":
         inputs = {"renamed": inputs["features"]}
@@ -122,7 +122,7 @@ def test_each_io_mismatch_reports_tensor_field_observed_and_expected(tmp_path, m
         engine.shapes["features"] = (-1, 2)
         inputs["features"] = tensoracle.TensorSpec(trt.float32, (-1, 2))
         declaration = tensoracle.EngineBuild(
-            "fp32", {"features": tensoracle.InputShape.ranged((1, 2), (3, 2), (6, 2))}
+            {"features": tensoracle.InputShape.ranged((1, 2), (3, 2), (6, 2))}
         )
         observed, expected = "(5, 2)", "(6, 2)"
     elif field == "location":
@@ -136,14 +136,12 @@ def test_each_io_mismatch_reports_tensor_field_observed_and_expected(tmp_path, m
         )
         observed, expected = "LINEAR", "CHW4"
     elif field == "build_inputs":
-        declaration = tensoracle.EngineBuild("fp32", {"other": tensoracle.InputShape.fixed((3, 2))})
+        declaration = tensoracle.EngineBuild({"other": tensoracle.InputShape.fixed((3, 2))})
         name = "other"
         field = "name"
         observed, expected = "features", "other"
     else:
-        declaration = tensoracle.EngineBuild(
-            "fp32", {"features": tensoracle.InputShape.fixed((4, 2))}
-        )
+        declaration = tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed((4, 2))})
         field = "profile"
         observed, expected = "(3, 2)", "(4, 2)"
     with pytest.raises(tensoracle.EngineIOError) as caught:
@@ -161,7 +159,7 @@ def test_each_io_mismatch_reports_tensor_field_observed_and_expected(tmp_path, m
 def test_unspecified_location_and_format_are_not_queried(tmp_path, monkeypatch):
     """Omitting optional location and format preserves the existing opening checks."""
     engine = Engine()
-    declaration = tensoracle.EngineBuild("fp32", {"features": tensoracle.InputShape.fixed((3, 2))})
+    declaration = tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed((3, 2))})
     io = tensoracle.EngineIO(
         {"features": tensoracle.TensorSpec(trt.float32, (3, 2))},
         {"result": tensoracle.TensorSpec(trt.float32, (3, 2))},
@@ -177,7 +175,6 @@ def test_device_linear_declarations_open_and_mismatches_are_rejected(tmp_path, m
     handle = _open_sum(tmp_path, monkeypatch)
     profile = tensoracle.InputShape.ranged((1, 2), (3, 2), (5, 2))
     declaration = tensoracle.EngineBuild(
-        "fp32",
         {"features": profile, "extra": profile},
         tensoracle.BuilderSettings(optimization_level=0),
     )

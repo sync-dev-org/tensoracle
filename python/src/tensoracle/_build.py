@@ -4,7 +4,6 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
 
 import tensorrt as trt
 
@@ -77,9 +76,8 @@ class BuilderSettings:
 
 @dataclass(frozen=True)
 class EngineBuild:
-    """One engine's precision, named input shapes, and builder settings."""
+    """One engine's named input shapes and builder settings."""
 
-    precision: Literal["fp32", "fp16"]
     inputs: Mapping[str, InputShape]
     settings: BuilderSettings = field(default_factory=BuilderSettings)
 
@@ -103,8 +101,6 @@ def _build_serialized_engine(
     plugins: Sequence[Path] = (),
     logger: trt.ILogger | None = None,
 ) -> tuple[bytes, tuple[str, ...]]:
-    if declaration.precision not in ("fp32", "fp16"):
-        raise ValueError(f"unsupported precision: {declaration.precision}")
     if declaration.settings.tf32:
         raise ValueError("TF32 cannot be enabled")
     if declaration.settings.workspace_limit <= 0:

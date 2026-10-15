@@ -8,69 +8,35 @@ import pytest
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-021")
 def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
     """The native helper retains typed fields and computes a real SHA-256 digest."""
     sdk = os.environ.get("TENSORACLE_SDK_ROOT")
     cuda = os.environ.get("TENSORACLE_CUDA_ROOT")
     if not sdk or not cuda:
         pytest.skip("TensorRT SDK and CUDA toolkit were not supplied")
-    root = Path(__file__).resolve().parents[1]
-    source = tmp_path / "check.cpp"
-    source.write_text(
-        r"""
-#include "tensoracle/cubin_plugin.hpp"
-#include <cstring>
-using namespace tensoracle::cubin;
-using namespace nvinfer1;
-int main() {
-    if (sha256("abc", 3) !=
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") return 1;
-    float weight[2] = {1.25f, 2.5f};
-    int version = 7;
-    PluginField input[] = {
-        {"weight", weight, PluginFieldType::kFLOAT32, 2},
-        {"version", &version, PluginFieldType::kINT32, 1},
-    };
-    PluginFieldCollection source{2, input};
-    Fields fields;
-    if (!Fields::parse(&source, fields)) return 2;
-    auto const* saved = fields.collection();
-    if (saved->nbFields != 2 ||
-        std::strcmp(saved->fields[0].name, "weight") != 0 ||
-        std::strcmp(saved->fields[1].name, "version") != 0 ||
-        saved->fields[0].type != PluginFieldType::kFLOAT32 ||
-        saved->fields[0].length != 2 ||
-        std::memcmp(saved->fields[0].data, weight, sizeof(weight)) != 0) return 3;
-    weight[0] = 9.0f;
-    if (std::memcmp(saved->fields[0].data, weight, sizeof(weight)) == 0) return 4;
-    Fields copy = fields;
-    if (std::memcmp(copy.collection()->fields[0].data, saved->fields[0].data,
-                    sizeof(weight)) != 0) return 5;
-    return 0;
-}
-""",
-        encoding="utf-8",
-    )
-    executable = tmp_path / "check"
+    project = Path(__file__).resolve().parents[1]
+    root = project.parent if project.name == "python" else project
+    build = tmp_path / "build"
     subprocess.run(
         [
-            "c++",
-            "-std=c++17",
-            "-Wno-deprecated-declarations",
-            f"-I{root / 'cpp/include'}",
-            f"-I{Path(sdk) / 'include'}",
-            f"-I{Path(cuda) / 'include'}",
-            str(source),
-            str(root / "cpp/src/cubin_plugin.cpp"),
-            f"-L{Path(cuda) / 'lib64/stubs'}",
-            "-lcuda",
-            "-o",
-            str(executable),
+            "cmake",
+            "-S",
+            str(root / "cpp"),
+            "-B",
+            str(build),
+            f"-DTENSORRT_ROOT={sdk}",
+            f"-DCUDAToolkit_ROOT={cuda}",
         ],
         check=True,
         timeout=45,
     )
-    subprocess.run([str(executable)], check=True, timeout=10)
+    subprocess.run(["cmake", "--build", str(build), "--config", "Release"], check=True, timeout=45)
+    subprocess.run(
+        ["ctest", "--test-dir", str(build), "-C", "Release", "--output-on-failure"],
+        check=True,
+        timeout=10,
+    )
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
@@ -80,7 +46,8 @@ def test_cubin_launcher_rejects_launches_outside_generated_contract(tmp_path):
     cuda = os.environ.get("TENSORACLE_CUDA_ROOT")
     if not sdk or not cuda:
         pytest.skip("TensorRT SDK and CUDA toolkit were not supplied")
-    root = Path(__file__).resolve().parents[1]
+    project = Path(__file__).resolve().parents[1]
+    root = project.parent if project.name == "python" else project
     source = tmp_path / "wrong-count.cpp"
     source.write_text(
         r"""

@@ -14,7 +14,7 @@ Choose the path that matches your work:
 | --- | --- | --- |
 | Inference application | [Reopen a saved engine](#use-a-saved-engine-for-inference) and enqueue it with `handle.create_execution()`. | The application supplies device buffers and CUDA streams, for example through CuPy or `cuda-python`. |
 | Standard graph developer | [Define and build a graph](#define-and-build-a-standard-graph), [save and reopen](#save-and-reopen-an-engine), and [compare outputs](#compare-output-arrays). | None for standard TensorRT layers. |
-| Cubin plugin developer | [Build a cubin plugin](#build-a-cubin-plugin) and package it with the model. | `tensoracle[producer]`, CUDA toolkit, TensorRT SDK, CMake, and a C++17 compiler. |
+| Cubin plugin developer | [Build a cubin plugin](#build-a-cubin-plugin) and package it with the model. | `tensoracle[producer]`, CUDA toolkit, TensorRT SDK, CMake 3.20 or later, and a C++17 compiler. |
 
 | Requirement | Inference application | Standard graph developer | Cubin plugin developer |
 | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ Choose the path that matches your work:
 | Triton 3.8.0, `ptxas` 12.9.86, `cuobjdump` 13.3 | Not needed | Not needed | Installed with `tensoracle[producer]` for cubin production |
 | CUDA toolkit | Not needed | Not needed | Native plugin build |
 | TensorRT 11 SDK | Not needed | Not needed | Native plugin build |
-| CMake and C++17 compiler | Not needed | Not needed | Native plugin build |
+| CMake 3.20 or later and C++17 compiler | Not needed | Not needed | Native plugin build |
 
 The supported targets are Linux x86_64 (including WSL2), TensorRT 11, and GPU generations sm86, sm89, and sm120. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra described below.
 
@@ -74,7 +74,6 @@ def graph(network: trt.INetworkDefinition) -> None:
 
 
 declaration = EngineBuild(
-    precision="fp32",
     inputs={"features": InputShape.ranged((1, 1, 2), (1, 64, 2), (1, 448, 2))},
     settings=BuilderSettings(workspace_limit=1 << 30, optimization_level=3),
 )
@@ -83,7 +82,7 @@ plan: bytes = build_serialized_engine(graph, declaration)
 
 Use `InputShape.fixed((1, 64, 2))` for one input size; the graph may declare that size directly or use `-1` for a dimension fixed by the profile. For a range, put `-1` in each varying dimension of the graph input and declare its minimum, optimum, and maximum sizes. Every graph input needs a matching entry in `EngineBuild.inputs`.
 
-Set `precision="fp16"` to declare an fp16 engine. The graph function chooses each tensor's actual type, including any fp32 tensors inside an fp16 graph. TF32 is always disabled; `BuilderSettings(tf32=True)` raises `ValueError`. The function returns serialized plan bytes. Invalid declarations raise `ValueError`, and a failed TensorRT build raises `RuntimeError`.
+The engine's precision is determined by the tensor types that the graph function places in the network. For an fp16 graph, use `trt.float16` tensors and `np.float16` weights where needed; the graph can also contain fp32 tensors. `EngineBuild` declares input shapes and builder settings. TF32 is always disabled; `BuilderSettings(tf32=True)` raises `ValueError`. The function returns serialized plan bytes. Invalid declarations raise `ValueError`, and a failed TensorRT build raises `RuntimeError`.
 
 ## Save and reopen an engine
 
@@ -108,7 +107,7 @@ handle = open_engine(
 engine = handle.engine  # Keep handle.runtime alive while using the engine.
 ```
 
-Saved files live in the `tensoracle` directory under `XDG_CACHE_HOME`, or under `~/.cache` when that variable is unset. The cache identity includes the contents of all declared safetensors weight files and optional `plugins` files, the engine name, graph version, precision, input shapes, builder settings, GPU product name, OS, CPU architecture, and TensorRT version. Raise `graph_version` when graph code changes; without a version change, the previous engine is reused. Include in `graph_version` any other caller value that changes the engine contents but is not part of the cache identity, such as a plugin manifest or a build recipe. Pass `force_rebuild=True` to replace a cached engine even when it is intact.
+Saved files live in the `tensoracle` directory under `XDG_CACHE_HOME`, or under `~/.cache` when that variable is unset. The cache identity includes the contents of all declared safetensors weight files and optional `plugins` files, the engine name, graph version, input shapes, builder settings, GPU product name, OS, CPU architecture, and TensorRT version. Raise `graph_version` when graph code changes; without a version change, the previous engine is reused. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. Include in `graph_version` any other caller value that changes the engine contents but is not part of the cache identity, such as a plugin manifest or a build recipe. Pass `force_rebuild=True` to replace a cached engine even when it is intact.
 
 `plugins` names native TensorRT plugin libraries. Both `open_engine` and `build_serialized_engine` accept it. Each function checks that every library exports `getCreators`, loads it through TensorRT's registry, and retains it for the process before building the graph or deserializing an engine. Repeating the same library does not register it twice. `open_engine` also hashes the loaded library bytes into the engine identity; a changed library selects a different saved engine in a new process. A missing, unreadable, or incompatible library, or a library changed after loading in the same process, raises `PluginLibraryError` before a cached plan is opened. Keep the library and its cubin bundle together in the caller's wheel.
 
@@ -234,6 +233,18 @@ Install the producer extra when you need to compile cubins from your own kernels
 ```bash
 pip install 'tensoracle[producer]'
 ```
+
+Every repository that adopts tensoracle must use this top-level layout:
+
+```text
+cpp/
+  CMakeLists.txt
+python/
+  pyproject.toml
+  src/
+```
+
+Keep C++ sources in `cpp/`, with a CMake project that builds and runs its tests through CTest without Python. Keep the Python project, its src-layout package, and its uv environment in `python/`; run the project's uv commands from that directory. Tensoracle itself follows this layout, and the installed C++ helper paths described below remain inside its Python package.
 
 `tensoracle.producer.compile_bundle` uses the extra's **Triton 3.8.0**, **ptxas 12.9.86**, and **cuobjdump 13.3**. It finds the NVIDIA wheel executables by default; explicit `ptxas` and `cuobjdump` paths can override them. The normal import, engine build, and engine reuse paths do not import the producer or Triton. Cubin production does not need a GPU or import torch; run it without importing torch first. The caller supplies Triton functions and `KernelSpec` records with their public argument types, compile time constants, and any divisibility assumptions. The producer writes sm86, sm89, and sm120 cubins, `bundle.json`, and a C++ translation unit that embeds exactly those cubins. The generated C++ entry records carry each public argument's order, type, count, and divisibility rule into the common launcher. It rejects an unexpected parameter ABI or nonzero scratch requirement. The included [example](https://github.com/sync-dev-org/tensoracle/blob/main/examples/cubin_plugin/README.md#rebuild-the-cubins) has the command to rebuild its cubins from a repository clone.
 

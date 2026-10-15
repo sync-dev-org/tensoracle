@@ -17,6 +17,8 @@ plugins:
       handlers:
         python:
           paths:
+            - python/src
+            # Standalone source archives keep src next to pyproject.toml.
             - src
           options:
             docstring_style: google

@@ -19,7 +19,7 @@ def _conditions(weight: Path, *, plugin: Path | None = None, force_rebuild: bool
         "1",
         (weight,),
         (plugin,) if plugin else (),
-        EngineBuild("fp32", {"features": InputShape.fixed((1, 3, 2))}),
+        EngineBuild({"features": InputShape.fixed((1, 3, 2))}),
     )
     if force_rebuild:
         return cache._conditions(*args, force_rebuild=True)
@@ -53,7 +53,7 @@ def guarded_open(self, mode='r', *args, **kwargs):
     return original_open(self, mode, *args, **kwargs)
 Path.open = guarded_open
 conditions = cache._conditions('encoder', '1', (weight,), (),
-    EngineBuild('fp32', {'features': InputShape.fixed((1, 3, 2))}))
+    EngineBuild({'features': InputShape.fixed((1, 3, 2))}))
 print(json.dumps(conditions['weights']))
 """
     result = subprocess.run(
@@ -206,7 +206,7 @@ cache._gpu_name = lambda: 'GPU A'
 while not Path(sys.argv[2]).exists():
     time.sleep(0.01)
 print(cache._conditions('encoder', '1', (Path(sys.argv[1]),), (),
-    EngineBuild('fp32', {'features': InputShape.fixed((1, 3, 2))}))['weights'][0])
+    EngineBuild({'features': InputShape.fixed((1, 3, 2))}))['weights'][0])
 """
     children = [
         subprocess.Popen(
@@ -296,7 +296,8 @@ def test_record_lives_in_user_cache_directory(tmp_path, monkeypatch, xdg):
 
 
 @pytest.mark.req("SP-TENSORACLE-002")
-def test_engine_identity_matches_the_original_full_hash_calculation(tmp_path, monkeypatch):
+@pytest.mark.req("SP-TENSORACLE-009")
+def test_engine_identity_matches_the_full_hash_calculation(tmp_path, monkeypatch):
     """Stored digests produce the same conditions and engine name as full file hashing."""
     root = tmp_path / "cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(root))
@@ -310,7 +311,6 @@ def test_engine_identity_matches_the_original_full_hash_calculation(tmp_path, mo
         "graph_version": "1",
         "weights": [hashlib.sha256(weight.read_bytes()).hexdigest()],
         "plugins": [hashlib.sha256(plugin.read_bytes()).hexdigest()],
-        "precision": "fp32",
         "inputs": {"features": {"minimum": [1, 3, 2], "optimum": [1, 3, 2], "maximum": [1, 3, 2]}},
         "builder_settings": {"workspace_limit": 1 << 30, "optimization_level": 3, "tf32": False},
         "gpu_name": "GPU A",

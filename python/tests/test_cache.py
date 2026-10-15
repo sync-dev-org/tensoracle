@@ -114,7 +114,7 @@ def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch
     )
     weights = tmp_path / "weights"
     weights.write_bytes(b"weights")
-    declaration = tensoracle.EngineBuild("fp32", {})
+    declaration = tensoracle.EngineBuild({})
 
     def save():
         return tensoracle.open_engine(
@@ -148,7 +148,6 @@ def test_two_named_engines_from_one_weight_file_are_saved_separately(tmp_path, m
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild(
-        precision="fp32",
         inputs={"features": tensoracle.InputShape.fixed((1, 3, 2))},
         settings=tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -189,7 +188,6 @@ def test_cached_engine_is_reused_in_another_process_without_calling_graph(tmp_pa
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild(
-        "fp32",
         {"features": tensoracle.InputShape.fixed((1, 3, 2))},
         tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -215,7 +213,7 @@ def forbidden(network):
     raise AssertionError('cached graph callback was invoked')
 handle = open_engine(
     forbidden,
-    EngineBuild('fp32', {'features': InputShape.fixed((1, 3, 2))}, BuilderSettings(optimization_level=0)),
+    EngineBuild({'features': InputShape.fixed((1, 3, 2))}, BuilderSettings(optimization_level=0)),
     name='encoder', graph_version='1', weights=(weights,),
     io=EngineIO({'features': TensorSpec(trt.float32, (1, 3, 2))},
                 {'result': TensorSpec(trt.float32, (1, 3, 2))}),
@@ -239,9 +237,7 @@ def test_saved_engine_deserialization_failure_guides_caller_to_check_plugins(tmp
     monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
-    declaration = tensoracle.EngineBuild(
-        "fp32", {"features": tensoracle.InputShape.fixed((1, 3, 2))}
-    )
+    declaration = tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed((1, 3, 2))})
     io = tensoracle.EngineIO(
         {"features": tensoracle.TensorSpec(trt.float32, (1, 3, 2))},
         {"result": tensoracle.TensorSpec(trt.float32, (1, 3, 2))},
@@ -291,7 +287,6 @@ def test_corrupt_plan_and_changed_header_fail_before_deserialization(tmp_path, m
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild(
-        "fp32",
         {"features": tensoracle.InputShape.fixed((1, 3, 2))},
         tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -358,7 +353,6 @@ def test_force_rebuild_uses_changed_weight_contents_and_preserves_old_engine(tmp
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild(
-        "fp32",
         {"features": tensoracle.InputShape.fixed((1, 3, 2))},
         tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -433,7 +427,7 @@ def test_build_failure_removes_placeholder_and_partial_files(tmp_path, monkeypat
     with pytest.raises(RuntimeError, match="graph failed"):
         tensoracle.open_engine(
             fail,
-            tensoracle.EngineBuild("fp32", {"features": tensoracle.InputShape.fixed((1, 3, 2))}),
+            tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed((1, 3, 2))}),
             name="encoder",
             graph_version="1",
             weights=(weights,),
@@ -459,7 +453,6 @@ def test_unset_xdg_cache_home_uses_user_cache_directory(tmp_path, monkeypatch):
     handle = tensoracle.open_engine(
         _graph(weights, "fp32", (1, 3, 2)),
         tensoracle.EngineBuild(
-            "fp32",
             {"features": tensoracle.InputShape.fixed((1, 3, 2))},
             tensoracle.BuilderSettings(optimization_level=0),
         ),
@@ -582,7 +575,6 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
         graph_version="1",
         weight_files=None,
         plugin_files=(),
-        precision="fp32",
         shape=(1, 3, 2),
         input_range=None,
         settings=None,
@@ -596,7 +588,6 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
             else tensoracle.InputShape.fixed(shape)
         )
         declaration = tensoracle.EngineBuild(
-            precision,
             {"features": input_shape},
             settings or tensoracle.BuilderSettings(optimization_level=0),
         )
@@ -628,7 +619,6 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
         {"weight_files": (changed_weights,)},
         {"plugin_files": (plugin_a,)},
         {"plugin_files": (plugin_b,)},
-        {"precision": "fp16"},
         {"shape": (1, 4, 2)},
         {"input_range": ((1, 1, 2), (1, 3, 2), (1, 5, 2))},
         {"input_range": ((1, 1, 2), (1, 3, 2), (1, 6, 2))},
@@ -666,7 +656,6 @@ def test_open_rejects_mismatched_names_types_dimensions_and_input_range(tmp_path
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild(
-        "fp32",
         {"features": tensoracle.InputShape.ranged((1, 1, 2), (1, 3, 2), (1, 5, 2))},
         tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -753,7 +742,6 @@ def test_second_process_rejects_exclusive_placeholder_and_force_rebuilds_it(tmp_
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild(
-        "fp32",
         {"features": tensoracle.InputShape.fixed((1, 3, 2))},
         tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -771,7 +759,7 @@ from tensoracle import (
 try:
     open_engine(
         lambda network: (_ for _ in ()).throw(AssertionError('second builder started')),
-        EngineBuild('fp32', {'features': InputShape.fixed((1, 3, 2))}, BuilderSettings(optimization_level=0)),
+        EngineBuild({'features': InputShape.fixed((1, 3, 2))}, BuilderSettings(optimization_level=0)),
         name='encoder', graph_version='1', weights=(Path(sys.argv[1]),),
         io=EngineIO({'features': TensorSpec(trt.float32, (1, 3, 2))},
                     {'result': TensorSpec(trt.float32, (1, 3, 2))}),

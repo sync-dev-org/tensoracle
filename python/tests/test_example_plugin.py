@@ -19,13 +19,14 @@ def installed_example(tmp_path_factory):
     sdk = os.environ.get("TENSORACLE_SDK_ROOT")
     if not sdk or shutil.which("uv") is None:
         pytest.skip("TensorRT SDK and uv were not supplied for the example wheel")
-    root = Path(__file__).resolve().parents[1]
+    project = Path(__file__).resolve().parents[1]
+    root = project.parent if project.name == "python" else project
     work = tmp_path_factory.mktemp("example-wheel")
     tensoracle_dist = work / "tensoracle-dist"
     example_dist = work / "example-dist"
     subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(tensoracle_dist)],
-        cwd=root,
+        cwd=project,
         check=True,
         capture_output=True,
         text=True,
@@ -75,6 +76,7 @@ def installed_example(tmp_path_factory):
     )
     return {
         "root": root,
+        "project": project,
         "work": work,
         "python": python,
         "main_wheel": main_wheel,
@@ -88,7 +90,12 @@ def _run(example, mode, cache, *extra):
     environment["CUDA_HOME"] = str(example["work"] / "absent-sdk")
     environment["TENSORRT_ROOT"] = str(example["work"] / "absent-sdk")
     result = subprocess.run(
-        [str(example["python"]), str(example["root"] / "tests/example_runtime.py"), mode, *extra],
+        [
+            str(example["python"]),
+            str(example["project"] / "tests/example_runtime.py"),
+            mode,
+            *extra,
+        ],
         cwd=example["work"],
         env=environment,
         check=True,
@@ -198,7 +205,10 @@ def test_wheel_library_with_other_bundle_is_rejected(installed_example, tmp_path
     assert len(candidates) == 1
     plugin = tmp_path / "changed.so"
     data = candidates[0].read_bytes()
-    root = Path(__file__).resolve().parents[1] / "examples/cubin_plugin/bundle"
+    project = Path(__file__).resolve().parents[1]
+    root = (
+        project.parent if project.name == "python" else project
+    ) / "examples/cubin_plugin/bundle"
     digest = json.loads((root / "bundle.json").read_text())["bundle_sha256"].encode()
     assert data.count(digest) >= 1
     plugin.write_bytes(data.replace(digest, b"0" * 64, 1))

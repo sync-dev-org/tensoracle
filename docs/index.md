@@ -16,7 +16,7 @@ Follow the [four-stage optimization workflow](optimization.md) to establish outp
 | --- | --- | --- |
 | Inference application | Use `open_engine` to reopen a matching saved engine, then enqueue it with `handle.create_execution()`. | The application supplies buffers and streams, for example through CuPy or `cuda-python`. |
 | Standard graph developer | Define a TensorRT graph, build it with `build_serialized_engine` or `open_engine`, and measure outputs with `compare_outputs`. | None for standard TensorRT layers. |
-| Cubin plugin developer | Produce cubins, build a native TensorRT plugin, and package it with the model. | `tensoracle[producer]`, CUDA toolkit, TensorRT SDK, CMake, and a C++17 compiler. |
+| Cubin plugin developer | Produce cubins, build a native TensorRT plugin, and package it with the model. | `tensoracle[producer]`, CUDA toolkit, TensorRT SDK, CMake 3.20 or later, and a C++17 compiler. |
 
 | Requirement | Inference application | Standard graph developer | Cubin plugin developer |
 | --- | --- | --- | --- |
@@ -27,7 +27,7 @@ Follow the [four-stage optimization workflow](optimization.md) to establish outp
 | Triton 3.8.0, `ptxas` 12.9.86, `cuobjdump` 13.3 | Not needed | Not needed | Installed with `tensoracle[producer]` for cubin production |
 | CUDA toolkit | Not needed | Not needed | Native plugin build |
 | TensorRT 11 SDK | Not needed | Not needed | Native plugin build |
-| CMake and C++17 compiler | Not needed | Not needed | Native plugin build |
+| CMake 3.20 or later and C++17 compiler | Not needed | Not needed | Native plugin build |
 
 The supported platform is Linux x86_64 (including WSL2) with sm86, sm89, or sm120 GPUs and TensorRT 11. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra.
 
@@ -161,11 +161,13 @@ Networks with outputs marked as shape tensors emit `tensoracle.ShapeTensorOutput
 
 ### Build a standard graph
 
-Define `graph(network)` with TensorRT's Python network API and load model weights from safetensors. Describe each graph input with `InputShape.fixed` or `InputShape.ranged`, and pass an `EngineBuild` declaration to `build_serialized_engine`. `open_engine` uses the same declaration plus a name, graph version, weight files, and `EngineIO` to save and reuse a checked engine. The supported precisions are fp32 (with TF32 disabled) and fp16. The [graph example](https://github.com/sync-dev-org/tensoracle#define-and-build-a-standard-graph) shows the exact calls.
+Define `graph(network)` with TensorRT's Python network API and load model weights from safetensors. Describe each graph input with `InputShape.fixed` or `InputShape.ranged`, and pass an `EngineBuild` declaration to `build_serialized_engine`. `EngineBuild` declares input shapes and builder settings; the graph function determines precision through the tensor types it places in the network. The supported precisions are fp32 (with TF32 disabled) and fp16. `open_engine` uses the same declaration plus a name, graph version, weight files, and `EngineIO` to save and reuse a checked engine. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. The [graph example](https://github.com/sync-dev-org/tensoracle#define-and-build-a-standard-graph) shows the exact calls.
 
 The application runs the engine and passes a CPU NumPy candidate output and a corresponding reference output to `compare_outputs`. The application chooses the acceptance limits. See [Compare output arrays](https://github.com/sync-dev-org/tensoracle#compare-output-arrays).
 
 ### Build a cubin plugin
+
+Repositories that adopt tensoracle must follow the [repository layout in the plugin guide](https://github.com/sync-dev-org/tensoracle#build-a-cubin-plugin).
 
 Install `tensoracle[producer]` when you need to compile cubins from your own kernels:
 

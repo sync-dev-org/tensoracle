@@ -2,5 +2,5 @@
 .nf/logs/
 .venv/
 __pycache__/
-src/tensoracle/_version.py
+python/src/tensoracle/_version.py
 site/

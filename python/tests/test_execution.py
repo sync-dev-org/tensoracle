@@ -375,7 +375,6 @@ def _open_sum(tmp_path, monkeypatch, *, fixed=False, point=False, internal_shape
     return tensoracle.open_engine(
         graph,
         tensoracle.EngineBuild(
-            "fp32",
             {"features": profile, "extra": profile},
             tensoracle.BuilderSettings(optimization_level=0),
         ),
@@ -530,7 +529,6 @@ def test_data_dependent_output_is_rejected_before_enqueue(tmp_path, monkeypatch)
     handle = tensoracle.open_engine(
         graph,
         tensoracle.EngineBuild(
-            "fp32",
             {"features": tensoracle.InputShape.fixed((3, 2))},
             tensoracle.BuilderSettings(optimization_level=0),
         ),

@@ -47,7 +47,6 @@ def measure(entry: str, fail: bool, directory: Path) -> dict[str, int]:
             network.mark_output(value)
 
     declaration = EngineBuild(
-        "fp32",
         {"features": InputShape.fixed((1, 512))},
         BuilderSettings(optimization_level=0),
     )

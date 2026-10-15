@@ -277,7 +277,6 @@ def _conditions(
         "graph_version": graph_version,
         "weights": [_weight_sha256(Path(path), force_rebuild=force_rebuild) for path in weights],
         "plugins": [_file_sha256(Path(path)) for path in plugins],
-        "precision": declaration.precision,
         "inputs": {
             name: {
                 "minimum": list(shape.minimum),

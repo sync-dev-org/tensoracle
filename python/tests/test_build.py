@@ -13,6 +13,13 @@ from safetensors.numpy import load_file, save_file
 from tensoracle import BuilderSettings, EngineBuild, InputShape, build_serialized_engine
 
 
+@pytest.mark.req("SP-TENSORACLE-020")
+def test_build_declaration_rejects_precision_keyword():
+    """The build declaration rejects precision because the graph owns tensor types."""
+    with pytest.raises(TypeError, match="precision"):
+        EngineBuild(precision="fp32", inputs={"features": InputShape.fixed((1, 3, 2))})
+
+
 @pytest.mark.req("SP-TENSORACLE-005")
 def test_package_requires_torch_only_for_checkpoint_conversion():
     """Only the conversion extra declares torch, leaving inference dependencies unchanged."""
@@ -120,7 +127,6 @@ def test_fixed_shape_build_runs_at_its_declared_size(tmp_path):
     path = tmp_path / "weights.safetensors"
     _weights(path)
     declaration = EngineBuild(
-        precision="fp32",
         inputs={"features": InputShape.fixed((1, 3, 2))},
         settings=BuilderSettings(optimization_level=0),
     )
@@ -137,7 +143,6 @@ def test_range_build_runs_at_minimum_optimum_and_maximum_and_rejects_outside(tmp
     path = tmp_path / "weights.safetensors"
     _weights(path)
     declaration = EngineBuild(
-        precision="fp32",
         inputs={"features": InputShape.ranged((1, 1, 2), (1, 3, 2), (1, 5, 2))},
         settings=BuilderSettings(optimization_level=0),
     )
@@ -155,12 +160,12 @@ def test_range_build_runs_at_minimum_optimum_and_maximum_and_rejects_outside(tmp
 
 @pytest.mark.gpu
 @pytest.mark.req("SP-TENSORACLE-013")
+@pytest.mark.req("SP-TENSORACLE-020")
 def test_fp16_build_runs_a_graph_with_fp16_tensors(tmp_path):
-    """A declared fp16 plan runs the graph's fp16 tensors."""
+    """An engine built without a precision declaration runs the graph's fp16 tensors."""
     path = tmp_path / "weights.safetensors"
     _weights(path)
     declaration = EngineBuild(
-        precision="fp16",
         inputs={"features": InputShape.ranged((1, 1, 2), (1, 2, 2), (1, 3, 2))},
         settings=BuilderSettings(optimization_level=0),
     )
@@ -174,7 +179,6 @@ def test_fp16_build_runs_a_graph_with_fp16_tensors(tmp_path):
 def test_tf32_request_is_rejected_before_graph_is_built():
     """An explicit request to enable TF32 fails without invoking the graph."""
     declaration = EngineBuild(
-        precision="fp32",
         inputs={"features": InputShape.fixed((1, 3, 2))},
         settings=BuilderSettings(tf32=True),
     )
@@ -224,7 +228,6 @@ def test_tf32_is_disabled_and_other_builder_settings_are_applied(monkeypatch):
     observed = []
     monkeypatch.setattr(module.trt, "Builder", Builder)
     declaration = EngineBuild(
-        precision="fp32",
         inputs={"features": InputShape.fixed((1, 3, 2))},
         settings=BuilderSettings(workspace_limit=4096, optimization_level=2),
     )

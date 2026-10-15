@@ -84,7 +84,7 @@ def test_unavailable_host_memory_release_preserves_the_build_result(monkeypatch,
         return SimpleNamespace()
 
     monkeypatch.setattr(ctypes, "CDLL", load)
-    declaration = EngineBuild("fp32", {})
+    declaration = EngineBuild({})
     if fail:
         with pytest.raises(RuntimeError) as caught:
             build_serialized_engine(lambda network: None, declaration)

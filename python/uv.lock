@@ -506,18 +506,6 @@ wheels = [
 ]
 
 [[package]]
-name = "noren"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/03/93f9e0ac3923af6adb6163ae5dd324fd418812a5b426c77e4876aa336978/noren-0.2.0.tar.gz", hash = "sha256:dd1b7c696d284eb29e020786d21087e63f584a7bd6b51a0f52dd5041a0f37624", size = 36465, upload-time = "2026-10-12T18:46:34.727Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/97/f0/026f8dde7e0f60eb87fef0f07aa24653b71589a40063eb99efc9d6d40fdf/noren-0.2.0-py3-none-any.whl", hash = "sha256:99e078c95fb6dca7011027c6a5c11ad8f1bb6c6490ca7e894ecb53a81a7b3862", size = 16159, upload-time = "2026-10-12T18:46:33.347Z" },
-]
-
-[[package]]
 name = "numpy"
 version = "2.5.3"
 source = { registry = "https://pypi.org/simple" }
@@ -971,11 +959,16 @@ producer = [
 dev = [
     { name = "cuda-python" },
     { name = "cupy-cuda13x" },
+    { name = "mkdocs" },
     { name = "mkdocs-material" },
     { name = "mkdocstrings", extra = ["python"] },
-    { name = "noren" },
     { name = "pytest" },
     { name = "ruff" },
+]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
 ]
 
 [package.metadata]
@@ -994,11 +987,16 @@ provides-extras = ["convert", "producer"]
 dev = [
     { name = "cuda-python", specifier = ">=13.0" },
     { name = "cupy-cuda13x", specifier = ">=14.2.0" },
+    { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-material", specifier = ">=9.7.7" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.6" },
-    { name = "noren", specifier = "==0.2.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.8" },
+]
+docs = [
+    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs-material", specifier = ">=9.7.7" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.6" },
 ]
 
 [[package]]

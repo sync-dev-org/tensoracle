@@ -27,7 +27,6 @@ def weights_path() -> Path:
 
 def declaration() -> EngineBuild:
     return EngineBuild(
-        "fp32",
         {"features": InputShape.ranged((1, 32), (16, 32), (32, 32))},
         BuilderSettings(optimization_level=0),
     )

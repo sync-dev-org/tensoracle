@@ -40,7 +40,8 @@ def test_example_producer_builds_three_architectures_without_torch(
     tmp_path, producer_tools, explicit_tools
 ):
     """Default wheel tools and explicit paths reproduce every bundled file without torch."""
-    root = Path(__file__).resolve().parents[1]
+    project = Path(__file__).resolve().parents[1]
+    root = project.parent if project.name == "python" else project
     output = tmp_path / "bundle"
     source = """
 import importlib.util
@@ -59,7 +60,7 @@ assert 'torch' not in sys.modules
         [str(producer_tools[name]) for name in ("ptxas", "cuobjdump")] if explicit_tools else []
     )
     environment = dict(os.environ)
-    environment["PYTHONPATH"] = str(root / "src") + os.pathsep + str(root)
+    environment["PYTHONPATH"] = str(project / "src") + os.pathsep + str(root)
     environment["TRITON_CACHE_DIR"] = str(tmp_path / "triton-cache")
     subprocess.run(
         [sys.executable, "-c", source, str(output), *arguments],

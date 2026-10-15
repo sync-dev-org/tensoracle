@@ -76,7 +76,7 @@ def test_library_is_registered_once_before_graph_and_kept_alive(tmp_path, monkey
             return object()
 
     monkeypatch.setattr(trt, "Builder", Builder)
-    declaration = EngineBuild("fp32", {"x": InputShape.fixed((1,))})
+    declaration = EngineBuild({"x": InputShape.fixed((1,))})
 
     def graph(network):
         assert observed == [library.resolve()]
@@ -114,7 +114,7 @@ def test_missing_plugin_has_a_library_error_before_engine_work(tmp_path, monkeyp
 @pytest.mark.req("SP-TENSORACLE-011")
 def test_open_engine_reports_missing_plugin_before_cache_or_graph(tmp_path):
     """A missing library is identified without reading a saved engine or building a graph."""
-    declaration = EngineBuild("fp32", {"x": InputShape.fixed((1,))})
+    declaration = EngineBuild({"x": InputShape.fixed((1,))})
     io = EngineIO({"x": TensorSpec(trt.float32, (1,))}, {"y": TensorSpec(trt.float32, (1,))})
     with pytest.raises(PluginLibraryError, match="missing"):
         open_engine(

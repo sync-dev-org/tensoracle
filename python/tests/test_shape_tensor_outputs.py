@@ -31,7 +31,6 @@ def _graph(network, *, output_kind="shape"):
 
 def _declaration():
     return tensoracle.EngineBuild(
-        "fp32",
         {"features": tensoracle.InputShape.fixed((3, 2))},
         tensoracle.BuilderSettings(optimization_level=0),
     )
@@ -149,7 +148,7 @@ def forbidden(network):
 
 handle = tensoracle.open_engine(
     forbidden,
-    tensoracle.EngineBuild('fp32', {'features': tensoracle.InputShape.fixed((3, 2))},
+    tensoracle.EngineBuild({'features': tensoracle.InputShape.fixed((3, 2))},
                          tensoracle.BuilderSettings(optimization_level=0)),
     name='shape-output', graph_version='1', weights=(Path(sys.argv[1]),),
     io=tensoracle.EngineIO({'features': tensoracle.TensorSpec(trt.float32, (3, 2))},

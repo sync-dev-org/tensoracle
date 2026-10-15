@@ -9,7 +9,7 @@ The first plugin computes an fp32 32 by 16 dot product and then scales it in a s
 From the tensoracle repository root, run:
 
 ```bash
-uv run --extra producer python -c 'from pathlib import Path; from examples.cubin_plugin.kernels import kernel_specs; from tensoracle.producer import compile_bundle; compile_bundle(kernel_specs(), Path("examples/cubin_plugin/bundle"))'
+uv run --project python --extra producer python -c 'from pathlib import Path; from examples.cubin_plugin.kernels import kernel_specs; from tensoracle.producer import compile_bundle; compile_bundle(kernel_specs(), Path("examples/cubin_plugin/bundle"))'
 ```
 
 This installs `tensoracle[producer]` with Triton 3.8.0, ptxas 12.9.86, and cuobjdump 13.3, and recreates `bundle/` without using a GPU. `compile_bundle` finds ptxas and cuobjdump in their installed NVIDIA wheels. The producer checks the cubin ELF SM, public and hidden argument layout, register count, and zero scratch sizes before writing the manifest. Run the tests below with the producer extra alone so torch is absent; `compile_bundle` rejects an already imported torch.
@@ -17,7 +17,7 @@ This installs `tensoracle[producer]` with Triton 3.8.0, ptxas 12.9.86, and cuobj
 Check that the regenerated files match the committed example without using a GPU or setting producer environment variables:
 
 ```bash
-uv run --extra producer pytest -m "not gpu" tests/test_producer.py
+uv run --project python --extra producer pytest -m "not gpu" python/tests/test_producer.py
 ```
 
 Without the producer extra, the compilation tests skip with an explanation of the missing tools.
@@ -39,7 +39,7 @@ Install the tensoracle wheel and this example wheel into a runtime Python enviro
 Run from the tensoracle repository with the SDK and CUDA toolkit paths set. The GPU tests build the example wheel, install it in a temporary runtime environment, and run dynamic shapes, direct builds, saved engine reuse, simultaneous execution in two distinct CUDA contexts, and an fp32 versus TF32 control. Each GPU subprocess has a 50 second limit.
 
 ```bash
-TENSORACLE_SDK_ROOT="$TENSORRT_ROOT" uv run pytest -q tests/test_example_plugin.py
+TENSORACLE_SDK_ROOT="$TENSORRT_ROOT" uv run --project python pytest -q python/tests/test_example_plugin.py
 ```
 
 Record the GPU name, SM, TensorRT runtime version, test result, and wheel digest on sm86, sm89, and sm120 separately. The code and wheel contain all three cubin generations; successful execution on one generation does not establish the other two.

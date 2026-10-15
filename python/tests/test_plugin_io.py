@@ -12,8 +12,9 @@ from cuda.bindings import runtime as cudart
 
 from tensoracle import BuilderSettings, EngineBuild, InputShape, build_serialized_engine
 
-ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "tests/cubin_io"
+PROJECT = Path(__file__).resolve().parents[1]
+ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
+FIXTURES = PROJECT / "tests/cubin_io"
 
 
 @pytest.fixture(scope="module")
@@ -124,7 +125,6 @@ def _plan(plugin, kind, shapes, *, dtype=trt.float16):
     return build_serialized_engine(
         graph,
         EngineBuild(
-            "fp16",
             {name: InputShape.fixed(shape) for name, shape in shapes.items()},
             BuilderSettings(workspace_limit=16 << 20, optimization_level=0),
         ),
@@ -218,7 +218,7 @@ def test_plugin_rejects_network_outside_declaration(half_plugin, fault, tmp_path
     environment = dict(os.environ, XDG_CACHE_HOME=str(tmp_path / "cache"))
     # Keep TensorRT's error state and any failed native graph in its own process.
     result = subprocess.run(
-        [sys.executable, str(ROOT / "tests/plugin_io_runtime.py"), str(half_plugin), fault],
+        [sys.executable, str(PROJECT / "tests/plugin_io_runtime.py"), str(half_plugin), fault],
         cwd=tmp_path,
         env=environment,
         check=False,

@@ -102,7 +102,7 @@ Keep `TENSORRT_ROOT` set to the absolute path of the verified `sdk` directory. F
 
 ```bash
 CMAKE_ARGS="-DTENSORRT_ROOT=$TENSORRT_ROOT" uv build examples/cubin_plugin --wheel
-TENSORACLE_SDK_ROOT="$TENSORRT_ROOT" uv run pytest -q tests/test_example_plugin.py
+TENSORACLE_SDK_ROOT="$TENSORRT_ROOT" uv run --project python pytest -q python/tests/test_example_plugin.py
 ```
 
 The tests also need the CUDA toolkit; tests marked `gpu` require an NVIDIA GPU and driver. The SDK is a build input. The application still selects the TensorRT runtime and verifies its own plugin with that runtime.
