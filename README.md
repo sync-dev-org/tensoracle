@@ -29,7 +29,7 @@ Choose the path that matches your work:
 
 The supported targets are Linux x86_64 (including WSL2), TensorRT 11, and GPU generations sm86, sm89, and sm120. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra described below.
 
-Follow the [four-stage optimization workflow](https://github.com/sync-dev-org/tensoracle/blob/main/docs/optimization.md) to establish output quality, evaluate fp16 and plugins, and measure speed.
+Follow the [four-stage optimization workflow](https://github.com/sync-dev-org/tensoracle/blob/main/docs/optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
 ## Convert a PyTorch checkpoint
 
@@ -83,6 +83,8 @@ plan: bytes = build_serialized_engine(graph, declaration)
 Use `InputShape.fixed((1, 64, 2))` for one input size; the graph may declare that size directly or use `-1` for a dimension fixed by the profile. For a range, put `-1` in each varying dimension of the graph input and declare its minimum, optimum, and maximum sizes. Every graph input needs a matching entry in `EngineBuild.inputs`.
 
 The engine's precision is determined by the tensor types that the graph function places in the network. For an fp16 graph, use `trt.float16` tensors and `np.float16` weights where needed; the graph can also contain fp32 tensors. `EngineBuild` declares input shapes and builder settings. TF32 is always disabled; `BuilderSettings(tf32=True)` raises `ValueError`. The function returns serialized plan bytes. Invalid declarations raise `ValueError`, and a failed TensorRT build raises `RuntimeError`.
+
+The same API builds bf16, int8, and fp8 graphs. Cast tensors to `trt.bfloat16` for bf16; for int8/fp8, place `add_quantize` / `add_dequantize` layers and load their scales from safetensors. The application determines scales with an external quantization library and chooses output quality limits with `compare_outputs`. fp8 targets sm89 and sm120; bf16 and int8 also target sm86. Follow [Build bf16, int8, and fp8 engines](https://github.com/sync-dev-org/tensoracle/blob/main/docs/precision.md) for a complete example, NumPy dtype constraints, and comparison against an fp32 engine. Use different engine names or graph versions for different precisions.
 
 ## Save and reopen an engine
 

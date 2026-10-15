@@ -2,7 +2,7 @@
 
 `tensoracle` builds TensorRT engines from model graphs supplied through TensorRT's Python network API. A model package owns its graph, safetensors weights, and output quality limits. `tensoracle` supplies engine building, saved engine reuse, execution, output comparison, and tools for cubin plugins. These workflows do not require torch. Only the optional `.pth` checkpoint converter requires torch, installed with `tensoracle[convert]`.
 
-Follow the [four-stage optimization workflow](optimization.md) to establish output quality, evaluate fp16 and plugins, and measure speed.
+Follow the [four-stage optimization workflow](optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
 ## Terms
 
@@ -161,7 +161,7 @@ Networks with outputs marked as shape tensors emit `tensoracle.ShapeTensorOutput
 
 ### Build a standard graph
 
-Define `graph(network)` with TensorRT's Python network API and load model weights from safetensors. Describe each graph input with `InputShape.fixed` or `InputShape.ranged`, and pass an `EngineBuild` declaration to `build_serialized_engine`. `EngineBuild` declares input shapes and builder settings; the graph function determines precision through the tensor types it places in the network. The supported precisions are fp32 (with TF32 disabled) and fp16. `open_engine` uses the same declaration plus a name, graph version, weight files, and `EngineIO` to save and reuse a checked engine. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. The [graph example](https://github.com/sync-dev-org/tensoracle#define-and-build-a-standard-graph) shows the exact calls.
+Define `graph(network)` with TensorRT's Python network API and load model weights from safetensors. Describe each graph input with `InputShape.fixed` or `InputShape.ranged`, and pass an `EngineBuild` declaration to `build_serialized_engine`. `EngineBuild` declares input shapes and builder settings; the graph function determines precision through the tensor types it places in the network. The supported precisions are fp32 (with TF32 disabled), fp16, bf16, int8, and fp8. The [bf16, int8, and fp8 guide](precision.md) shows tensor casts, explicit Q/DQ layers, and scales supplied through safetensors; fp8 targets sm89 and sm120. `open_engine` uses the same declaration plus a name, graph version, weight files, and `EngineIO` to save and reuse a checked engine. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. The [graph example](https://github.com/sync-dev-org/tensoracle#define-and-build-a-standard-graph) shows the exact calls.
 
 The application runs the engine and passes a CPU NumPy candidate output and a corresponding reference output to `compare_outputs`. The application chooses the acceptance limits. See [Compare output arrays](https://github.com/sync-dev-org/tensoracle#compare-output-arrays).
 
