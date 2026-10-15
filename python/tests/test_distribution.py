@@ -130,30 +130,53 @@ def test_public_snapshot_includes_only_the_pages_workflow(publication_config, tm
     assert paths - {PAGES_WORKFLOW} <= excluded
 
 
+@pytest.mark.req("SP-TENSORACLE-024")
 def test_pages_workflow_builds_the_public_snapshot(publication_config):
-    """Only the public repository builds locked docs dependencies and deploys the site."""
+    """Only the public repository builds and deploys docs with limited permissions and no secrets."""
     workflow_path = ROOT / PAGES_WORKFLOW
     assert workflow_path.is_file()
-    workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    workflow_source = workflow_path.read_text(encoding="utf-8")
+    assert "secrets." not in workflow_source
+    workflow = yaml.safe_load(workflow_source)
     triggers = workflow.get("on", workflow.get(True))
     assert triggers == {"push": {"branches": ["main"]}, "workflow_dispatch": None}
+
+    declared_permissions = set()
+    for scope in (workflow, *workflow["jobs"].values()):
+        permissions = scope.get("permissions", {})
+        assert isinstance(permissions, dict)
+        declared_permissions.update(permissions.items())
+    assert declared_permissions == {
+        ("contents", "read"),
+        ("pages", "write"),
+        ("id-token", "write"),
+    }
 
     steps = []
     for job in workflow["jobs"].values():
         assert job["if"] == "github.repository == 'sync-dev-org/tensoracle'"
         steps.extend(job["steps"])
     commands = [step["run"] for step in steps if "run" in step]
-    assert "uv sync --locked --only-group docs" in commands
+    assert commands == [
+        "uv sync --locked --only-group docs",
+        "uv run --no-sync mkdocs build --strict --config-file ../mkdocs.yml",
+    ]
     for job in workflow["jobs"].values():
         if any("run" in step for step in job["steps"]):
             assert job["defaults"]["run"]["working-directory"] == "python"
-    assert "uv run --no-sync mkdocs build --strict --config-file ../mkdocs.yml" in commands
     actions = {}
     for step in steps:
         if "uses" in step:
             action, version = step["uses"].split("@")
-            assert re.fullmatch(r"[0-9a-f]{40}|v\d+\.\d+\.\d+", version)
+            assert re.fullmatch(r"[0-9a-f]{40}", version)
             actions[action] = step
+    assert actions.keys() <= {
+        "actions/checkout",
+        "astral-sh/setup-uv",
+        "actions/configure-pages",
+        "actions/upload-pages-artifact",
+        "actions/deploy-pages",
+    }
     assert {
         "actions/configure-pages",
         "actions/upload-pages-artifact",
@@ -163,8 +186,9 @@ def test_pages_workflow_builds_the_public_snapshot(publication_config):
     deployment = next(job for job in workflow["jobs"].values() if "environment" in job)
     assert deployment["needs"] == "build"
     assert deployment["environment"]["name"] == "github-pages"
-    assert deployment["permissions"]["pages"] == "write"
-    assert deployment["permissions"]["id-token"] == "write"
+    deployment_permissions = deployment.get("permissions", workflow["permissions"])
+    assert deployment_permissions["pages"] == "write"
+    assert deployment_permissions["id-token"] == "write"
 
 
 def test_docs_dependencies_are_separate_from_gpu_development_packages(publication_config):
