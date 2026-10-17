@@ -31,6 +31,8 @@ The supported targets are Linux x86_64 (including WSL2), TensorRT 11, and GPU ge
 
 Follow the [four-stage optimization workflow](https://github.com/sync-dev-org/tensoracle/blob/main/docs/optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
+Follow [Build a C++ and Python repository](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) for source layout, development environments, bindings, and Linux wheel packaging.
+
 ## Convert a PyTorch checkpoint
 
 Install the conversion extra in the environment where you prepare weights:

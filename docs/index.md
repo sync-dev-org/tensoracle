@@ -4,6 +4,8 @@
 
 Follow the [four-stage optimization workflow](optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
+Follow [Build a C++ and Python repository](cpp-python-repositories.md) for source layout, development environments, bindings, and Linux wheel packaging.
+
 ## Terms
 
 - A **TensorRT engine** is an executable form of a model optimized for a GPU, precision, and TensorRT version. It can be kept in memory or saved to disk.
