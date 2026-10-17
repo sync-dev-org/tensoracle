@@ -95,7 +95,7 @@ def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch
 
     plan = b"\0" * (512 * 1024 * 1024)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     builder = SimpleNamespace(
         create_network=lambda flags: SimpleNamespace(num_inputs=0, num_outputs=0),
         create_builder_config=lambda: SimpleNamespace(
@@ -234,7 +234,7 @@ def test_saved_engine_deserialization_failure_guides_caller_to_check_plugins(tmp
 
     cache_root = tmp_path / "cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(cache_root))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     declaration = tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed((1, 3, 2))})
@@ -414,7 +414,7 @@ def test_build_failure_removes_placeholder_and_partial_files(tmp_path, monkeypat
     import tensoracle._cache as cache
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     monkeypatch.setattr(
         cache, "_build_serialized_engine", lambda graph, declaration, plugins, logger: graph(None)
     )
@@ -474,7 +474,7 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
     import tensoracle._cache as cache
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     same_contents = tmp_path / "same.safetensors"
@@ -627,7 +627,7 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
     ]
     paths = {open_case(**variant).path for variant in variants}
     with monkeypatch.context() as patch:
-        patch.setattr(cache, "_gpu_name", lambda: "GPU B")
+        patch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU B"})
         paths.add(open_case().path)
     with monkeypatch.context() as patch:
         patch.setattr(cache.platform, "system", lambda: "Other OS")

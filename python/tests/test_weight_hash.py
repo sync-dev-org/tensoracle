@@ -34,7 +34,7 @@ def _records(root: Path) -> list[Path]:
 def test_another_process_reuses_weight_digest_without_reading_weight(tmp_path, monkeypatch):
     """A later process uses the stored SHA-256 without opening an unchanged weight file."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"first weight contents")
     expected = _conditions(weight)["weights"][0]
@@ -45,7 +45,7 @@ from pathlib import Path
 import tensoracle._cache as cache
 from tensoracle import EngineBuild, InputShape
 weight = Path(sys.argv[1])
-cache._gpu_name = lambda: 'GPU A'
+cache._gpu_identity = lambda: {'name': 'GPU A'}
 original_open = Path.open
 def guarded_open(self, mode='r', *args, **kwargs):
     if self == weight and 'r' in mode:
@@ -67,7 +67,7 @@ print(json.dumps(conditions['weights']))
 def test_each_weight_file_attribute_change_recomputes_digest(tmp_path, monkeypatch):
     """A changed path, size, modification time, or inode triggers a fresh SHA-256."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"first")
     original_hash = cache._file_sha256
@@ -108,7 +108,7 @@ def test_each_weight_file_attribute_change_recomputes_digest(tmp_path, monkeypat
 def test_relative_weight_path_is_bound_to_working_directory(tmp_path, monkeypatch):
     """The same relative spelling in two directories cannot reuse the other file's digest."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     first_dir = tmp_path / "first"
     second_dir = tmp_path / "second"
     first_dir.mkdir()
@@ -132,7 +132,7 @@ def test_missing_or_unusable_record_is_recomputed(tmp_path, monkeypatch, damage)
     """A missing, damaged, incompatible, or unreadable record never blocks hashing."""
     root = tmp_path / "cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(root))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"contents")
     expected = _conditions(weight)["weights"][0]
@@ -163,7 +163,7 @@ def test_missing_or_unusable_record_is_recomputed(tmp_path, monkeypatch, damage)
 def test_unwritable_record_does_not_block_hashing(tmp_path, monkeypatch):
     """A failed record write leaves the computed digest usable and the next call recomputes."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"contents")
     original_replace = os.replace
@@ -202,7 +202,7 @@ import time
 from pathlib import Path
 import tensoracle._cache as cache
 from tensoracle import EngineBuild, InputShape
-cache._gpu_name = lambda: 'GPU A'
+cache._gpu_identity = lambda: {'name': 'GPU A'}
 while not Path(sys.argv[2]).exists():
     time.sleep(0.01)
 print(cache._conditions('encoder', '1', (Path(sys.argv[1]),), (),
@@ -225,7 +225,7 @@ print(cache._conditions('encoder', '1', (Path(sys.argv[1]),), (),
         assert stdout.strip() == expected
     (record,) = _records(root)
     assert json.loads(record.read_text(encoding="utf-8"))["sha256"] == expected
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     monkeypatch.setattr(cache, "_file_sha256", lambda path: pytest.fail("weight was reread"))
     assert _conditions(weight)["weights"] == [expected]
 
@@ -235,7 +235,7 @@ def test_weight_changed_during_hash_is_not_recorded(tmp_path, monkeypatch):
     """A file changed while hashing does not associate the old metadata with that digest."""
     root = tmp_path / "cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(root))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"first")
     original_hash = cache._file_sha256
@@ -261,7 +261,7 @@ def test_weight_changed_during_hash_is_not_recorded(tmp_path, monkeypatch):
 def test_force_rebuild_refreshes_digest_even_when_attributes_match(tmp_path, monkeypatch):
     """A requested rebuild rereads content and replaces a stale digest record."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"first")
     original = _conditions(weight)["weights"][0]
@@ -288,7 +288,7 @@ def test_record_lives_in_user_cache_directory(tmp_path, monkeypatch, xdg):
         root = tmp_path / "home" / ".cache"
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     weight.write_bytes(b"contents")
     _conditions(weight)
@@ -301,7 +301,7 @@ def test_engine_identity_matches_the_full_hash_calculation(tmp_path, monkeypatch
     """Stored digests produce the same conditions and engine name as full file hashing."""
     root = tmp_path / "cache"
     monkeypatch.setenv("XDG_CACHE_HOME", str(root))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weight = tmp_path / "weights.safetensors"
     plugin = tmp_path / "plugin.so"
     weight.write_bytes(b"weight contents")
@@ -313,7 +313,7 @@ def test_engine_identity_matches_the_full_hash_calculation(tmp_path, monkeypatch
         "plugins": [hashlib.sha256(plugin.read_bytes()).hexdigest()],
         "inputs": {"features": {"minimum": [1, 3, 2], "optimum": [1, 3, 2], "maximum": [1, 3, 2]}},
         "builder_settings": {"workspace_limit": 1 << 30, "optimization_level": 3, "tf32": False},
-        "gpu_name": "GPU A",
+        "gpu": {"name": "GPU A"},
         "os": cache.platform.system(),
         "architecture": cache.platform.machine(),
         "tensorrt_version": cache.trt.__version__,

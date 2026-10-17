@@ -236,7 +236,8 @@ def _write_weight_record(path: Path, record: dict) -> None:
                 pass
 
 
-def _gpu_name() -> str:
+def _gpu_identity() -> dict[str, str | int]:
+    """Describe device compatibility without binding the cache to a physical GPU."""
     library_name = ctypes.util.find_library("cuda") or ctypes.util.find_library("nvcuda")
     if library_name is None:
         raise RuntimeError("CUDA driver library was not found")
@@ -245,6 +246,8 @@ def _gpu_name() -> str:
     cuda.cuCtxGetDevice.argtypes = [ctypes.POINTER(ctypes.c_int)]
     cuda.cuDeviceGet.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
     cuda.cuDeviceGetName.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+    cuda.cuDeviceGetAttribute.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.c_int]
+    cuda.cuDeviceTotalMem_v2.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]
     if cuda.cuInit(0) != 0:
         raise RuntimeError("CUDA driver initialization failed")
     device = ctypes.c_int()
@@ -256,7 +259,33 @@ def _gpu_name() -> str:
     name = ctypes.create_string_buffer(256)
     if cuda.cuDeviceGetName(name, len(name), device.value) != 0:
         raise RuntimeError("CUDA device name lookup failed")
-    return name.value.decode("utf-8")
+    properties: dict[str, str | int] = {"name": name.value.decode("utf-8")}
+    # TensorRT's documented compatibility checks, plus ECC and device memory:
+    # https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/engine-compatibility.html#compatibility-checks
+    # ECC can distinguish otherwise identical devices with different usable memory.
+    # Attribute numbers are CUdevice_attribute values from the CUDA driver API.
+    for field, attribute in (
+        ("compute_capability_major", 75),
+        ("compute_capability_minor", 76),
+        ("global_memory_bus_width", 37),
+        ("l2_cache_size", 38),
+        ("max_shared_memory_per_block", 8),
+        ("max_shared_memory_per_block_optin", 97),
+        ("max_shared_memory_per_multiprocessor", 81),
+        ("texture_alignment", 14),
+        ("multiprocessor_count", 16),
+        ("integrated", 18),
+        ("ecc_enabled", 32),
+    ):
+        value = ctypes.c_int()
+        if cuda.cuDeviceGetAttribute(ctypes.byref(value), attribute, device.value) != 0:
+            raise RuntimeError(f"CUDA device attribute lookup failed: {field}")
+        properties[field] = value.value
+    total_memory = ctypes.c_size_t()
+    if cuda.cuDeviceTotalMem_v2(ctypes.byref(total_memory), device.value) != 0:
+        raise RuntimeError("CUDA device total memory lookup failed")
+    properties["total_memory"] = total_memory.value
+    return properties
 
 
 def _conditions(
@@ -286,7 +315,7 @@ def _conditions(
             for name, shape in declaration.inputs.items()
         },
         "builder_settings": asdict(declaration.settings),
-        "gpu_name": _gpu_name(),
+        "gpu": _gpu_identity(),
         "os": platform.system(),
         "architecture": platform.machine(),
         "tensorrt_version": trt.__version__,

@@ -50,7 +50,7 @@ def _cached_open(tmp_path, monkeypatch, engine, declaration, io):
     import tensoracle._cache as cache
 
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
-    monkeypatch.setattr(cache, "_gpu_name", lambda: "GPU A")
+    monkeypatch.setattr(cache, "_gpu_identity", lambda: {"name": "GPU A"})
     weights = tmp_path / "weights.safetensors"
     _weights(weights)
     conditions = cache._conditions("checked", "1", (weights,), (), declaration)
