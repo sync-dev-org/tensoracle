@@ -30,7 +30,7 @@ Follow [Prepare a TensorRT SDK](../../docs/tensorrt-sdk.md) to obtain and verify
 CMAKE_ARGS="-DTENSORRT_ROOT=$TENSORRT_ROOT" uv build examples/cubin_plugin --wheel
 ```
 
-The example's build backend and CUDA tooling belong to this project, not to tensoracle's runtime dependencies. Before installation, inspect the wheel with `tensoracle.bundle.inspect_wheel(wheel, plugin="example_cubin_plugin/libtensoracle_example_plugin.so")`. This compares the library's embedded digest and cubin bytes with the manifest and cubin files.
+The example's build backend and CUDA tooling belong to this project, not to tensoracle's runtime dependencies. Before installation, inspect the wheel with `tensoracle.bundle.inspect_wheel(wheel, plugin="example_cubin_plugin/libtensoracle_example_plugin.so")`. For a wheel built on Windows, pass `plugin="example_cubin_plugin/tensoracle_example_plugin.dll"`. This compares the library's embedded digest and cubin bytes with the manifest and cubin files.
 
 Install the tensoracle wheel and this example wheel into a runtime Python environment with TensorRT 11 and `cuda-python`, but without Triton, torch, or the TensorRT SDK. `open_engine` registers the library before calling `graph` or opening a saved engine. The tests use two separate processes and an `XDG_CACHE_HOME` directory to verify that the second process reuses the saved engine without building a graph.
 

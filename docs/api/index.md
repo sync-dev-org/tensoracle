@@ -12,6 +12,8 @@ The following names are available directly from `tensoracle`.
 
 ::: tensoracle._build.build_serialized_engine
 
+::: tensoracle._build.ShapeTensorOutputWarning
+
 ## Saved engines
 
 ::: tensoracle._cache.TensorSpec

@@ -410,7 +410,7 @@ def test_wheel_metadata_describes_the_public_package(distributions):
     assert metadata.get_all("License-File") == ["LICENSE"]
     assert metadata["Requires-Python"] == "<3.14,>=3.12"
     assert set(metadata.get_all("Classifier", [])) == {
-        "Development Status :: 4 - Beta",
+        "Development Status :: 5 - Production/Stable",
         "Environment :: GPU :: NVIDIA CUDA :: 13",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
