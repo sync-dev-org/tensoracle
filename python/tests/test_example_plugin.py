@@ -39,7 +39,14 @@ def installed_example(tmp_path_factory):
                 archive.extract(name, work / "distributed-source")
     environment = dict(os.environ)
     cpp_root = work / "distributed-source/tensoracle/cpp"
-    environment["CMAKE_ARGS"] = f"-DTENSORRT_ROOT={sdk} -DTENSORACLE_CPP_ROOT={cpp_root}"
+    cmake_settings = [
+        f"--config-setting=cmake.define.TENSORRT_ROOT={Path(sdk).as_posix()}",
+        f"--config-setting=cmake.define.TENSORACLE_CPP_ROOT={cpp_root.as_posix()}",
+    ]
+    if cuda := os.environ.get("TENSORACLE_CUDA_ROOT"):
+        cmake_settings.append(
+            f"--config-setting=cmake.define.CUDAToolkit_ROOT={Path(cuda).as_posix()}"
+        )
     subprocess.run(
         [
             "uv",
@@ -48,6 +55,7 @@ def installed_example(tmp_path_factory):
             "--wheel",
             "--out-dir",
             str(example_dist),
+            *cmake_settings,
         ],
         cwd=root,
         env=environment,
@@ -56,7 +64,7 @@ def installed_example(tmp_path_factory):
         text=True,
         timeout=45,
     )
-    python = work / "runtime/bin/python"
+    python = work / "runtime" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     subprocess.run(
         ["uv", "venv", "--python", sys.executable, str(work / "runtime")],
         check=True,
@@ -74,6 +82,23 @@ def installed_example(tmp_path_factory):
         # Add the 45 s slowest measured cold install and round up to 70 minutes.
         timeout=4200,
     )
+    result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "import json, sysconfig; from example_cubin_plugin import library_path; "
+                "print(json.dumps({'library': str(library_path()), "
+                "'site_packages': sysconfig.get_path('purelib')}))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    runtime = json.loads(result.stdout)
+    library = Path(runtime["library"])
     return {
         "root": root,
         "project": project,
@@ -81,6 +106,8 @@ def installed_example(tmp_path_factory):
         "python": python,
         "main_wheel": main_wheel,
         "example_wheel": example_wheel,
+        "library": library,
+        "plugin_member": library.relative_to(runtime["site_packages"]).as_posix(),
     }
 
 
@@ -128,7 +155,7 @@ def test_distributions_ship_cpp_without_torch_or_triton(installed_example):
     assert "tensoracle/cpp/cmake/TensoracleCubinPlugin.cmake" in names
     assert inspect_wheel(
         installed_example["example_wheel"],
-        plugin="example_cubin_plugin/libtensoracle_example_plugin.so",
+        plugin=installed_example["plugin_member"],
     )
 
 
@@ -200,11 +227,9 @@ def test_fp32_example_differs_from_tf32_control(installed_example):
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_wheel_library_with_other_bundle_is_rejected(installed_example, tmp_path):
     """The wheel's bundle validator detects a library claiming another manifest."""
-    installed = installed_example["work"] / "runtime/lib"
-    candidates = list(installed.rglob("libtensoracle_example_plugin.so"))
-    assert len(candidates) == 1
-    plugin = tmp_path / "changed.so"
-    data = candidates[0].read_bytes()
+    library = installed_example["library"]
+    plugin = tmp_path / library.name
+    data = library.read_bytes()
     project = Path(__file__).resolve().parents[1]
     root = (
         project.parent if project.name == "python" else project

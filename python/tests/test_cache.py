@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -18,6 +17,7 @@ import tensorrt as trt
 from safetensors.numpy import save_file
 
 import tensoracle
+from native_build import build_library
 from test_build import _graph, _weights
 
 
@@ -481,19 +481,15 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
     same_contents.write_bytes(weights.read_bytes())
     changed_weights = tmp_path / "changed.safetensors"
     save_file({"different": np.array([1, 2], dtype=np.float32)}, str(changed_weights))
-    compiler = shutil.which("cc")
-    if compiler is None or sys.platform != "linux":
-        pytest.skip("a Linux C compiler is needed to build plugin libraries")
-    plugin_a = tmp_path / "plugin-a.so"
-    plugin_b = tmp_path / "plugin-b.so"
-    for label, path in (("a", plugin_a), ("b", plugin_b)):
-        source = tmp_path / f"plugin-{label}.c"
-        source.write_text(
-            f"int {label}(void) {{ return 1; }}\n"
-            "void *getCreators(int *count) { *count = 0; return 0; }\n",
-            encoding="utf-8",
+    plugin_a, plugin_b = (
+        build_library(
+            tmp_path,
+            f"plugin-{label}",
+            f"TEST_EXPORT int {label}(void) {{ return 1; }}\n"
+            "TEST_EXPORT void *getCreators(int *count) { *count = 0; return 0; }\n",
         )
-        subprocess.run([compiler, "-shared", "-fPIC", str(source), "-o", str(path)], check=True)
+        for label in ("a", "b")
+    )
 
     class PluginRegistry:
         def load_library(self, path):

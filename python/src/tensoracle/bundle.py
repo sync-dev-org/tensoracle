@@ -4,7 +4,7 @@ import hashlib
 import json
 import struct
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from zipfile import ZipFile
 
 from ._plugins import PluginLibraryError, exported_data
@@ -125,6 +125,18 @@ def _validate_entry(entry: dict) -> None:
         raise BundleError("unsupported floating point specialization rule")
 
 
+def _relative_path(name: str) -> bool:
+    posix = PurePosixPath(name)
+    windows = PureWindowsPath(name)
+    return not (
+        posix.is_absolute()
+        or windows.drive
+        or windows.root
+        or ".." in posix.parts
+        or ".." in windows.parts
+    )
+
+
 def inspect_bundle(root: Path, *, plugin: Path | None = None) -> str:
     """Verify cubin bytes, ELF SM, supported launch metadata, and plugin identity."""
     root = Path(root)
@@ -144,7 +156,7 @@ def inspect_bundle(root: Path, *, plugin: Path | None = None) -> str:
             raise BundleError("invalid cubin entry")
         _validate_entry(entry)
         name = entry.get("file")
-        if not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts:
+        if not isinstance(name, str) or not _relative_path(name):
             raise BundleError("invalid cubin path")
         if name in visited:
             raise BundleError("duplicate cubin path")
@@ -189,9 +201,9 @@ def inspect_wheel(path: Path, *, plugin: str | None = None) -> str:
     with tempfile.TemporaryDirectory() as directory, ZipFile(path) as archive:
         root = Path(directory)
         for info in archive.infolist():
-            member = Path(info.filename)
-            if member.is_absolute() or ".." in member.parts:
+            if not _relative_path(info.filename):
                 raise BundleError("wheel contains an invalid path")
+            member = Path(info.filename)
             if info.is_dir():
                 continue
             destination = root / member
@@ -200,7 +212,7 @@ def inspect_wheel(path: Path, *, plugin: str | None = None) -> str:
         manifests = list(root.rglob("bundle.json"))
         if len(manifests) != 1:
             raise BundleError("wheel must contain exactly one cubin bundle")
-        library = root / plugin if plugin is not None else None
-        if library is not None and (Path(plugin).is_absolute() or ".." in Path(plugin).parts):
+        if plugin is not None and not _relative_path(plugin):
             raise BundleError("invalid plugin path in wheel")
+        library = root / plugin if plugin is not None else None
         return inspect_bundle(manifests[0].parent, plugin=library)

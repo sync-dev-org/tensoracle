@@ -111,7 +111,7 @@ def _control():
     sm = f"sm{properties.major * 10 + properties.minor}"
     entry = next(item for item in manifest["entries"] if item["id"] == f"{sm}.dot.tf32-control")
     image = (library_path().parent / "bundle" / entry["file"]).read_bytes()
-    driver = ctypes.CDLL("libcuda.so.1")
+    driver = ctypes.CDLL("nvcuda.dll" if sys.platform == "win32" else "libcuda.so.1")
 
     def call(name, *args):
         method = getattr(driver, name)
@@ -192,7 +192,7 @@ def _control():
 
 def _separate_cuda_contexts():
     """Reopen the cached plan in two owner contexts at the same time."""
-    driver = ctypes.CDLL("libcuda.so.1")
+    driver = ctypes.CDLL("nvcuda.dll" if sys.platform == "win32" else "libcuda.so.1")
 
     def call(name, *args):
         method = getattr(driver, name)
@@ -229,7 +229,7 @@ def _duplicate_creator(directory):
     register_libraries((original,))
     registry = trt.get_plugin_registry()
     assert registry.get_creator("TensoracleExampleDot", "1", "tensoracle.example") is not None
-    changed = Path(directory) / "same-creators-changed-bytes.so"
+    changed = Path(directory) / f"same-creators-changed-bytes{original.suffix}"
     shutil.copyfile(original, changed)
     with changed.open("ab") as stream:
         stream.write(b"different bytes with the same creators")

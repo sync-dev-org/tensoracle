@@ -123,7 +123,7 @@ reference_handle = open_linear("fp32")
 candidate_handle = open_linear("bf16")  # Or "int8"; "fp8" on sm89/sm120.
 ```
 
-TF32 remains disabled by tensoracle, including for the fp32 reference. Engines are saved under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle`. Repeat the same call with unchanged build conditions in another process to reuse the plan without invoking the graph function. Keep the weight file and the engine names/versions stable across the restart. Follow [Execute an engine](index.md#execute-an-engine) to allocate fp32 input/output buffers and enqueue each handle with the same inputs.
+TF32 remains disabled by tensoracle, including for the fp32 reference. Engines are saved under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` (`%USERPROFILE%\.cache\tensoracle` on Windows). Repeat the same call with unchanged build conditions in another process to reuse the plan without invoking the graph function. Keep the weight file and the engine names/versions stable across the restart. Follow [Execute an engine](index.md#execute-an-engine) to allocate fp32 input/output buffers and enqueue each handle with the same inputs.
 
 ## Compare outputs and choose limits
 

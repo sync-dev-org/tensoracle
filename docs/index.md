@@ -31,7 +31,7 @@ Follow [Build a C++ and Python repository](cpp-python-repositories.md) for sourc
 | TensorRT 11 SDK | Not needed | Not needed | Native plugin build |
 | CMake 3.20 or later and C++17 compiler | Not needed | Not needed | Native plugin build |
 
-The supported platform is Linux x86_64 (including WSL2) with sm86, sm89, or sm120 GPUs and TensorRT 11. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra.
+The supported platforms are Linux x86_64 (including WSL2) and Windows x86_64 with sm86, sm89, or sm120 GPUs and TensorRT 11. The same `py3-none-any` wheel installs on both operating systems. Cubin production with `tensoracle[producer]` runs on Linux; a plugin DLL built on Windows can embed cubins produced on Linux. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra.
 
 ### Convert a PyTorch checkpoint
 
@@ -72,7 +72,7 @@ handle = open_engine(
 )
 ```
 
-`my_model` represents the application's model package. On a valid cache hit, `open_engine` does not call `graph`; on a miss, it builds and saves a new engine. Raise `graph_version` when the graph code changes or when any other caller value that changes the engine contents but is not part of the cache identity changes, such as a plugin manifest or a build recipe. `open_engine` itself does not execute the engine or manage GPU buffers. Create an execution unit from its returned handle to enqueue inference. Saved engines live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when `XDG_CACHE_HOME` is unset. See the [complete cache example](https://github.com/sync-dev-org/tensoracle#save-and-reopen-an-engine) for the declaration and expected input and output types.
+`my_model` represents the application's model package. On a valid cache hit, `open_engine` does not call `graph`; on a miss, it builds and saves a new engine. Raise `graph_version` when the graph code changes or when any other caller value that changes the engine contents but is not part of the cache identity changes, such as a plugin manifest or a build recipe. `open_engine` itself does not execute the engine or manage GPU buffers. Create an execution unit from its returned handle to enqueue inference. Saved engines live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when `XDG_CACHE_HOME` is unset. On Windows, `~` is `%USERPROFILE%`. See the [complete cache example](https://github.com/sync-dev-org/tensoracle#save-and-reopen-an-engine) for the declaration and expected input and output types.
 
 ### Execute an engine
 

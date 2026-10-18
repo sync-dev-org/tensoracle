@@ -2,15 +2,14 @@
 
 import hashlib
 import json
-import shutil
 import struct
-import subprocess
-import sys
 import zipfile
 
 import pytest
 
+from native_build import build_library
 from tensoracle.bundle import (
+    BundleError,
     CorruptCubinError,
     CubinArchitectureError,
     MissingCubinError,
@@ -116,17 +115,13 @@ def test_inspector_rejects_unknown_argument_or_specialization(tmp_path):
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_detects_plugin_from_another_bundle(tmp_path):
     """A native plugin cannot claim a different bundle from its inspected cubins."""
-    if sys.platform != "linux" or shutil.which("cc") is None:
-        pytest.skip("a Linux C compiler is needed for native plugin checks")
     _bundle(tmp_path)
-    source = tmp_path / "plugin.c"
-    source.write_text(
-        'const char tensoracle_bundle_sha256[] = "' + "0" * 64 + '";\n'
-        "void *getCreators(int *count) { *count = 0; return 0; }\n",
-        encoding="utf-8",
+    library = build_library(
+        tmp_path,
+        "plugin",
+        'TEST_EXPORT const char tensoracle_bundle_sha256[] = "' + "0" * 64 + '";\n'
+        "TEST_EXPORT void *getCreators(int *count) { *count = 0; return 0; }\n",
     )
-    library = tmp_path / "plugin.so"
-    subprocess.run(["cc", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
     with pytest.raises(PluginBundleMismatchError):
         inspect_bundle(tmp_path, plugin=library)
 
@@ -134,23 +129,19 @@ def test_inspector_detects_plugin_from_another_bundle(tmp_path):
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_inspector_checks_embedded_cubin_bytes_in_plugin(tmp_path):
     """A plugin with the right bundle name cannot hide a different embedded cubin."""
-    if sys.platform != "linux" or shutil.which("cc") is None:
-        pytest.skip("a Linux C compiler is needed for native plugin checks")
     _bundle(tmp_path)
     manifest_path = tmp_path / "bundle.json"
     manifest = json.loads(manifest_path.read_text())
     manifest["entries"][0]["embedded_symbol"] = "tensoracle_cubin_sample"
     manifest_path.write_text(json.dumps(manifest))
     digest = bundle_sha256(manifest)
-    source = tmp_path / "plugin.c"
-    source.write_text(
-        f'const char tensoracle_bundle_sha256[] = "{digest}";\n'
-        "const unsigned char tensoracle_cubin_sample[] = {1, 2, 3};\n"
-        "void *getCreators(int *count) { *count = 0; return 0; }\n",
-        encoding="utf-8",
+    library = build_library(
+        tmp_path,
+        "plugin",
+        f'TEST_EXPORT const char tensoracle_bundle_sha256[] = "{digest}";\n'
+        "TEST_EXPORT const unsigned char tensoracle_cubin_sample[] = {1, 2, 3};\n"
+        "TEST_EXPORT void *getCreators(int *count) { *count = 0; return 0; }\n",
     )
-    library = tmp_path / "plugin.so"
-    subprocess.run(["cc", "-shared", "-fPIC", str(source), "-o", str(library)], check=True)
     with pytest.raises(PluginBundleMismatchError, match="embedded cubin"):
         inspect_bundle(tmp_path, plugin=library)
 
@@ -168,3 +159,57 @@ def test_inspector_checks_a_synthetic_wheel(tmp_path):
         archive.write(tmp_path / "bundle.json", "example/bundle.json")
     with pytest.raises(MissingCubinError):
         inspect_wheel(wheel)
+
+
+UNSAFE_PATHS = [
+    "/outside",
+    "../outside",
+    "cubins/../../outside",
+    "C:relative",
+    "C:/outside",
+    r"C:\outside",
+    r"\outside",
+    r"\\server\share\outside",
+    "//server/share/outside",
+    r"cubins\..\outside",
+    r"cubins/..\outside",
+]
+
+
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.parametrize("name", UNSAFE_PATHS)
+def test_manifest_rejects_paths_outside_bundle_on_either_os(tmp_path, name):
+    """Cubin paths with POSIX or Windows roots, drives, or parent steps are rejected."""
+    _, manifest = _bundle(tmp_path)
+    manifest["entries"][0]["file"] = name
+    (tmp_path / "bundle.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(BundleError, match="invalid cubin path"):
+        inspect_bundle(tmp_path)
+
+
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.parametrize("name", UNSAFE_PATHS)
+@pytest.mark.parametrize("directory", [False, True], ids=["file", "directory"])
+def test_wheel_rejects_paths_outside_extraction_on_either_os(tmp_path, name, directory):
+    """Wheel files and directories cannot escape through POSIX or Windows path syntax."""
+    wheel = tmp_path / "unsafe.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(name + ("/" if directory else ""), b"unused")
+    with pytest.raises(BundleError, match="wheel contains an invalid path"):
+        inspect_wheel(wheel)
+
+
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.parametrize("name", UNSAFE_PATHS)
+def test_wheel_rejects_plugin_paths_outside_extraction_on_either_os(tmp_path, name):
+    """A plugin path is validated under both OS path rules before inspecting its bytes."""
+    cubin, _ = _bundle(tmp_path)
+    wheel = tmp_path / "example.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.write(tmp_path / "bundle.json", "example/bundle.json")
+        archive.write(cubin, "example/cubins/sample.cubin")
+    with pytest.raises(BundleError, match="invalid plugin path in wheel"):
+        inspect_wheel(wheel, plugin=name)

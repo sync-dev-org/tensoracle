@@ -5,6 +5,10 @@
 #include <stdexcept>
 #include <utility>
 
+#if defined(NDEBUG)
+#error "The native IO contract requires active assertions"
+#endif
+
 using namespace nvinfer1;
 using namespace tensoracle::cubin;
 

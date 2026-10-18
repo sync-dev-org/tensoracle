@@ -10,7 +10,11 @@ function(tensoracle_add_cubin_plugin)
     find_package(CUDAToolkit REQUIRED)
     find_path(TENSORACLE_NVINFER_INCLUDE NvInfer.h
         PATHS "${ARG_TENSORRT_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
-    find_library(TENSORACLE_NVINFER_LIBRARY NAMES nvinfer
+    set(_tensoracle_nvinfer_names nvinfer)
+    if(WIN32)
+        list(PREPEND _tensoracle_nvinfer_names nvinfer_11)
+    endif()
+    find_library(TENSORACLE_NVINFER_LIBRARY NAMES ${_tensoracle_nvinfer_names}
         PATHS "${ARG_TENSORRT_ROOT}/lib" "${ARG_TENSORRT_ROOT}/lib64"
         NO_DEFAULT_PATH REQUIRED)
 

@@ -27,7 +27,7 @@ Choose the path that matches your work:
 | TensorRT 11 SDK | Not needed | Not needed | Native plugin build |
 | CMake 3.20 or later and C++17 compiler | Not needed | Not needed | Native plugin build |
 
-The supported targets are Linux x86_64 (including WSL2), TensorRT 11, and GPU generations sm86, sm89, and sm120. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra described below.
+The supported targets are Linux x86_64 (including WSL2) and Windows x86_64, TensorRT 11, and GPU generations sm86, sm89, and sm120. The same `py3-none-any` wheel installs on both operating systems. Cubin production with `tensoracle[producer]` runs on Linux; cubins do not depend on the OS, so a plugin DLL built on Windows can embed cubins produced on Linux. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra described below.
 
 Follow the [four-stage optimization workflow](https://github.com/sync-dev-org/tensoracle/blob/main/docs/optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
@@ -111,7 +111,7 @@ handle = open_engine(
 engine = handle.engine  # Keep handle.runtime alive while using the engine.
 ```
 
-Saved files live in the `tensoracle` directory under `XDG_CACHE_HOME`, or under `~/.cache` when that variable is unset. The cache identity includes the contents of all declared safetensors weight files and optional `plugins` files, the engine name, graph version, input shapes, builder settings, GPU product name, OS, CPU architecture, and TensorRT version. Raise `graph_version` when graph code changes; without a version change, the previous engine is reused. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. Include in `graph_version` any other caller value that changes the engine contents but is not part of the cache identity, such as a plugin manifest or a build recipe. Pass `force_rebuild=True` to replace a cached engine even when it is intact.
+Saved files live in the `tensoracle` directory under `XDG_CACHE_HOME`, or under the home directory's `.cache` when that variable is unset. The same rule applies on every OS; on Windows the home directory is `%USERPROFILE%`, so the default is `%USERPROFILE%\.cache\tensoracle`. The cache identity includes the contents of all declared safetensors weight files and optional `plugins` files, the engine name, graph version, input shapes, builder settings, GPU product name, OS, CPU architecture, and TensorRT version. Raise `graph_version` when graph code changes; without a version change, the previous engine is reused. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. Include in `graph_version` any other caller value that changes the engine contents but is not part of the cache identity, such as a plugin manifest or a build recipe. Pass `force_rebuild=True` to replace a cached engine even when it is intact. tensoracle closes a saved engine file after reading it, so another process using an opened engine does not block replacement. On Windows, a process that keeps the saved file itself open prevents replacement or removal with `PermissionError`; after that process closes the file, a file left empty by the failed rebuild is rejected as `CorruptEngineError` and can be rebuilt with `force_rebuild=True`.
 
 `plugins` names native TensorRT plugin libraries. Both `open_engine` and `build_serialized_engine` accept it. Each function checks that every library exports `getCreators`, loads it through TensorRT's registry, and retains it for the process before building the graph or deserializing an engine. Repeating the same library does not register it twice. `open_engine` also hashes the loaded library bytes into the engine identity; a changed library selects a different saved engine in a new process. A missing, unreadable, or incompatible library, or a library changed after loading in the same process, raises `PluginLibraryError` before a cached plan is opened. Keep the library and its cubin bundle together in the caller's wheel.
 
@@ -291,7 +291,17 @@ The example was also built with an older compiler and CUDA toolkit:
 | --- | --- | --- | --- |
 | gcc 13.3.0 / CMake 4.2.3 / CUDA toolkit 12.9.86 / TensorRT SDK 11.2.1.2 | `build` and a separate-process `reuse` with TensorRT runtime 11.2.1.2 on sm86 succeeded with zero outputs outside tolerance and both variants launched | 3.13.7 | WSL2 / glibc 2.39 |
 
-Each GPU subprocess had a 50-second limit. Speed was not measured. Native Linux, other kernels, and TensorRT 11 versions not listed here have not been tested.
+Each GPU subprocess had a 50-second limit. Speed was not measured.
+
+On 2026-10-18, the test suite and a native plugin build were run on Windows:
+
+| GPU | Result | Python | OS / NVIDIA driver / build tools / TensorRT |
+| --- | --- | --- | --- |
+| NVIDIA RTX 6000 Ada Generation (sm89) | `pytest`: 246 passed, 20 skipped (Linux-only memory checks and optional `convert` and `producer` dependencies) | 3.12.11 | Windows 11 Pro x64 build 26200 / 596.72 / Visual Studio 2022 (MSVC 19.44), CMake 3.31.6, Ninja, CUDA toolkit 12.8.93 / runtime and SDK 11.4.0.106 |
+
+On Windows, the standalone `cpp/` build and CTest passed, the CMake helper built the example plugin DLL against `nvinfer_11.lib`, and the plugin engine was built and reused in a separate process. The `py3-none-any` wheel built on Linux was installed unchanged on Windows. With `PATH` reduced to the Windows system directories and no CUDA or TensorRT SDK paths, the driver's `nvcuda.dll` and the pip-installed TensorRT runtime were sufficient to build and reuse engines.
+
+Native Linux, other kernels, Windows with sm86 or sm120, and TensorRT 11 versions not listed here have not been tested.
 
 ## Compare output arrays
 

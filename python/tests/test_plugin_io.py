@@ -10,10 +10,10 @@ import pytest
 import tensorrt as trt
 from cuda.bindings import runtime as cudart
 
+from native_build import build_cubin, build_native
 from tensoracle import BuilderSettings, EngineBuild, InputShape, build_serialized_engine
 
 PROJECT = Path(__file__).resolve().parents[1]
-ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
 FIXTURES = PROJECT / "tests/cubin_io"
 
 
@@ -26,38 +26,10 @@ def native_tools():
     return Path(sdk), Path(cuda)
 
 
-def _compile(source, output, native_tools, *options):
-    sdk, cuda = native_tools
-    result = subprocess.run(
-        [
-            "c++",
-            "-std=c++17",
-            "-Wno-deprecated-declarations",
-            f"-I{ROOT / 'cpp/include'}",
-            f"-I{sdk / 'include'}",
-            f"-I{cuda / 'include'}",
-            str(source),
-            str(ROOT / "cpp/src/cubin_plugin.cpp"),
-            f"-L{cuda / 'lib64/stubs'}",
-            "-lcuda",
-            *options,
-            "-o",
-            str(output),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
-    assert result.returncode == 0, result.stderr
-
-
 @pytest.fixture(scope="module")
 def native_contract(native_tools, tmp_path_factory):
     work = tmp_path_factory.mktemp("plugin-io-contract")
-    executable = work / "check"
-    _compile(FIXTURES / "check.cpp", executable, native_tools)
-    return executable
+    return build_native(work, "check", (FIXTURES / "check.cpp",), tools=native_tools)
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
@@ -75,35 +47,25 @@ def _cuda(result):
 
 @pytest.fixture(scope="module")
 def half_plugin(native_tools, tmp_path_factory):
-    _, cuda = native_tools
     work = tmp_path_factory.mktemp("plugin-half-io")
     device = _cuda(cudart.cudaGetDevice())
     properties = _cuda(cudart.cudaGetDeviceProperties(device))
     sm = properties.major * 10 + properties.minor
-    cubin = work / "half_io.cubin"
-    subprocess.run(
-        [
-            str(cuda / "bin/nvcc"),
-            "--cubin",
-            f"-arch=sm_{sm}",
-            str(FIXTURES / "kernels.cu"),
-            "-o",
-            str(cubin),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
+    cubin = build_cubin(work / "cubin", FIXTURES / "kernels.cu", native_tools, sm)
     (work / "kernel_bytes.hpp").write_text(
         "alignas(16) unsigned char const kKernelBytes[] = {"
         + ",".join(str(byte) for byte in cubin.read_bytes())
         + "};\n",
         encoding="utf-8",
     )
-    plugin = work / "libhalf_io.so"
-    _compile(FIXTURES / "plugin.cpp", plugin, native_tools, "-shared", "-fPIC", f"-I{work}")
-    return plugin
+    return build_native(
+        work,
+        "half_io",
+        (FIXTURES / "plugin.cpp",),
+        tools=native_tools,
+        shared=True,
+        includes=(work,),
+    )
 
 
 def _plan(plugin, kind, shapes, *, dtype=trt.float16):

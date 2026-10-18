@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from native_build import build_native
+
 
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-021")
@@ -78,24 +80,10 @@ int main() {
 """,
         encoding="utf-8",
     )
-    executable = tmp_path / "wrong-count"
-    subprocess.run(
-        [
-            "c++",
-            "-std=c++17",
-            "-Wno-deprecated-declarations",
-            f"-I{root / 'cpp/include'}",
-            f"-I{Path(sdk) / 'include'}",
-            f"-I{Path(cuda) / 'include'}",
-            str(source),
-            str(root / "cpp/src/cubin_plugin.cpp"),
-            str(root / "examples/cubin_plugin/bundle/bundle.cpp"),
-            f"-L{Path(cuda) / 'lib64/stubs'}",
-            "-lcuda",
-            "-o",
-            str(executable),
-        ],
-        check=True,
-        timeout=45,
+    executable = build_native(
+        tmp_path,
+        "wrong-count",
+        (source, root / "examples/cubin_plugin/bundle/bundle.cpp"),
+        tools=(Path(sdk), Path(cuda)),
     )
     subprocess.run([str(executable)], check=True, timeout=10)

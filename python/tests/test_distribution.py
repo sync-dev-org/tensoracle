@@ -242,9 +242,8 @@ def test_wheel_is_portable_python_with_uncompiled_cpp(distributions):
         for directory in ("cmake", "include", "src"):
             for source in (ROOT / "cpp" / directory).rglob("*"):
                 if source.is_file():
-                    assert archive.read(f"tensoracle/cpp/{source.relative_to(ROOT / 'cpp')}") == (
-                        source.read_bytes()
-                    )
+                    member = source.relative_to(ROOT / "cpp").as_posix()
+                    assert archive.read(f"tensoracle/cpp/{member}") == source.read_bytes()
 
 
 def test_backend_prepares_metadata_and_editable_source(tmp_path):
@@ -285,7 +284,9 @@ def test_backend_prepares_metadata_and_editable_source(tmp_path):
     editable_metadata = next((tmp_path / "editable").glob("*.dist-info/METADATA"))
     assert wheel_metadata.read_bytes() == editable_metadata.read_bytes()
     metadata = email.message_from_bytes(wheel_metadata.read_bytes())
-    assert metadata.get_payload() == (ROOT / "README.md").read_text(encoding="utf-8")
+    assert metadata.get_payload().splitlines() == (
+        (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    )
     assert metadata.get_all("License-File") == ["LICENSE"]
     for path in (wheel_metadata, editable_metadata):
         assert (path.parent / "licenses/LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
@@ -400,7 +401,9 @@ def test_wheel_metadata_describes_the_public_package(distributions):
             == (ROOT / "LICENSE").read_bytes()
         )
 
-    assert metadata.get_payload() == (ROOT / "README.md").read_text(encoding="utf-8")
+    assert metadata.get_payload().splitlines() == (
+        (ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    )
     assert metadata["Description-Content-Type"] == "text/markdown"
     assert metadata["Author-email"] == "minamik <mia@sync.dev>"
     assert metadata["License-Expression"] == "MIT"
@@ -412,6 +415,7 @@ def test_wheel_metadata_describes_the_public_package(distributions):
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
+        "Operating System :: Microsoft :: Windows",
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Topic :: Software Development :: Libraries",

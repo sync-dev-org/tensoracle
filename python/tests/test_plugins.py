@@ -1,6 +1,6 @@
 """Plugin libraries are checked before TensorRT sees their creators."""
 
-import shutil
+import json
 import struct
 import subprocess
 import sys
@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import tensorrt as trt
 
+from native_build import build_library
 from tensoracle import (
     EngineBuild,
     EngineIO,
@@ -20,40 +21,45 @@ from tensoracle import (
 from tensoracle._plugins import PluginLibraryError, _pe_exports, exported_data, register_libraries
 
 
-def _library(tmp_path: Path, name: str, source: str) -> Path:
-    compiler = shutil.which("cc")
-    if compiler is None or sys.platform != "linux":
-        pytest.skip("a Linux C compiler is needed for native library checks")
-    path = tmp_path / f"lib{name}.so"
-    source_path = tmp_path / f"{name}.c"
-    source_path.write_text(source, encoding="utf-8")
-    subprocess.run([compiler, "-shared", "-fPIC", str(source_path), "-o", str(path)], check=True)
-    return path
-
-
 @pytest.mark.req("SP-TENSORACLE-002")
 def test_library_without_get_creators_is_rejected_before_loading(tmp_path, monkeypatch):
     """A library with only a static constructor cannot destabilize the registry."""
     marker = tmp_path / "loaded"
-    library = _library(
+    library = build_library(
         tmp_path,
         "unsafe",
-        f"#include <stdio.h>\n__attribute__((constructor)) void start(void) {{ "
-        f'FILE *f = fopen("{marker}", "w"); if (f) fclose(f); }}\n',
+        "#include <stdio.h>\n"
+        "static void start(void) { "
+        f'FILE *f = fopen({json.dumps(marker.as_posix())}, "w"); if (f) fclose(f); }}\n'
+        "#if defined(_WIN32)\n"
+        "#include <windows.h>\n"
+        "BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved) {\n"
+        "    if (reason == DLL_PROCESS_ATTACH) start();\n"
+        "    return TRUE;\n"
+        "}\n"
+        "#else\n"
+        "__attribute__((constructor)) static void initialize(void) { start(); }\n"
+        "#endif\n",
     )
     monkeypatch.setattr(trt, "get_plugin_registry", lambda: pytest.fail("registry was used"))
     with pytest.raises(PluginLibraryError, match="getCreators"):
         register_libraries((library,))
     assert not marker.exists()
+    subprocess.run(
+        [sys.executable, "-c", "import ctypes, sys; ctypes.CDLL(sys.argv[1])", str(library)],
+        check=True,
+        timeout=10,
+    )
+    assert marker.is_file()
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_library_is_registered_once_before_graph_and_kept_alive(tmp_path, monkeypatch):
     """Repeated calls register one library once before a graph needs its creator."""
-    library = _library(
+    library = build_library(
         tmp_path,
         "valid",
-        "void *getCreators(int *count) { *count = 0; return 0; }\n",
+        "TEST_EXPORT void *getCreators(int *count) { *count = 0; return 0; }\n",
     )
     observed = []
     handle = object()
@@ -90,7 +96,9 @@ def test_library_is_registered_once_before_graph_and_kept_alive(tmp_path, monkey
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_changed_library_at_same_path_is_not_silently_reused(tmp_path, monkeypatch):
     """Changing loaded library bytes cannot label a new engine with an old creator."""
-    library = _library(tmp_path, "versioned", "void *getCreators(int *n) { *n = 0; return 0; }\n")
+    library = build_library(
+        tmp_path, "versioned", "TEST_EXPORT void *getCreators(int *n) { *n = 0; return 0; }\n"
+    )
 
     class Registry:
         def load_library(self, path):
