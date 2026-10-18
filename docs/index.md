@@ -155,11 +155,76 @@ with handle.create_execution() as execution:
 
 The caller selects the CUDA device and context, orders inputs written on other streams before enqueue, and keeps buffers, streams, plugin preparation resources, and the execution unit alive until completion. Use one execution unit serially; do not call it concurrently from multiple threads. Confirm completion before changing shapes or streams, reusing buffers, or closing. `close()` and context exit release the TensorRT context before the handle, without waiting, and repeated close calls do nothing. Operations on a closed unit raise `RuntimeError` before touching TensorRT. The unit does not retain caller arrays or expose its TensorRT context.
 
-Tensoracle neither allocates or frees device buffers, copies data, nor calls stream or device synchronization. TensorRT itself may allocate internal resources or act synchronously for some networks and plugins. Execution units reject HOST-location tensors, externally supplied shape tensor values, and data-dependent output sizes at creation. Ordinary networks that compute shapes internally from input dimensions are supported. CUDA graphs, profile switching, and caller-owned TensorRT workspace memory are outside this API.
+Tensoracle neither allocates or frees device buffers, copies data, nor calls stream or device synchronization. TensorRT itself may allocate internal resources or act synchronously for some networks and plugins. Execution units reject HOST-location tensors, externally supplied shape tensor values, and data-dependent output sizes at creation. Ordinary networks that compute shapes internally from input dimensions are supported. Profile switching and caller-owned TensorRT workspace memory are outside this API.
 
 Networks with outputs marked as shape tensors emit `tensoracle.ShapeTensorOutputWarning` during building and when creating an execution unit (`create_execution()` or `EngineExecution(handle)`). The warning names the affected tensors: `create_execution()` cannot handle these engines, and calling it crashes the process. Building continues by default. To stop either operation safely, turn this warning into an exception with `warnings.filterwarnings("error", category=tensoracle.ShapeTensorOutputWarning)` after importing `warnings` and `tensoracle`. Saved engines retain the shape output names outside the cache conditions; older files without these names are reused without an execution warning.
 
 `TensorSpec` accepts optional `location=trt.TensorLocation.DEVICE` and `format=trt.TensorFormat.LINEAR`. `open_engine` checks these only when declared, together with tensor names, modes, dtypes, build-time shapes, and profiles. An `EngineIOError` names the tensor, field, observed value, expected value, and saved file path. The execution unit does not accept a second declaration.
+
+#### Capture and replay with CUDA Graphs
+
+Tensoracle supports recording one `EngineExecution.enqueue` call with CUDA stream capture and replaying the resulting graph. The application owns graph creation, recapture, and destruction; tensoracle provides no capture or replay operations.
+
+Use a dedicated execution unit (`handle.create_execution()`) for each graph. After setting input shapes, enqueue once and wait for completion before starting capture, so TensorRT finishes deferred initialization. Capture and replay on a nondefault stream; the example uses a nonblocking stream. Keep synchronous CUDA calls and work on the legacy default stream out of capture.
+
+The graph fixes the input shapes, tensor addresses, and execution unit. Keep the execution unit, its handle, buffers, and plugin preparation resources alive until the graph is destroyed and outstanding work has finished. To use different shapes or addresses, capture a new graph for that combination or select another graph with its own execution unit. Input contents may change at the same addresses between completed replays.
+
+For the `features` / `result` engine above, use the `cuda(...)` helper from the preceding example:
+
+```python
+from contextlib import ExitStack
+
+import numpy as np
+import tensorrt as trt
+from cuda.bindings import runtime as cudart
+
+with handle.create_execution() as execution:
+    execution.set_input_shapes({"features": (1, 4, 2)})
+    # Omit set_input_shapes for fixed inputs and single-point profiles.
+    features = np.arange(8, dtype=np.float32).reshape(1, 4, 2) / 4
+    output = np.empty(
+        execution.get_tensor_shape("result"),
+        dtype=trt.nptype(execution.get_tensor_dtype("result")),
+    )
+    with ExitStack() as resources:
+        stream = cuda(cudart.cudaStreamCreateWithFlags(cudart.cudaStreamNonBlocking))
+        resources.callback(lambda: cuda(cudart.cudaStreamDestroy(stream)))
+        source = cuda(cudart.cudaMalloc(features.nbytes))
+        resources.callback(lambda: cuda(cudart.cudaFree(source)))
+        target = cuda(cudart.cudaMalloc(output.nbytes))
+        resources.callback(lambda: cuda(cudart.cudaFree(target)))
+        addresses = {"features": int(source), "result": int(target)}
+        try:
+            cuda(cudart.cudaMemcpyAsync(
+                source, features.ctypes.data, features.nbytes,
+                cudart.cudaMemcpyKind.cudaMemcpyHostToDevice, stream,
+            ))
+            execution.enqueue(addresses, stream=int(stream))
+            cuda(cudart.cudaStreamSynchronize(stream))  # Warm up before capture.
+
+            cuda(cudart.cudaStreamBeginCapture(
+                stream, cudart.cudaStreamCaptureMode.cudaStreamCaptureModeThreadLocal,
+            ))
+            try:
+                execution.enqueue(addresses, stream=int(stream))  # Exactly one call.
+            finally:
+                graph = cuda(cudart.cudaStreamEndCapture(stream))
+            resources.callback(lambda: cuda(cudart.cudaGraphDestroy(graph)))
+            instance = cuda(cudart.cudaGraphInstantiate(graph, 0))
+            resources.callback(lambda: cuda(cudart.cudaGraphExecDestroy(instance)))
+
+            for _ in range(3):
+                cuda(cudart.cudaGraphLaunch(instance, stream))
+            cuda(cudart.cudaMemcpyAsync(
+                output.ctypes.data, target, output.nbytes,
+                cudart.cudaMemcpyKind.cudaMemcpyDeviceToHost, stream,
+            ))
+        finally:
+            # Wait before ExitStack destroys the graph and releases its buffers.
+            cuda(cudart.cudaStreamSynchronize(stream))
+```
+
+Engines with loops or conditionals, or layers or plugins that synchronize with the host during inference, cannot be captured. CUDA reports capture failures through `cudaErrorStreamCapture*` errors. Always end an attempted capture and release any graph resources before falling back to ordinary `enqueue`. See [TensorRT's CUDA Graph limitations](https://docs.nvidia.com/deeplearning/tensorrt/latest/performance/optimization.html#inference-with-cuda-graphs).
 
 ### Build a standard graph
 
