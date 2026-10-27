@@ -4,6 +4,7 @@ import hashlib
 import json
 import struct
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +16,7 @@ from tensoracle.bundle import (
     MissingCubinError,
     PluginBundleMismatchError,
     bundle_sha256,
+    cubin_sm,
     inspect_bundle,
     inspect_wheel,
 )
@@ -23,10 +25,41 @@ from tensoracle.bundle import (
 def _cubin(sm: int) -> bytes:
     payload = bytearray(64)
     payload[:6] = b"\x7fELF\x02\x01"
+    payload[8] = 8 if sm == 120 else 7
     struct.pack_into("<H", payload, 18, 190)
     flags = sm << 8 if sm == 120 else (sm << 16) | sm
     struct.pack_into("<I", payload, 48, flags)
     return bytes(payload)
+
+
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.parametrize("sm", [86, 89, 120])
+@pytest.mark.parametrize("legacy", [True, False], ids=["legacy-example", "current-example"])
+def test_cubin_architecture_matches_compiled_examples(sm, legacy):
+    """Actual legacy and current cubins identify every supported GPU generation."""
+    if legacy:
+        path = Path(__file__).with_name("cubins") / "ptxas-12.9.86" / f"sm{sm}.cubin"
+    else:
+        root = Path(__file__).resolve().parents[2]
+        path = root / "examples/cubin_plugin/bundle/cubins" / f"sm{sm}" / "scale.cubin"
+    assert cubin_sm(path.read_bytes()) == f"sm{sm}"
+
+
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.parametrize(
+    ("abi", "flags"),
+    [(7, 0x5A055A), (8, 0x6005A04), (9, 0x600780A), (7, 0x5A7800), (8, 0x565A00)],
+    ids=["abi7-sm90", "abi8-sm90", "unknown-abi", "abi7-wrong-position", "abi8-wrong-position"],
+)
+def test_cubin_architecture_rejects_unknown_or_misplaced_sm(abi, flags):
+    """Unsupported architectures and SM values outside the declared ELF ABI are rejected."""
+    cubin = bytearray(_cubin(120))
+    cubin[8] = abi
+    struct.pack_into("<I", cubin, 48, flags)
+    with pytest.raises(CubinArchitectureError):
+        cubin_sm(cubin)
 
 
 def _bundle(tmp_path, sm=86):
@@ -36,7 +69,7 @@ def _bundle(tmp_path, sm=86):
     path.write_bytes(cubin)
     manifest = {
         "schema_version": 1,
-        "producer": {"triton": "3.8.0", "ptxas": "12.9.86"},
+        "producer": {"triton": "3.8.0", "ptxas": "13.2.0"},
         "entries": [
             {
                 "id": "sample",

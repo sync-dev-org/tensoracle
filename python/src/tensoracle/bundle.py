@@ -48,13 +48,16 @@ def cubin_sm(data: bytes) -> str:
     if struct.unpack_from("<H", data, 18)[0] != 190:
         raise CubinArchitectureError("cubin has no NVIDIA CUDA ELF machine")
     flags = struct.unpack_from("<I", data, 48)[0]
-    old_sm = (flags >> 16) & 0xFF
-    new_sm = (flags >> 8) & 0xFF
-    if old_sm in (86, 89):
-        return f"sm{old_sm}"
-    if new_sm == 120:
-        return "sm120"
-    raise CubinArchitectureError(f"unsupported cubin architecture in ELF flags: {flags:#x}")
+    abi = data[8]  # e_ident[EI_ABIVERSION]
+    if abi == 7:
+        sm = (flags >> 16) & 0xFF
+    elif abi == 8:
+        sm = (flags >> 8) & 0xFF
+    else:
+        raise CubinArchitectureError(f"unsupported cubin ELF ABI version: {abi}")
+    if sm not in (86, 89, 120):
+        raise CubinArchitectureError(f"unsupported cubin architecture in ELF flags: {flags:#x}")
+    return f"sm{sm}"
 
 
 def _validate_entry(entry: dict) -> None:

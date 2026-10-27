@@ -1,8 +1,8 @@
 {
-  "bundle_sha256": "86816421d8f6f66a19dcf3469677d7656f33c3c5398024c5b7d7882ba98c5571",
+  "bundle_sha256": "207d41310c87ae8b75b0301e881df881cdd2475eec07b82092e0ec66febbd5c0",
   "entries": [
     {
-      "bytes": 5408,
+      "bytes": 5920,
       "embedded_symbol": "tensoracle_cubin_sm86_dot_specialized",
       "entry_symbol": "dot_ieee",
       "file": "cubins/sm86/dot.specialized.cubin",
@@ -24,7 +24,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 45
       },
-      "sha256": "85d6bebc0d77074a5eac1806c36af79fc971ac8fd34151708edcf0f1259c69ba",
+      "sha256": "b8a60c5ff310952071bd96bd62dc8d15ba201a853da2b26514745628b317560d",
       "signature": [
         {
           "name": "x_ptr",
@@ -55,7 +55,7 @@
       "target_sm": "sm86"
     },
     {
-      "bytes": 5536,
+      "bytes": 6048,
       "embedded_symbol": "tensoracle_cubin_sm86_dot_unspecialized",
       "entry_symbol": "dot_ieee",
       "file": "cubins/sm86/dot.unspecialized.cubin",
@@ -77,7 +77,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 42
       },
-      "sha256": "8efd410ba0a4a11bdaf07d899e77ec3f457ef802eec70e17147d31f40fd5cc70",
+      "sha256": "5edd4e9dff390201c469448d31f35fd5c13999205d1171f20bd24604ae9e9954",
       "signature": [
         {
           "name": "x_ptr",
@@ -103,7 +103,7 @@
       "target_sm": "sm86"
     },
     {
-      "bytes": 5024,
+      "bytes": 5536,
       "embedded_symbol": "tensoracle_cubin_sm86_dot_tf32_control",
       "entry_symbol": "dot_tf32",
       "file": "cubins/sm86/dot.tf32-control.cubin",
@@ -125,7 +125,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 32
       },
-      "sha256": "c82682d70e0faadfd887d375ea47af986a48e9fc461f5553aad49cf5b38f2df9",
+      "sha256": "69fe3d6532d9e8fb14bbc7f0e661b6339b04588be1e71aca0b24c3c324ffa1cf",
       "signature": [
         {
           "name": "x_ptr",
@@ -151,7 +151,7 @@
       "target_sm": "sm86"
     },
     {
-      "bytes": 2984,
+      "bytes": 3496,
       "embedded_symbol": "tensoracle_cubin_sm86_scale",
       "entry_symbol": "scale",
       "file": "cubins/sm86/scale.cubin",
@@ -173,7 +173,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 8
       },
-      "sha256": "4cf2b9ef6566485fd82d80242ce8b81a48ccb89f9d59df4fe74e59c9e5abb3e3",
+      "sha256": "a0e179c8fe8694f97a4541d16d5a0217361f67eb2a546d917515b4bfb1578160",
       "signature": [
         {
           "name": "x_ptr",
@@ -199,7 +199,7 @@
       "target_sm": "sm86"
     },
     {
-      "bytes": 3112,
+      "bytes": 3624,
       "embedded_symbol": "tensoracle_cubin_sm86_bias",
       "entry_symbol": "add_bias",
       "file": "cubins/sm86/bias.cubin",
@@ -221,7 +221,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 12
       },
-      "sha256": "6517e724d8549044a93bb7e6bd90b6311583b6dff2c74722762fbf0910dcda23",
+      "sha256": "b56414b66f0c460a328f84c41eb2abace61ea449d8f2ee357e2079ef3c9c47d9",
       "signature": [
         {
           "name": "x_ptr",
@@ -247,7 +247,7 @@
       "target_sm": "sm86"
     },
     {
-      "bytes": 5408,
+      "bytes": 5920,
       "embedded_symbol": "tensoracle_cubin_sm89_dot_specialized",
       "entry_symbol": "dot_ieee",
       "file": "cubins/sm89/dot.specialized.cubin",
@@ -269,7 +269,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 45
       },
-      "sha256": "6b8936775841bbaaf6bfc8e9f14cf638895627816f4635501fa09c7271b2177d",
+      "sha256": "ced865ee4389e36964b85e7eee8cc77e8baddc0a4450a38589f7b40cd8dcdc78",
       "signature": [
         {
           "name": "x_ptr",
@@ -300,7 +300,7 @@
       "target_sm": "sm89"
     },
     {
-      "bytes": 5536,
+      "bytes": 6048,
       "embedded_symbol": "tensoracle_cubin_sm89_dot_unspecialized",
       "entry_symbol": "dot_ieee",
       "file": "cubins/sm89/dot.unspecialized.cubin",
@@ -322,7 +322,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 42
       },
-      "sha256": "eb934afea33c5aeb20bb6f7d494d130c86696c14090c010137a270a1616c3ec0",
+      "sha256": "0bf608e13a115016d4e728bf3d52184191064035e19fe10053a04e27969c3aad",
       "signature": [
         {
           "name": "x_ptr",
@@ -348,7 +348,7 @@
       "target_sm": "sm89"
     },
     {
-      "bytes": 5024,
+      "bytes": 5536,
       "embedded_symbol": "tensoracle_cubin_sm89_dot_tf32_control",
       "entry_symbol": "dot_tf32",
       "file": "cubins/sm89/dot.tf32-control.cubin",
@@ -370,7 +370,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 32
       },
-      "sha256": "2787cdbdda25c1f1386e5bcd25ea2c60e6258925f3a701fec96116e91b5bbb70",
+      "sha256": "6b5e4a4bf1890eaf7d1d51022ab0f9a6f972127cbeaa2a09adc0150da0c58f73",
       "signature": [
         {
           "name": "x_ptr",
@@ -396,7 +396,7 @@
       "target_sm": "sm89"
     },
     {
-      "bytes": 2984,
+      "bytes": 3496,
       "embedded_symbol": "tensoracle_cubin_sm89_scale",
       "entry_symbol": "scale",
       "file": "cubins/sm89/scale.cubin",
@@ -418,7 +418,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 8
       },
-      "sha256": "34acd1e182431442b08d22ed473a677028512de1120be776930cd06e63a1eaab",
+      "sha256": "90c572adfd09e96adc57a794b6589c651e22e421beb9a4c729e2524e4cd73b99",
       "signature": [
         {
           "name": "x_ptr",
@@ -444,7 +444,7 @@
       "target_sm": "sm89"
     },
     {
-      "bytes": 3112,
+      "bytes": 3624,
       "embedded_symbol": "tensoracle_cubin_sm89_bias",
       "entry_symbol": "add_bias",
       "file": "cubins/sm89/bias.cubin",
@@ -466,7 +466,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 12
       },
-      "sha256": "83dcf3cd17d061f3fac6f1a37400a0af7fc142f309fe1508dbeda838a953a58d",
+      "sha256": "f64022e2c559e39828f3c249a81e0b2b2f3a21973ea6019ea8e1924fc1294afa",
       "signature": [
         {
           "name": "x_ptr",
@@ -492,7 +492,7 @@
       "target_sm": "sm89"
     },
     {
-      "bytes": 8712,
+      "bytes": 8760,
       "embedded_symbol": "tensoracle_cubin_sm120_dot_specialized",
       "entry_symbol": "dot_ieee",
       "file": "cubins/sm120/dot.specialized.cubin",
@@ -514,7 +514,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 44
       },
-      "sha256": "4dc3099f88689c8f4e6d3ae70c6461627e18929080c5ba57473c44fffe5b4023",
+      "sha256": "ee3c56b409ed9ce684507da3d57942dbe5722e2c760d090f4a0c4ceff4fe412f",
       "signature": [
         {
           "name": "x_ptr",
@@ -545,7 +545,7 @@
       "target_sm": "sm120"
     },
     {
-      "bytes": 8832,
+      "bytes": 8880,
       "embedded_symbol": "tensoracle_cubin_sm120_dot_unspecialized",
       "entry_symbol": "dot_ieee",
       "file": "cubins/sm120/dot.unspecialized.cubin",
@@ -567,7 +567,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 42
       },
-      "sha256": "73bd259a0ddd24af747af7810ab68baa25c0f7f31f67ddfec39f73b212801f75",
+      "sha256": "462ae8bceb37cda2031dcbdf94765579c90f8468ae584f88854c87a87f0155e9",
       "signature": [
         {
           "name": "x_ptr",
@@ -593,7 +593,7 @@
       "target_sm": "sm120"
     },
     {
-      "bytes": 8872,
+      "bytes": 8944,
       "embedded_symbol": "tensoracle_cubin_sm120_dot_tf32_control",
       "entry_symbol": "dot_tf32",
       "file": "cubins/sm120/dot.tf32-control.cubin",
@@ -613,9 +613,9 @@
         "global_scratch_bytes": 0,
         "launch_dynamic_shared_memory_bytes": 4096,
         "profile_scratch_bytes": 0,
-        "registers_per_thread": 38
+        "registers_per_thread": 36
       },
-      "sha256": "3eaae0d9b10a78d37a4b6064a17844abe499fbcd90b22a7e7e87482ba36cac39",
+      "sha256": "e970f66af7539264a712c2ac7308d79d7660dc26592a9f4c857a9615acb126aa",
       "signature": [
         {
           "name": "x_ptr",
@@ -641,7 +641,7 @@
       "target_sm": "sm120"
     },
     {
-      "bytes": 5616,
+      "bytes": 5800,
       "embedded_symbol": "tensoracle_cubin_sm120_scale",
       "entry_symbol": "scale",
       "file": "cubins/sm120/scale.cubin",
@@ -663,7 +663,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 10
       },
-      "sha256": "b5cff0c872f188998a42b1a2770b79dc469ef5fe7d68992018b217b16dbe5312",
+      "sha256": "11d1a930455115eee94d2ddf467bb715c21309d7ca986e75ddf6e012511d9441",
       "signature": [
         {
           "name": "x_ptr",
@@ -689,7 +689,7 @@
       "target_sm": "sm120"
     },
     {
-      "bytes": 5864,
+      "bytes": 5912,
       "embedded_symbol": "tensoracle_cubin_sm120_bias",
       "entry_symbol": "add_bias",
       "file": "cubins/sm120/bias.cubin",
@@ -711,7 +711,7 @@
         "profile_scratch_bytes": 0,
         "registers_per_thread": 14
       },
-      "sha256": "4a7446bc8c63d7ca3e9094052f02b00b7436f5aa64fd236f9358ef6c7ff99edf",
+      "sha256": "696de57a83e30c6f8a44b8f3f6c385ec1c2091c065d093f60e2a06ef8e31b53f",
       "signature": [
         {
           "name": "x_ptr",
@@ -738,7 +738,7 @@
     }
   ],
   "producer": {
-    "ptxas": "12.9.86",
+    "ptxas": "13.2.86",
     "triton": "3.8.0"
   },
   "schema_version": 1

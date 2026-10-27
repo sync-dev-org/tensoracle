@@ -6,21 +6,21 @@ The first plugin computes an fp32 32 by 16 dot product and then scales it in a s
 
 ## Rebuild the cubins
 
-From the tensoracle repository root, run:
+Provide a CUDA toolkit with `ptxas >=13.2,<14` and `cuobjdump`. Set `CUDA_HOME` to its directory; when unset, the producer uses `/usr/local/cuda`. From the tensoracle repository root, run:
 
 ```bash
 uv run --project python --extra producer python -c 'from pathlib import Path; from examples.cubin_plugin.kernels import kernel_specs; from tensoracle.producer import compile_bundle; compile_bundle(kernel_specs(), Path("examples/cubin_plugin/bundle"))'
 ```
 
-This installs `tensoracle[producer]` with Triton 3.8.0, ptxas 12.9.86, and cuobjdump 13.3, and recreates `bundle/` without using a GPU. `compile_bundle` finds ptxas and cuobjdump in their installed NVIDIA wheels. The producer checks the cubin ELF SM, public and hidden argument layout, register count, and zero scratch sizes before writing the manifest. Run the tests below with the producer extra alone so torch is absent; `compile_bundle` rejects an already imported torch.
+This installs Triton 3.8.0 with `tensoracle[producer]` and recreates `bundle/` with the host toolkit tools without using a GPU. Explicit `ptxas` and `cuobjdump` paths passed to `compile_bundle` override the toolkit defaults independently. The producer checks the cubin ELF SM, public and hidden argument layout, register count, and zero scratch sizes before writing the manifest. Run the tests below with the producer extra alone so torch is absent; `compile_bundle` rejects an already imported torch.
 
-Check that the regenerated files match the committed example without using a GPU or setting producer environment variables:
+Check that the generated bundle has the expected files and passes inspection without using a GPU:
 
 ```bash
 uv run --project python --extra producer pytest -m "not gpu" python/tests/test_producer.py
 ```
 
-Without the producer extra, the compilation tests skip with an explanation of the missing tools.
+Without Triton or the toolkit tools, the compilation tests skip with an explanation of what is missing.
 
 ## Build and inspect the wheel
 
