@@ -1,6 +1,6 @@
 """Compile pinned Triton kernels into a portable cubin bundle.
 
-Install tensoracle[producer] to supply Triton and use a host CUDA toolkit for its tools.
+Install tensoracle[producer] to supply Triton and the NVIDIA wheel tools.
 Importing tensoracle for inference never imports this module or Triton.
 """
 
@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from typing import Any
 
@@ -27,13 +28,16 @@ class KernelSpec:
     divisible_by: dict[str, int] = field(default_factory=dict)
 
 
-def _toolkit_tool(tool: str) -> Path:
-    path = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda")) / "bin" / tool
+def _wheel_tool(package: str, tool: str) -> Path:
+    suffix = ".exe" if sys.platform == "win32" else ""
+    relative = f"nvidia/cu13/bin/{tool}{suffix}"
+    remedy = f"install it with pip install 'tensoracle[producer]' or pass {tool}=... explicitly"
+    try:
+        path = Path(distribution(package).locate_file(relative))
+    except PackageNotFoundError as exc:
+        raise ImportError(f"{tool} requires {package} at {relative}; {remedy}") from exc
     if not path.is_file():
-        raise FileNotFoundError(
-            f"{tool} was not found at {path}; set CUDA_HOME to a CUDA toolkit "
-            f"or pass {tool}=... explicitly"
-        )
+        raise FileNotFoundError(f"{tool} was not found in the {package} wheel at {path}; {remedy}")
     return path
 
 
@@ -98,8 +102,8 @@ def compile_bundle(
 ) -> dict:
     """Produce and inspect sm86, sm89, and sm120 cubins without importing torch.
 
-    Omitted tool paths use the CUDA toolkit in CUDA_HOME, or /usr/local/cuda if unset.
-    The toolkit must provide ptxas >=13.2,<14 and cuobjdump.
+    Omitted tool paths use the NVIDIA wheels installed by tensoracle[producer].
+    ptxas must be >=13.2,<14. CUDA_HOME is not used.
     Explicit ptxas and cuobjdump paths override those defaults independently.
     """
     if "torch" in sys.modules:
@@ -115,9 +119,9 @@ def compile_bundle(
     if triton.__version__ != "3.8.0":
         raise ValueError(f"Triton 3.8.0 is required, got {triton.__version__}")
     if ptxas is None:
-        ptxas = _toolkit_tool("ptxas")
+        ptxas = _wheel_tool("nvidia-cuda-nvcc", "ptxas")
     if cuobjdump is None:
-        cuobjdump = _toolkit_tool("cuobjdump")
+        cuobjdump = _wheel_tool("nvidia-cuda-cuobjdump", "cuobjdump")
     version = _ptxas_version(ptxas)
     if not (13, 2, 0) <= tuple(map(int, version.split("."))) < (14, 0, 0):
         raise ValueError(f"ptxas >=13.2,<14 is required, got {version}")

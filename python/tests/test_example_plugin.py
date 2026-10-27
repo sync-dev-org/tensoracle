@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 
+from native_build import cuda_root
 from tensoracle.bundle import PluginBundleMismatchError, inspect_bundle, inspect_wheel
 
 
@@ -43,7 +44,7 @@ def installed_example(tmp_path_factory):
         f"--config-setting=cmake.define.TENSORRT_ROOT={Path(sdk).as_posix()}",
         f"--config-setting=cmake.define.TENSORACLE_CPP_ROOT={cpp_root.as_posix()}",
     ]
-    if cuda := os.environ.get("TENSORACLE_CUDA_ROOT"):
+    if cuda := cuda_root():
         cmake_settings.append(
             f"--config-setting=cmake.define.CUDAToolkit_ROOT={Path(cuda).as_posix()}"
         )
@@ -114,7 +115,7 @@ def installed_example(tmp_path_factory):
 def _run(example, mode, cache, *extra):
     environment = dict(os.environ)
     environment["XDG_CACHE_HOME"] = str(cache)
-    environment["CUDA_HOME"] = str(example["work"] / "absent-sdk")
+    environment.pop("CUDA_HOME", None)
     environment["TENSORRT_ROOT"] = str(example["work"] / "absent-sdk")
     result = subprocess.run(
         [
@@ -135,6 +136,7 @@ def _run(example, mode, cache, *extra):
 
 @pytest.mark.req("SP-TENSORACLE-005")
 @pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.req("SP-TENSORACLE-038")
 def test_distributions_ship_cpp_without_torch_or_triton(installed_example):
     """The producer and C++ sources ship while the runtime dependencies omit torch and Triton."""
     with zipfile.ZipFile(installed_example["main_wheel"]) as archive:
@@ -164,6 +166,7 @@ def test_distributions_ship_cpp_without_torch_or_triton(installed_example):
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-005")
 @pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-038")
 def test_installed_wheel_builds_and_runs_both_plugins(installed_example):
     """A producer-free wheel builds a dynamic graph and matches its reference output."""
     result = _run(installed_example, "build", installed_example["work"] / "build-cache")
@@ -175,6 +178,7 @@ def test_installed_wheel_builds_and_runs_both_plugins(installed_example):
 
 @pytest.mark.gpu
 @pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-038")
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_saved_engine_reopens_without_graph_and_plugin_change_selects_new_cache(installed_example):
     """A later process reuses the plan; changing plugin bytes selects a new engine."""

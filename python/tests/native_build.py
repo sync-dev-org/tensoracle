@@ -1,11 +1,23 @@
 """Build native test fixtures using the host's CMake toolchain and artifact names."""
 
+import os
 import subprocess
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 NATIVE = Path(__file__).resolve().parent / "native"
 PROJECT = NATIVE.parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
+
+
+def cuda_root():
+    """Use an explicit test root or the installed PyPI CUDA header directory."""
+    if root := os.environ.get("TENSORACLE_CUDA_ROOT"):
+        return Path(root)
+    try:
+        return Path(distribution("nvidia-cuda-runtime").locate_file("nvidia/cu13"))
+    except PackageNotFoundError:
+        return None
 
 
 def _build(work, definitions):
@@ -61,6 +73,7 @@ def build_cubin(work, source, tools, sm):
     return _build(
         work,
         {
+            "TENSORACLE_CPP_ROOT": (ROOT / "cpp").as_posix(),
             "TEST_CUBIN_SOURCE": source.as_posix(),
             "TEST_CUDA_ARCH": sm,
             "CUDAToolkit_ROOT": cuda.as_posix(),

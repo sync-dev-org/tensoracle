@@ -5,13 +5,14 @@ set(TENSORRT_ROOT "" CACHE PATH "TensorRT 11 SDK root containing include/NvInfer
 if(NOT EXISTS "${TENSORRT_ROOT}/include/NvInfer.h")
     message(FATAL_ERROR "TensorRT SDK headers are missing; set TENSORRT_ROOT to the TensorRT 11 SDK")
 endif()
-find_package(CUDAToolkit REQUIRED)
+include(cmake/TensoracleCuda.cmake)
+_tensoracle_find_cuda()
 
 add_library(tensoracle_cubin STATIC src/cubin_plugin.cpp)
 target_compile_features(tensoracle_cubin PUBLIC cxx_std_17)
 target_include_directories(tensoracle_cubin PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include" "${TENSORRT_ROOT}/include")
-target_link_libraries(tensoracle_cubin PUBLIC CUDA::cuda_driver)
+target_link_libraries(tensoracle_cubin PUBLIC tensoracle_internal_cuda_driver)
 target_compile_options(tensoracle_cubin PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-declarations>)
 

@@ -31,7 +31,13 @@ issues = "https://github.com/sync-dev-org/tensoracle/issues"
 
 [project.optional-dependencies]
 convert = ["torch>=2.6"]
-producer = ["triton==3.8.0"]
+producer = [
+    "triton==3.8.0",
+    "nvidia-cuda-nvcc==13.2.*",
+    "nvidia-cuda-cuobjdump==13.2.*",
+    "nvidia-cuda-crt==13.2.*",
+    "nvidia-nvvm==13.2.*",
+]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

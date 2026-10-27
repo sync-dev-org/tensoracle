@@ -10,7 +10,7 @@ import pytest
 import tensorrt as trt
 from cuda.bindings import runtime as cudart
 
-from native_build import build_cubin, build_native
+from native_build import build_cubin, build_native, cuda_root
 from tensoracle import BuilderSettings, EngineBuild, InputShape, build_serialized_engine
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -20,9 +20,9 @@ FIXTURES = PROJECT / "tests/cubin_io"
 @pytest.fixture(scope="module")
 def native_tools():
     sdk = os.environ.get("TENSORACLE_SDK_ROOT")
-    cuda = os.environ.get("TENSORACLE_CUDA_ROOT")
+    cuda = cuda_root()
     if not sdk or not cuda:
-        pytest.skip("TensorRT SDK and CUDA toolkit were not supplied")
+        pytest.skip("TensorRT SDK and PyPI CUDA headers were not supplied")
     return Path(sdk), Path(cuda)
 
 

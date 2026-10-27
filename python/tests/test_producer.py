@@ -1,11 +1,11 @@
-"""The producer uses host CUDA tools without adding inference dependencies."""
+"""The producer uses wheel CUDA tools without adding inference dependencies."""
 
 import importlib.util
 import json
 import os
 import subprocess
 import sys
-from importlib.metadata import requires
+from importlib.metadata import PackageNotFoundError, distribution, requires
 from pathlib import Path
 
 import pytest
@@ -19,11 +19,15 @@ def producer_tools():
     if importlib.util.find_spec("triton") is None:
         pytest.skip("cubin production requires tensoracle[producer] (Triton)")
     tools = {}
-    toolkit = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda"))
-    for name in ("ptxas", "cuobjdump"):
-        path = toolkit / "bin" / name
+    suffix = ".exe" if sys.platform == "win32" else ""
+    for name, package in (("ptxas", "nvidia-cuda-nvcc"), ("cuobjdump", "nvidia-cuda-cuobjdump")):
+        relative = f"nvidia/cu13/bin/{name}{suffix}"
+        try:
+            path = Path(distribution(package).locate_file(relative))
+        except PackageNotFoundError:
+            pytest.skip(f"cubin production requires tensoracle[producer] ({package})")
         if not path.is_file():
-            pytest.skip(f"cubin production requires CUDA toolkit tool {path}; set CUDA_HOME")
+            pytest.skip(f"cubin production requires {package} tool {path}")
         tools[name] = path
     return tools
 
@@ -31,13 +35,12 @@ def producer_tools():
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-015")
 @pytest.mark.req("SP-TENSORACLE-037")
-@pytest.mark.parametrize(
-    "explicit_tools", [False, True], ids=["toolkit-defaults", "explicit-paths"]
-)
+@pytest.mark.req("SP-TENSORACLE-038")
+@pytest.mark.parametrize("explicit_tools", [False, True], ids=["wheel-defaults", "explicit-paths"])
 def test_example_producer_builds_three_architectures_without_torch(
     tmp_path, producer_tools, explicit_tools
 ):
-    """Toolkit defaults and explicit paths produce an inspected bundle without torch."""
+    """Wheel defaults and explicit paths produce an inspected bundle without torch."""
     project = Path(__file__).resolve().parents[1]
     root = project.parent if project.name == "python" else project
     output = tmp_path / "bundle"
@@ -58,6 +61,7 @@ assert 'torch' not in sys.modules
         [str(producer_tools[name]) for name in ("ptxas", "cuobjdump")] if explicit_tools else []
     )
     environment = dict(os.environ)
+    environment.pop("CUDA_HOME", None)
     environment["PYTHONPATH"] = str(project / "src") + os.pathsep + str(root)
     environment["TRITON_CACHE_DIR"] = str(tmp_path / "triton-cache")
     subprocess.run(
@@ -84,9 +88,16 @@ assert 'torch' not in sys.modules
 
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-005")
+@pytest.mark.req("SP-TENSORACLE-038")
 def test_package_declares_cubin_tools_only_in_producer_extra():
-    """The producer extra declares only pinned Triton; CUDA tools come from the host."""
-    expected = {"triton": "==3.8.0"}
+    """The producer extra supplies Triton and CUDA 13.2 tools without runtime dependencies."""
+    expected = {
+        "triton": "==3.8.0",
+        "nvidia-cuda-nvcc": "==13.2.*",
+        "nvidia-cuda-cuobjdump": "==13.2.*",
+        "nvidia-cuda-crt": "==13.2.*",
+        "nvidia-nvvm": "==13.2.*",
+    }
     dependencies = [Requirement(item) for item in requires("tensoracle") or []]
     producer_dependencies = [
         item
@@ -165,27 +176,41 @@ assert not any(name == 'triton' or name.startswith('triton.') for name in sys.mo
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.req("SP-TENSORACLE-004")
-@pytest.mark.parametrize("configured", [False, True], ids=["default-directory", "CUDA_HOME"])
-def test_producer_selects_toolkit_directory(tmp_path, monkeypatch, configured):
-    """ptxas comes from CUDA_HOME or /usr/local/cuda when CUDA_HOME is unset."""
+def _wheel_metadata(root, package):
+    metadata = root / f"{package.replace('-', '_')}-13.2.86.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {package}\nVersion: 13.2.86\n", encoding="utf-8"
+    )
+
+
+@pytest.mark.req("SP-TENSORACLE-038")
+@pytest.mark.parametrize("configured", [False, True], ids=["CUDA_HOME-unset", "CUDA_HOME-set"])
+@pytest.mark.parametrize("windows", [False, True], ids=["linux-tools", "windows-tools"])
+def test_producer_uses_wheel_tools_without_cuda_home(tmp_path, monkeypatch, configured, windows):
+    """Installed wheel tools are used regardless of CUDA_HOME, with Windows executable names."""
     pytest.importorskip("triton.backends.compiler")
     from tensoracle.producer import compile_bundle
 
+    monkeypatch.setattr(sys, "path", [str(tmp_path)])
+    suffix = ".exe" if windows else ""
+    tools = tmp_path / "nvidia/cu13/bin"
+    tools.mkdir(parents=True)
+    for tool, package in (("ptxas", "nvidia-cuda-nvcc"), ("cuobjdump", "nvidia-cuda-cuobjdump")):
+        _wheel_metadata(tmp_path, package)
+        (tools / f"{tool}{suffix}").touch()
+    monkeypatch.setattr(sys, "platform", "win32" if windows else "linux")
     if configured:
-        toolkit = tmp_path / "toolkit"
-        (toolkit / "bin").mkdir(parents=True)
-        for name in ("ptxas", "cuobjdump"):
-            (toolkit / "bin" / name).touch()
-        monkeypatch.setenv("CUDA_HOME", str(toolkit))
+        toolkit = tmp_path / "host-toolkit/bin"
+        toolkit.mkdir(parents=True)
+        (toolkit / "ptxas").touch()
+        (toolkit / "cuobjdump").touch()
+        monkeypatch.setenv("CUDA_HOME", str(toolkit.parent))
     else:
-        toolkit = Path("/usr/local/cuda")
         monkeypatch.delenv("CUDA_HOME", raising=False)
-        if not all((toolkit / "bin" / name).is_file() for name in ("ptxas", "cuobjdump")):
-            pytest.skip("default CUDA toolkit tools are not installed at /usr/local/cuda/bin")
 
     def tool_version(command, **kwargs):
-        assert command == [str(toolkit / "bin/ptxas"), "--version"]
+        assert command == [str(tools / f"ptxas{suffix}"), "--version"]
         return subprocess.CompletedProcess(command, 0, stdout="ptxas V13.2.0", stderr="")
 
     monkeypatch.setattr(subprocess, "run", tool_version)
@@ -225,19 +250,30 @@ compile_bundle((), Path(sys.argv[1]), ptxas=Path('unused'), cuobjdump=Path('unus
     assert not output.exists()
 
 
-@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-038")
 @pytest.mark.parametrize("tool", ["ptxas", "cuobjdump"])
-def test_missing_toolkit_tool_reports_path_and_configuration(tmp_path, monkeypatch, tool):
-    """Missing toolkit tools identify the searched path, CUDA_HOME, and explicit argument."""
-    pytest.importorskip("triton")
+@pytest.mark.parametrize("installed", [False, True], ids=["missing-wheel", "missing-executable"])
+def test_missing_wheel_tool_reports_package_path_and_configuration(
+    tmp_path, monkeypatch, tool, installed
+):
+    """A missing wheel or executable identifies the package, path, extra, and explicit argument."""
+    pytest.importorskip("triton.backends.compiler")
     from tensoracle.producer import compile_bundle
 
-    monkeypatch.setenv("CUDA_HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "path", [str(tmp_path)])
+    package = "nvidia-cuda-nvcc" if tool == "ptxas" else "nvidia-cuda-cuobjdump"
+    suffix = ".exe" if sys.platform == "win32" else ""
+    relative = f"nvidia/cu13/bin/{tool}{suffix}"
+    if installed:
+        _wheel_metadata(tmp_path, package)
     other = "cuobjdump" if tool == "ptxas" else "ptxas"
     output = tmp_path / "bundle"
-    with pytest.raises(FileNotFoundError) as error:
+    with pytest.raises((ImportError, FileNotFoundError)) as error:
         compile_bundle((), output, **{other: Path("explicit-unused")})
-    assert str(tmp_path / "bin" / tool) in str(error.value)
-    assert "CUDA_HOME" in str(error.value)
+    assert package in str(error.value)
+    assert relative in str(error.value).replace("\\", "/")
+    if installed:
+        assert str(tmp_path / relative) in str(error.value)
+    assert "tensoracle[producer]" in str(error.value)
     assert f"{tool}=" in str(error.value)
     assert not output.exists()

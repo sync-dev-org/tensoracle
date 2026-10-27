@@ -18,7 +18,7 @@ Follow [Build a C++ and Python repository](cpp-python-repositories.md) for sourc
 | --- | --- | --- |
 | Inference application | Use `open_engine` to reopen a matching saved engine, then enqueue it with `handle.create_execution()`. | The application supplies buffers and streams, for example through CuPy or `cuda-python`. |
 | Standard graph developer | Define a TensorRT graph, build it with `build_serialized_engine` or `open_engine`, and measure outputs with `compare_outputs`. | None for standard TensorRT layers. |
-| Cubin plugin developer | Produce cubins, build a native TensorRT plugin, and package it with the model. | `tensoracle[producer]`, CUDA toolkit, TensorRT SDK, CMake 3.20 or later, and a C++17 compiler. |
+| Cubin plugin developer | Produce cubins, build a native TensorRT plugin, and package it with the model. | `tensoracle[producer]`, PyPI CUDA headers, TensorRT SDK, CMake 3.20 or later, and a C++17 compiler. |
 
 | Requirement | Inference application | Standard graph developer | Cubin plugin developer |
 | --- | --- | --- | --- |
@@ -27,7 +27,7 @@ Follow [Build a C++ and Python repository](cpp-python-repositories.md) for sourc
 | NVIDIA GPU and driver | Open and run engines | Build and run engines | Run and test engines; cubin production itself can run without a GPU |
 | CuPy or `cuda-python` | The application chooses its buffer and stream library | The application chooses its buffer and stream library | `cuda-python` is used by the example runtime and tests, not by `tensoracle` |
 | Triton 3.8.0 | Not needed | Not needed | Installed with `tensoracle[producer]` for cubin production |
-| CUDA toolkit | Not needed | Not needed | Cubin production (`ptxas >=13.2,<14` and `cuobjdump`) and native plugin build |
+| PyPI CUDA tools and headers | Not needed | Not needed | `tensoracle[producer]` supplies cubin tools; `nvidia-cuda-nvcc` and `nvidia-cuda-runtime` 13.2 supply the native build inputs |
 | TensorRT 11 SDK | Not needed | Not needed | Native plugin build |
 | CMake 3.20 or later and C++17 compiler | Not needed | Not needed | Native plugin build |
 
@@ -242,7 +242,9 @@ Install `tensoracle[producer]` when you need to compile cubins from your own ker
 pip install 'tensoracle[producer]'
 ```
 
-`tensoracle.producer.compile_bundle` uses the extra's Triton 3.8.0 with `ptxas >=13.2,<14` and `cuobjdump` from the host CUDA toolkit to produce cubins for sm86, sm89, and sm120. It uses the toolkit directory named by `CUDA_HOME`, or `/usr/local/cuda` when `CUDA_HOME` is unset, and accepts explicit paths as independent overrides. Cubin production does not need a GPU or import torch; run it without importing torch first. Build the native plugin with a TensorRT 11 SDK, CUDA toolkit, CMake, and a C++17 compiler. Inspect the resulting bundle or wheel with `tensoracle.bundle`. The [cubin plugin example](https://github.com/sync-dev-org/tensoracle/tree/main/examples/cubin_plugin) covers rebuilding from a repository clone, packaging, and runtime use. Normal import, engine building, and engine reuse do not import the producer or Triton, and do not need the producer extra or native build tools.
+`tensoracle.producer.compile_bundle` uses Triton 3.8.0, `ptxas >=13.2,<14`, and `cuobjdump` from the extra's PyPI wheels to produce cubins for sm86, sm89, and sm120. The extra declares `nvidia-cuda-nvcc`, `nvidia-cuda-cuobjdump`, `nvidia-cuda-crt`, and `nvidia-nvvm` in the 13.2 series. The producer ignores `CUDA_HOME` and accepts explicit tool paths as independent overrides. A missing tool identifies the wheel and searched path and explains how to install the extra or pass a path. Cubin production does not need a GPU or import torch; run it without importing torch first.
+
+Build the native plugin with a TensorRT 11 SDK, CMake, a C++17 compiler, and PyPI `nvidia-cuda-nvcc==13.2.*` and `nvidia-cuda-runtime==13.2.*`. Pass their `site-packages/nvidia/cu13` directory as `CUDAToolkit_ROOT`, through CMake or the environment. The helper uses the wheel's `cuda.h` and the NVIDIA driver's `libcuda.so` on Linux (including WSL), or the wheel's `lib/x64/cuda.lib` on Windows. Neither workflow needs an OS-installed CUDA Toolkit. TensorRT headers are supplied separately using [Prepare a TensorRT SDK](tensorrt-sdk.md), which also gives the PyPI CUDA setup commands. Inspect the resulting bundle or wheel with `tensoracle.bundle`. The [cubin plugin example](https://github.com/sync-dev-org/tensoracle/tree/main/examples/cubin_plugin) covers rebuilding from a repository clone, packaging, and runtime use. Normal import, engine building, and engine reuse do not import the producer or Triton, and do not need the producer extra or native build tools.
 
 Pass a `tensoracle::cubin::PluginIO` declaration as the fourth argument to `PluginBase(name, plugin_namespace, fields, io)`. The `inputs` vector determines the input count and declares each input's TensorRT `type` and `format` through `TensorSpec`; `output` declares the single output's type and format. `shape_input_index` selects the input whose shape the output copies. This example declares two fp16 / HWC8 inputs and an fp16 / HWC8 output with input 0's shape:
 
