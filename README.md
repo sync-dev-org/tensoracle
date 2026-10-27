@@ -321,6 +321,26 @@ Neither cubin production nor native plugin building requires an OS-installed CUD
 
 The wheel also contains `tensoracle/cpp/include`, `tensoracle/cpp/src`, and `tensoracle/cpp/cmake`. Pass the installed `tensoracle/cpp` directory to CMake as `TENSORACLE_CPP_ROOT` and include `TensoracleCubinPlugin.cmake`. Its `tensoracle_add_cubin_plugin` function compiles the common C++ source, the caller's plugin source, and the generated `bundle.cpp` into the caller's library. The caller implements the graph's meaning, field meanings, weight placement, launch sequence, and variant selection. The common source owns typed fields in their original order, handles `IPluginV3` lifecycle methods, checks cubin digests and resources, loads one module per CUDA context, checks the generated argument count and specialization rules, appends the two supported zero scratch pointers, and launches kernels. The caller selects a variant using `Kernel::accepts` and derives the count passed to `Kernel::launch` from its argument array. The common source releases modules and device allocations in their owning contexts. The library must export TensorRT's `getCreators`; a static registration constructor is not supported.
 
+To record the CUDA inputs used by the plugin build, call `tensoracle_find_cuda` from `TensoracleCuda.cmake` (also included by `TensoracleCubinPlugin.cmake`):
+
+```cmake
+include("${TENSORACLE_CPP_ROOT}/cmake/TensoracleCuda.cmake")
+tensoracle_find_cuda(
+    OUT_INCLUDE_DIR cuda_include
+    OUT_DRIVER_LIBRARY cuda_driver)
+message(STATUS "CUDA headers: ${cuda_include}")
+message(STATUS "CUDA driver link library: ${cuda_driver}")
+```
+
+Both keywords are required and name variables set in the calling scope: `cuda_include` receives the directory containing `cuda.h`, and `cuda_driver` receives the driver link library's path. Unknown arguments are rejected. The function uses the same `CUDAToolkit_ROOT` CMake variable, environment variable, and default locations as `tensoracle_add_cubin_plugin`, and reports the same error when an input is missing. You can call it repeatedly, before or after adding the plugin.
+
+The function also makes the public IMPORTED target `tensoracle_cuda_driver` available. Link another CMake target to it to inherit the same include directory and driver library:
+
+```cmake
+add_library(cuda_consumer SHARED cuda_consumer.cpp)
+target_link_libraries(cuda_consumer PRIVATE tensoracle_cuda_driver)
+```
+
 `tensoracle::cubin::PluginBase` accepts a `PluginIO` declaration as its fourth constructor argument. `inputs` lists one `TensorSpec` per input in network order; each spec declares a TensorRT `type` and `format`. `output` declares the single output's type and format, and `shape_input_index` selects the input whose shape the output copies. For example, declare two fp16 / HWC8 inputs and one fp16 / HWC8 output with the shape of input 0:
 
 ```cpp
@@ -367,6 +387,16 @@ On 2026-10-18, the test suite and a native plugin build were run on Windows:
 | NVIDIA RTX 6000 Ada Generation (sm89) | `pytest`: 246 passed, 20 skipped (Linux-only memory checks and optional `convert` and `producer` dependencies) | 3.12.11 | Windows 11 Pro x64 build 26200 / 596.72 / Visual Studio 2022 (MSVC 19.44), CMake 3.31.6, Ninja, CUDA toolkit 12.8.93 / runtime and SDK 11.4.0.106 |
 
 On Windows, the standalone `cpp/` build and CTest passed, the CMake helper built the example plugin DLL against `nvinfer_11.lib`, and the plugin engine was built and reused in a separate process. The `py3-none-any` wheel built on Linux was installed unchanged on Windows. With `PATH` reduced to the Windows system directories and no CUDA or TensorRT SDK paths, the driver's `nvcuda.dll` and the pip-installed TensorRT runtime were sufficient to build and reuse engines.
+
+On 2026-10-27, `python/tests/test_example_plugin.py` was run on each GPU below with the example cubin bundle (digest `207d41310c87ae8b75b0301e881df881cdd2475eec07b82092e0ec66febbd5c0`). Each example wheel was built with TensorRT SDK `11.2.1.2` and tested with TensorRT runtime `11.4.0.106` (`tensorrt-cu13`). These runs cover one SDK/runtime pair per GPU, separately from the 25-pair matrix above. `inspect_wheel` confirmed that each wheel's library embeds cubins from this bundle.
+
+| GPU | Result | Python | OS / glibc / kernel / NVIDIA driver | CUDA toolkit (plugin build) |
+| --- | --- | --- | --- | --- |
+| NVIDIA RTX PRO 4000 Blackwell (sm120) | 7 passed, 0 failed, 0 skipped | 3.13.15 | WSL2 / glibc 2.43 / `6.18.54.1-microsoft-standard-WSL2` / 616.92 | 13.3 |
+| NVIDIA RTX 6000 Ada Generation (sm89) | 7 passed, 0 failed, 0 skipped | 3.13.15 | WSL2 / glibc 2.43 / `6.18.33.2-microsoft-standard-WSL2` / 596.72 | 13.2.86 |
+| NVIDIA RTX A6000 (sm86) | 7 passed, 0 failed, 0 skipped | 3.13.7 | WSL2 / glibc 2.39 / `6.18.54.1-microsoft-standard-WSL2` / 597.16 | 13.0.88 |
+
+The tests built and installed the example wheel in a temporary runtime environment, built and ran both plugins, reused a saved TensorRT engine in a separate process without calling the graph, selected a different engine cache entry when the plugin library changed, ran concurrently in two CUDA contexts, compared fp32 and TF32, and rejected a library embedding a different bundle.
 
 Native Linux, other kernels, Windows with sm86 or sm120, and TensorRT 11 versions not listed here have not been tested.
 

@@ -13,6 +13,10 @@ target_compile_features(tensoracle_cubin PUBLIC cxx_std_17)
 target_include_directories(tensoracle_cubin PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include" "${TENSORRT_ROOT}/include")
 target_link_libraries(tensoracle_cubin PUBLIC tensoracle_internal_cuda_driver)
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(tensoracle_cubin PUBLIC Threads::Threads)
+endif()
 target_compile_options(tensoracle_cubin PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-deprecated-declarations>)
 

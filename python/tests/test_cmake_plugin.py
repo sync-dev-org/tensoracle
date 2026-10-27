@@ -9,6 +9,77 @@ import pytest
 
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-015")
+@pytest.mark.skipif(os.name == "nt", reason="The pthread link check uses a Unix C++ toolchain")
+@pytest.mark.parametrize("windows", [False, True], ids=["linux", "windows"])
+@pytest.mark.parametrize("target_kind", ["plugin", "static-library"])
+def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
+    """Linux plugins and static library consumers link threads; Windows needs no package."""
+    project = Path(__file__).resolve().parents[1]
+    root = project.parent if project.name == "python" else project
+    sdk = tmp_path / "sdk"
+    (sdk / "include").mkdir(parents=True)
+    (sdk / "include/NvInfer.h").touch()
+    (sdk / "lib").mkdir()
+    (sdk / "lib" / ("nvinfer_11.lib" if windows else "libnvinfer.so")).touch()
+    cuda = tmp_path / "cuda"
+    (cuda / "include").mkdir(parents=True)
+    (cuda / "include/cuda.h").touch()
+    driver = cuda / ("lib/x64/cuda.lib" if windows else "lib/libcuda.so")
+    driver.parent.mkdir(parents=True)
+    driver.touch()
+    (tmp_path / "plugin.cpp").touch()
+    (tmp_path / "bundle.cpp").touch()
+    platform = (
+        'set(WIN32 TRUE)\nset(CMAKE_FIND_LIBRARY_PREFIXES "")\n'
+        'set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib")\n'
+        "set(CMAKE_DISABLE_FIND_PACKAGE_Threads TRUE)\n"
+        if windows
+        else "set(WIN32 FALSE)\n"
+        # Model a libc that requires explicit thread linkage, even on glibc >= 2.34.
+        'set(CMAKE_HAVE_LIBC_PTHREAD FALSE CACHE BOOL "" FORCE)\n'
+        "set(THREADS_PREFER_PTHREAD_FLAG TRUE)\n"
+    )
+    target = (
+        f'include("{root.as_posix()}/cpp/cmake/TensoracleCubinPlugin.cmake")\n'
+        "tensoracle_add_cubin_plugin(TARGET check_threads\n"
+        '  TENSORRT_ROOT "${TENSORRT_ROOT}" BUNDLE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"\n'
+        '  SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/plugin.cpp")\n'
+        if target_kind == "plugin"
+        else 'set(BUILD_TESTING OFF CACHE BOOL "" FORCE)\n'
+        f'add_subdirectory("{root.as_posix()}/cpp" cpp)\n'
+        "add_executable(check_threads plugin.cpp)\n"
+        "target_link_libraries(check_threads PRIVATE tensoracle_cubin)\n"
+    )
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(check_threads LANGUAGES CXX)\n" + platform + target,
+        encoding="utf-8",
+    )
+    build = tmp_path / "build"
+    result = subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(tmp_path),
+            "-B",
+            str(build),
+            "-G",
+            "Unix Makefiles",
+            f"-DTENSORRT_ROOT={sdk}",
+            f"-DCUDAToolkit_ROOT={cuda}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    link = (build / "CMakeFiles/check_threads.dir/link.txt").read_text(encoding="utf-8")
+    assert ("-pthread" in link.split()) is not windows, link
+
+
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-015")
 @pytest.mark.req("SP-TENSORACLE-038")
 @pytest.mark.parametrize("windows", [False, True], ids=["linux-sdk", "windows-sdk"])
 @pytest.mark.parametrize("root_in_environment", [False, True], ids=["cmake-root", "env-root"])

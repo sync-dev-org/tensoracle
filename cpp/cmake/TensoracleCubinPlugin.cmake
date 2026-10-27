@@ -30,6 +30,10 @@ function(tensoracle_add_cubin_plugin)
         "${_tensoracle_cpp}/include" "${TENSORACLE_NVINFER_INCLUDE}")
     target_link_libraries(${ARG_TARGET} PRIVATE
         "${TENSORACLE_NVINFER_LIBRARY}" tensoracle_internal_cuda_driver)
+    if(NOT WIN32)
+        find_package(Threads REQUIRED)
+        target_link_libraries(${ARG_TARGET} PRIVATE Threads::Threads)
+    endif()
     set_target_properties(${ARG_TARGET} PROPERTIES
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 endfunction()

@@ -91,5 +91,29 @@ function(_tensoracle_find_cuda)
         set_target_properties(tensoracle_internal_cuda_driver PROPERTIES
             IMPORTED_LOCATION "${_driver}" INTERFACE_INCLUDE_DIRECTORIES "${_include}")
     endif()
+    if(NOT TARGET tensoracle_cuda_driver)
+        add_library(tensoracle_cuda_driver ALIAS tensoracle_internal_cuda_driver)
+    endif()
     set(_tensoracle_cuda_root "${_root}" PARENT_SCOPE)
+endfunction()
+
+# Return the same CUDA inputs used by tensoracle_add_cubin_plugin and expose
+# tensoracle_cuda_driver for consumers that only need to link the Driver API.
+function(tensoracle_find_cuda)
+    cmake_parse_arguments(PARSE_ARGV 0 ARG "" "OUT_INCLUDE_DIR;OUT_DRIVER_LIBRARY" "")
+    if(DEFINED ARG_UNPARSED_ARGUMENTS)
+        message(FATAL_ERROR "Unrecognized tensoracle_find_cuda arguments: ${ARG_UNPARSED_ARGUMENTS}")
+    endif()
+    if(ARG_KEYWORDS_MISSING_VALUES OR
+       NOT DEFINED ARG_OUT_INCLUDE_DIR OR "${ARG_OUT_INCLUDE_DIR}" STREQUAL "" OR
+       NOT DEFINED ARG_OUT_DRIVER_LIBRARY OR "${ARG_OUT_DRIVER_LIBRARY}" STREQUAL "")
+        message(FATAL_ERROR
+            "tensoracle_find_cuda requires OUT_INCLUDE_DIR and OUT_DRIVER_LIBRARY variable names")
+    endif()
+
+    _tensoracle_find_cuda()
+    get_target_property(_include tensoracle_cuda_driver INTERFACE_INCLUDE_DIRECTORIES)
+    get_target_property(_driver tensoracle_cuda_driver IMPORTED_LOCATION)
+    set("${ARG_OUT_INCLUDE_DIR}" "${_include}" PARENT_SCOPE)
+    set("${ARG_OUT_DRIVER_LIBRARY}" "${_driver}" PARENT_SCOPE)
 endfunction()
