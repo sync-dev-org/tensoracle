@@ -63,6 +63,7 @@ exclude = [
     "/.github/",
     "/AGENTS.md",
     "/CLAUDE.md",
+    "/intro/",
     "/tools/",
     "/noren.yaml",
     "/noren-words.txt",

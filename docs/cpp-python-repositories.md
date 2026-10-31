@@ -43,6 +43,8 @@ cd python
 uv sync
 ```
 
+Add `.venv` (without a trailing slash) to `python/.gitignore`. A rule in the repository root's `.gitignore` is not enough: some build backends, such as scikit-build-core, read ignore files only from the project directory and the directories beneath it that they reach without following symbolic links, while they follow symbolic links when collecting files. When `python/.venv` is a symbolic link to an environment elsewhere, the `.gitignore` that uv writes inside the environment is not read, and an sdist build walks every file in the environment. Without the trailing slash, the rule matches `.venv` whether it is a directory or a symbolic link.
+
 Declare Python development tools such as pytest, Ruff, and a type checker in the Python project's development dependency group. Keep runtime dependencies in the `[project]` table's `dependencies` field, optional runtime features in extras, and isolated build requirements in the `[build-system]` table's `requires` field.
 
 Keep one CMake and one Ninja installation on the host's `PATH`, shared by standalone C++ builds and tests that invoke CMake. Do not add `cmake` or `ninja` to each project's Python development dependency group. Their installation method can follow the developer's platform and package manager.
