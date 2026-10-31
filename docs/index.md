@@ -4,7 +4,7 @@
 
 Follow the [four-stage optimization workflow](optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
-Follow [Build a C++ and Python repository](cpp-python-repositories.md) for source layout, development environments, bindings, and Linux wheel packaging.
+Follow [Build plugins with tensoracle's C++ sources](cpp-python-repositories.md) to locate the sources in the wheel and use the CMake helper in your plugin build.
 
 ## Terms
 
@@ -234,7 +234,7 @@ The application runs the engine and passes a CPU NumPy candidate output and a co
 
 ### Build a cubin plugin
 
-Repositories that adopt tensoracle must follow the [repository layout in the plugin guide](https://github.com/sync-dev-org/tensoracle#build-a-cubin-plugin).
+Use the [C++ sources and CMake helper supplied in the tensoracle wheel](cpp-python-repositories.md) to build your native plugin.
 
 Install `tensoracle[producer]` when you need to compile cubins from your own kernels:
 

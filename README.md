@@ -31,7 +31,7 @@ The supported targets are Linux x86_64 (including WSL2) and Windows x86_64, Tens
 
 Follow the [four-stage optimization workflow](https://github.com/sync-dev-org/tensoracle/blob/main/docs/optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
 
-Follow [Build a C++ and Python repository](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) for source layout, development environments, bindings, and Linux wheel packaging.
+Follow [Build plugins with tensoracle's C++ sources](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) to locate the sources in the wheel and use the CMake helper in your plugin build.
 
 ## Convert a PyTorch checkpoint
 
@@ -303,23 +303,13 @@ Install the producer extra when you need to compile cubins from your own kernels
 pip install 'tensoracle[producer]'
 ```
 
-Every repository that adopts tensoracle must use this top-level layout:
-
-```text
-cpp/
-  CMakeLists.txt
-python/
-  pyproject.toml
-  src/
-```
-
-Keep C++ sources in `cpp/`, with a CMake project that builds and runs its tests through CTest without Python. Keep the Python project, its src-layout package, and its uv environment in `python/`; run the project's uv commands from that directory. Tensoracle itself follows this layout, and the installed C++ helper paths described below remain inside its Python package.
+Use the [C++ sources and CMake helper supplied in the tensoracle wheel](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) to build your native plugin.
 
 `tensoracle.producer.compile_bundle` uses the extra's **Triton 3.8.0** with **ptxas >=13.2,<14** and **cuobjdump** from the PyPI `nvidia-cuda-nvcc` and `nvidia-cuda-cuobjdump` wheels. The extra pins those tools, `nvidia-cuda-crt`, and `nvidia-nvvm` to the 13.2 series. It does not read `CUDA_HOME`; explicit `ptxas` and `cuobjdump` paths override the wheel defaults independently. A missing tool identifies its package and searched path and explains how to install the extra or pass a path. The normal import, engine build, and engine reuse paths do not import the producer or Triton. Cubin production does not need a GPU or import torch; run it without importing torch first. The caller supplies Triton functions and `KernelSpec` records with their public argument types, compile time constants, and any divisibility assumptions. The producer writes sm86, sm89, and sm120 cubins, `bundle.json`, and a C++ translation unit that embeds exactly those cubins. The generated C++ entry records carry each public argument's order, type, count, and divisibility rule into the common launcher. It rejects an unexpected parameter ABI or nonzero scratch requirement. The included [example](https://github.com/sync-dev-org/tensoracle/blob/main/examples/cubin_plugin/README.md#rebuild-the-cubins) has the command to rebuild its cubins from a repository clone.
 
 Neither cubin production nor native plugin building requires an OS-installed CUDA Toolkit. For the native build, install PyPI `nvidia-cuda-nvcc==13.2.*` and `nvidia-cuda-runtime==13.2.*`, then pass their `site-packages/nvidia/cu13` directory as `CUDAToolkit_ROOT` (a CMake variable or environment variable). The helper uses its `cuda.h` and links the NVIDIA driver's `libcuda.so` on Linux, including `/usr/lib/wsl/lib/libcuda.so` on WSL, or the wheel's `lib/x64/cuda.lib` on Windows. TensorRT headers still come from the separately prepared SDK. The [SDK guide](https://github.com/sync-dev-org/tensoracle/blob/main/docs/tensorrt-sdk.md#5-pass-the-verified-root-to-the-build-and-tests) gives the setup commands. An explicit OS Toolkit root and the existing default locations remain supported for native builds.
 
-The wheel also contains `tensoracle/cpp/include`, `tensoracle/cpp/src`, and `tensoracle/cpp/cmake`. Pass the installed `tensoracle/cpp` directory to CMake as `TENSORACLE_CPP_ROOT` and include `TensoracleCubinPlugin.cmake`. Its `tensoracle_add_cubin_plugin` function compiles the common C++ source, the caller's plugin source, and the generated `bundle.cpp` into the caller's library. The caller implements the graph's meaning, field meanings, weight placement, launch sequence, and variant selection. The common source owns typed fields in their original order, handles `IPluginV3` lifecycle methods, checks cubin digests and resources, loads one module per CUDA context, checks the generated argument count and specialization rules, appends the two supported zero scratch pointers, and launches kernels. The caller selects a variant using `Kernel::accepts` and derives the count passed to `Kernel::launch` from its argument array. The common source releases modules and device allocations in their owning contexts. The library must export TensorRT's `getCreators`; a static registration constructor is not supported.
+The caller implements the graph's meaning, field meanings, weight placement, launch sequence, and variant selection. The common C++ implementation owns typed fields in their original order, handles `IPluginV3` lifecycle methods, checks cubin digests and resources, loads one module per CUDA context, checks the generated argument count and specialization rules, appends the two supported zero scratch pointers, and launches kernels. The caller selects a variant using `Kernel::accepts` and derives the count passed to `Kernel::launch` from its argument array. The common implementation releases modules and device allocations in their owning contexts. The library must export TensorRT's `getCreators`; a static registration constructor is not supported.
 
 To record the CUDA inputs used by the plugin build, call `tensoracle_find_cuda` from `TensoracleCuda.cmake` (also included by `TensoracleCubinPlugin.cmake`):
 
