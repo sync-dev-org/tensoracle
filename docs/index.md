@@ -74,6 +74,30 @@ handle = open_engine(
 
 `my_model` represents the application's model package. On a valid cache hit, `open_engine` does not call `graph`; on a miss, it builds and saves a new engine. Raise `graph_version` when the graph code changes or when any other caller value that changes the engine contents but is not part of the cache identity changes, such as a plugin manifest or a build recipe. `open_engine` itself does not execute the engine or manage GPU buffers. Create an execution unit from its returned handle to enqueue inference. Saved engines live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when `XDG_CACHE_HOME` is unset. On Windows, `~` is `%USERPROFILE%`. See the [complete cache example](https://github.com/sync-dev-org/tensoracle#save-and-reopen-an-engine) for the declaration and expected input and output types.
 
+### Manage saved engines
+
+Inspect saved engines and preview or perform cleanup with the installed command:
+
+```bash
+tensoracle cache list
+tensoracle cache prune --unused-for 30 --dry-run
+tensoracle cache prune --unused-for 30
+tensoracle cache prune --max-size 10GiB --dry-run
+tensoracle cache prune --max-size 10GiB
+```
+
+The commands use the same `XDG_CACHE_HOME` / home `.cache` directory as `open_engine`. They read only filesystem metadata, engine headers, and saved weight digest records. They do not read or checksum the plan body, load the original weights, deserialize engines, import TensorRT, or query a GPU. Listing recognizes the header format; it does not establish that an engine can be loaded.
+
+`cache list` prints one JSON object with `directory`, `entries`, and `total_size_bytes`. Each entry contains the file name, size in bytes, recorded time in UTC (`recorded_at`) and exact nanoseconds (`recorded_at_ns`), and the complete header conditions. This distinguishes engines with the same name and graph version but different weights or plugins. `weight_paths` associates each weight digest with paths from valid, checksum-verified `weight-*.json` records whose SHA-256 matches that digest; an empty `paths` array means unknown. These paths are references and do not establish which application uses an engine or whether the weight file still exists. Empty files have status `building or leftover`; unreadable or invalid headers have status `unrecognized` and a reason.
+
+An engine's `.engine` modification time records its initial save or the last successful `open_engine` cache read. Failed loads and these management commands leave that time unchanged. A timestamp write failure, including a read-only cache, does not prevent a successful load, and a disappeared file is never recreated to record its time. The record describes the time of `open_engine`, not whether inference continues afterward. Files saved before timestamp recording was introduced, and files whose timestamp could not be written, may not reflect the actual last successful read.
+
+`cache prune` requires exactly one of `--unused-for DAYS` and `--max-size SIZE`. Days are finite nonnegative numbers, may be fractional, and mean 24 hours each; only timestamps strictly earlier than the cutoff are selected. Sizes accept nonnegative bytes or the case-insensitive units `B`, `KiB`, `MiB`, `GiB`, and `TiB` (powers of 1024). Fractions such as `1.5GiB` are allowed and fractional bytes are rounded down. Size pruning selects the oldest recorded times first, breaking ties by file name, until the total `.engine` bytes would fit. Empty and unrecognized files count toward that total but are always excluded from deletion. Weight digest records are kept.
+
+Before deletion, pruning prints a JSON `plan` containing the selected engines, excluded files, and a notice that removed engines will be rebuilt the next time they are used. It then prints a JSON `result` separating removed, excluded, failed, and already missing files, the bytes actually removed, and the remaining total. `--dry-run` shows the same targets without changing file contents or recorded times; its result also gives the projected total. Exit status is 0 for success, 1 for filesystem failures, failed deletions, or an unattainable size limit, and 2 for invalid usage. Files that disappear before removal are reported in `missing` and do not count as bytes removed. Observed file changes are reported as failed removals with a reason.
+
+Run pruning during maintenance when no engine is being built or opened in the same cache directory. Cleanup provides no lock or guarantee of protection against concurrent builds and reads. Inspect the selection with `--dry-run` before performing cleanup. `tensoracle cache prune --help` describes the options.
+
 ### Execute an engine
 
 The execution flow is: open the engine, create an execution unit, set all ranged input shapes together, read concrete output shapes and dtypes, allocate output buffers, then enqueue the device addresses on a caller-owned stream. Each `EngineExecution` keeps the handle alive and owns an independent TensorRT context. Fixed inputs and single-point profiles are initialized when the unit is created. Ranged inputs retain their shapes until the next successful `set_input_shapes` call. A partial TensorRT setting failure blocks queries for concrete shapes and enqueue until a complete setting succeeds.

@@ -123,6 +123,30 @@ For each weight file, `open_engine` stores its SHA-256 alongside the saved engin
 
 `CorruptEngineError` reports incomplete or damaged saved files and plans that TensorRT cannot deserialize. When deserialization fails, its message asks the caller to check the required plugin libraries in `plugins=`. `EngineConditionError` reports a saved header with different build conditions. These types and `EngineIOError` derive from `EngineCacheError`. The caller chooses whether to rebuild after an error.
 
+## Manage saved engines
+
+Inspect saved engines and preview or perform cleanup with the installed command:
+
+```bash
+tensoracle cache list
+tensoracle cache prune --unused-for 30 --dry-run
+tensoracle cache prune --unused-for 30
+tensoracle cache prune --max-size 10GiB --dry-run
+tensoracle cache prune --max-size 10GiB
+```
+
+The commands use the same `XDG_CACHE_HOME` / home `.cache` directory as `open_engine`. They read only filesystem metadata, engine headers, and saved weight digest records. They do not read or checksum the plan body, load the original weights, deserialize engines, import TensorRT, or query a GPU. Listing recognizes the header format; it does not establish that an engine can be loaded.
+
+`cache list` prints one JSON object with `directory`, `entries`, and `total_size_bytes`. Each entry contains the file name, size in bytes, recorded time in UTC (`recorded_at`) and exact nanoseconds (`recorded_at_ns`), and the complete header conditions. This distinguishes engines with the same name and graph version but different weights or plugins. `weight_paths` associates each weight digest with paths from valid, checksum-verified `weight-*.json` records whose SHA-256 matches that digest; an empty `paths` array means unknown. These paths are references and do not establish which application uses an engine or whether the weight file still exists. Empty files have status `building or leftover`; unreadable or invalid headers have status `unrecognized` and a reason.
+
+An engine's `.engine` modification time records its initial save or the last successful `open_engine` cache read. Failed loads and these management commands leave that time unchanged. A timestamp write failure, including a read-only cache, does not prevent a successful load, and a disappeared file is never recreated to record its time. The record describes the time of `open_engine`, not whether inference continues afterward. Files saved before timestamp recording was introduced, and files whose timestamp could not be written, may not reflect the actual last successful read.
+
+`cache prune` requires exactly one of `--unused-for DAYS` and `--max-size SIZE`. Days are finite nonnegative numbers, may be fractional, and mean 24 hours each; only timestamps strictly earlier than the cutoff are selected. Sizes accept nonnegative bytes or the case-insensitive units `B`, `KiB`, `MiB`, `GiB`, and `TiB` (powers of 1024). Fractions such as `1.5GiB` are allowed and fractional bytes are rounded down. Size pruning selects the oldest recorded times first, breaking ties by file name, until the total `.engine` bytes would fit. Empty and unrecognized files count toward that total but are always excluded from deletion. Weight digest records are kept.
+
+Before deletion, pruning prints a JSON `plan` containing the selected engines, excluded files, and a notice that removed engines will be rebuilt the next time they are used. It then prints a JSON `result` separating removed, excluded, failed, and already missing files, the bytes actually removed, and the remaining total. `--dry-run` shows the same targets without changing file contents or recorded times; its result also gives the projected total. Exit status is 0 for success, 1 for filesystem failures, failed deletions, or an unattainable size limit, and 2 for invalid usage. Files that disappear before removal are reported in `missing` and do not count as bytes removed. Observed file changes are reported as failed removals with a reason.
+
+Run pruning during maintenance when no engine is being built or opened in the same cache directory. Cleanup provides no lock or guarantee of protection against concurrent builds and reads. Inspect the selection with `--dry-run` before performing cleanup. `tensoracle cache prune --help` describes the options.
+
 ## Use a saved engine for inference
 
 An inference application can call `open_engine` with the same build declaration and files used to save the engine. For example, assume the model package exports `graph`, `declaration`, and `io` matching the example above:

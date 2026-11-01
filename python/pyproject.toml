@@ -24,6 +24,9 @@ dependencies = [
     "tensorrt-cu13>=11.0,<12",
 ]
 
+[project.scripts]
+tensoracle = "tensoracle._cli:main"
+
 [project.urls]
 documentation = "https://sync-dev-org.github.io/tensoracle/"
 repository = "https://github.com/sync-dev-org/tensoracle"

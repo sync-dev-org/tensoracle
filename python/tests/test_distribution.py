@@ -1,5 +1,6 @@
 """Check the files and public metadata delivered through PyPI."""
 
+import configparser
 import email
 import os
 import re
@@ -244,6 +245,51 @@ def test_wheel_is_portable_python_with_uncompiled_cpp(distributions):
                 if source.is_file():
                     member = source.relative_to(ROOT / "cpp").as_posix()
                     assert archive.read(f"tensoracle/cpp/{member}") == source.read_bytes()
+
+
+@pytest.mark.req("SP-TENSORACLE-047")
+def test_wheel_installs_the_cache_console_script_without_extra_dependencies(
+    distributions, tmp_path
+):
+    """The wheel supplies a runnable cache command and retains the original required dependencies."""
+    with zipfile.ZipFile(distributions["wheel"]) as archive:
+        name = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
+        )
+        entry_points = configparser.ConfigParser()
+        entry_points.read_string(archive.read(name).decode())
+        entry_point = entry_points["console_scripts"]["tensoracle"]
+        metadata_name = next(
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        )
+        metadata = email.message_from_bytes(archive.read(metadata_name))
+    assert {
+        str(Requirement(value))
+        for value in metadata.get_all("Requires-Dist")
+        if not Requirement(value).marker
+    } == {"numpy>=2.0", "safetensors>=0.4", "tensorrt-cu13<12,>=11.0"}
+    runtime = tmp_path / "runtime"
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
+    executable = runtime / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    subprocess.run(
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(executable),
+            "--no-deps",
+            str(distributions["wheel"]),
+        ],
+        check=True,
+    )
+    command = runtime / ("Scripts/tensoracle.exe" if sys.platform == "win32" else "bin/tensoracle")
+    result = subprocess.run(
+        [str(command), "cache", "--help"], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert "list" in result.stdout and "prune" in result.stdout
+    assert ":" in entry_point
 
 
 def test_backend_prepares_metadata_and_editable_source(tmp_path):

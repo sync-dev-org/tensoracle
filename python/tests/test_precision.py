@@ -66,10 +66,7 @@ def test_lower_precision_matches_fp32_and_reuses_saved_engines_after_restart(
     assert reference_handle.path != candidate_handle.path
     paths = {"fp32": reference_handle.path, precision: candidate_handle.path}
     assert set((cache / "tensoracle").glob("*.engine")) == set(paths.values())
-    before = {
-        key: (path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
-        for key, path in paths.items()
-    }
+    before = {key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in paths.items()}
 
     reference = run(reference_handle)
     candidate = run(candidate_handle)
@@ -106,6 +103,5 @@ def test_lower_precision_matches_fp32_and_reuses_saved_engines_after_restart(
         np.testing.assert_array_equal(reopened["fp32"], reference)
         np.testing.assert_array_equal(reopened[precision], candidate)
     assert before == {
-        key: (path.stat().st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest())
-        for key, path in paths.items()
+        key: hashlib.sha256(path.read_bytes()).hexdigest() for key, path in paths.items()
     }

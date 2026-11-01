@@ -3,7 +3,6 @@
 import ctypes
 import ctypes.util
 import hashlib
-import json
 import os
 import platform
 import tempfile
@@ -16,13 +15,21 @@ from typing import TYPE_CHECKING
 import tensorrt as trt
 
 from ._build import EngineBuild, _build_serialized_engine
+from ._cache_format import (
+    _MAGIC,
+    _WEIGHT_RECORD_VERSION,
+    CorruptEngineError,
+    EngineCacheError,
+    EngineConditionError,
+    _cache_directory,
+    _json_bytes,
+    _read_header,
+    _read_weight_record,
+)
 from ._plugins import register_libraries
 
 if TYPE_CHECKING:
     from ._execution import EngineExecution
-
-_MAGIC = b"TENSORACLE\x01"
-_WEIGHT_RECORD_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -57,18 +64,6 @@ class EngineHandle:
         from ._execution import EngineExecution
 
         return EngineExecution(self)
-
-
-class EngineCacheError(ValueError):
-    """A stored engine cannot be used for this declaration."""
-
-
-class CorruptEngineError(EngineCacheError):
-    """A stored engine is incomplete or corrupt."""
-
-
-class EngineConditionError(EngineCacheError):
-    """A stored engine belongs to different build conditions."""
 
 
 class EngineIOError(EngineCacheError):
@@ -106,7 +101,7 @@ def open_engine(
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
             plan, shape_tensor_outputs = _read_plan(path, conditions)
-            return _open_plan(
+            handle = _open_plan(
                 plan,
                 path,
                 declaration,
@@ -114,6 +109,11 @@ def open_engine(
                 actual_logger,
                 shape_tensor_outputs=shape_tensor_outputs,
             )
+            try:
+                os.utime(path, None)
+            except OSError:
+                pass
+            return handle
         else:
             os.close(fd)
 
@@ -145,21 +145,12 @@ def open_engine(
         raise
 
 
-def _json_bytes(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
 def _file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _cache_directory() -> Path:
-    cache_root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return cache_root / "tensoracle"
 
 
 def _weight_sha256(path: Path, *, force_rebuild: bool) -> str:
@@ -175,27 +166,8 @@ def _weight_sha256(path: Path, *, force_rebuild: bool) -> str:
     record_path = _cache_directory() / f"weight-{path_digest}.json"
 
     if not force_rebuild:
-        try:
-            record = json.loads(record_path.read_bytes())
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            record = None
-        if (
-            isinstance(record, dict)
-            and record.keys() == identity.keys() | {"version", "sha256", "checksum"}
-            and record["version"] == _WEIGHT_RECORD_VERSION
-            and type(record["version"]) is int
-            and all(
-                type(record[key]) is type(value) and record[key] == value
-                for key, value in identity.items()
-            )
-            and isinstance(record["sha256"], str)
-            and len(record["sha256"]) == 64
-            and all(character in "0123456789abcdef" for character in record["sha256"])
-            and record["checksum"]
-            == hashlib.sha256(
-                _json_bytes({key: value for key, value in record.items() if key != "checksum"})
-            ).hexdigest()
-        ):
+        record = _read_weight_record(record_path)
+        if record is not None and all(record[key] == value for key, value in identity.items()):
             return record["sha256"]
 
     digest = _file_sha256(absolute_path)
@@ -323,31 +295,18 @@ def _conditions(
 
 
 def _read_plan(path: Path, conditions: dict) -> tuple[memoryview, tuple[str, ...]]:
-    data = path.read_bytes()
-    offset = len(_MAGIC)
-    if not data.startswith(_MAGIC) or len(data) < offset + 8:
-        raise CorruptEngineError(f"incomplete TensorRT engine file: {path}")
-    header_size = int.from_bytes(data[offset : offset + 8], "big")
-    header_end = offset + 8 + header_size
-    if header_size == 0 or header_end >= len(data):
-        raise CorruptEngineError(f"invalid TensorRT engine header: {path}")
-    try:
-        header = json.loads(data[offset + 8 : header_end])
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise CorruptEngineError(f"invalid TensorRT engine header: {path}") from error
-    if not isinstance(header, dict) or not isinstance(header.get("conditions"), dict):
-        raise CorruptEngineError(f"invalid TensorRT engine header: {path}")
-    shape_tensor_outputs = header.get("shape_tensor_outputs", [])
-    if not isinstance(shape_tensor_outputs, list) or any(
-        not isinstance(name, str) for name in shape_tensor_outputs
-    ):
-        raise CorruptEngineError(f"invalid TensorRT engine header: {path}")
-    if header["conditions"] != conditions:
-        raise EngineConditionError(f"TensorRT engine conditions differ: {path}")
-    plan = memoryview(data)[header_end:]
+    # A buffered read after the header can concatenate a buffered prefix with a
+    # large plan while holding the GIL. FileIO.readall avoids that concatenation
+    # and still handles plans larger than a single OS read can return.
+    with path.open("rb", buffering=0) as stream:
+        file_size = os.fstat(stream.fileno()).st_size
+        header = _read_header(stream, path, file_size)
+        if header["conditions"] != conditions:
+            raise EngineConditionError(f"TensorRT engine conditions differ: {path}")
+        plan = memoryview(stream.read())
     if header.get("plan_sha256") != hashlib.sha256(plan).hexdigest():
         raise CorruptEngineError(f"TensorRT engine checksum differs: {path}")
-    return plan, tuple(shape_tensor_outputs)
+    return plan, tuple(header.get("shape_tensor_outputs", []))
 
 
 def _open_plan(
