@@ -22,7 +22,9 @@ def saved_cache(tmp_path, monkeypatch):
     return directory
 
 
-def save_engine(directory, filename="one.engine", *, conditions=None, mtime=OLD_NS, size=None):
+def save_engine(
+    directory, filename="one.engine", *, conditions=None, mtime=OLD_NS, size=None, metadata=None
+):
     if conditions is None:
         conditions = {
             "name": "encoder",
@@ -36,7 +38,9 @@ def save_engine(directory, filename="one.engine", *, conditions=None, mtime=OLD_
             "architecture": "x86_64",
             "tensorrt_version": "11.0",
         }
-    header = json.dumps({"conditions": conditions, "plan_sha256": "0" * 64}).encode()
+    header = json.dumps(
+        {"conditions": conditions, "plan_sha256": "0" * 64, **(metadata or {})}
+    ).encode()
     path = directory / filename
     path.write_bytes(b"TENSORACLE\x01" + len(header).to_bytes(8, "big") + header + b"plan")
     if size is not None:
@@ -102,6 +106,26 @@ def test_list_distinguishes_all_conditions_and_preserves_recorded_time(saved_cac
     assert listing["total_size_bytes"] == sum(
         path.stat().st_size for path in (first, second, third)
     )
+
+
+@pytest.mark.req("SP-TENSORACLE-043")
+@pytest.mark.req("SP-TENSORACLE-052")
+@pytest.mark.parametrize(
+    "metadata, expected",
+    [({"workspace_limit": None}, None), ({"workspace_limit": 4096}, 4096), ({}, "unknown")],
+    ids=["tensorrt-default", "explicit-limit", "missing-record"],
+)
+def test_list_shows_recorded_workspace_limit_or_unknown(saved_cache, capsys, metadata, expected):
+    """Listing distinguishes TensorRT's default, an explicit byte limit, and a missing record."""
+    path, conditions = save_engine(saved_cache, metadata=metadata)
+    contents = path.read_bytes()
+    status, (listing,), stderr = call_cli(capsys, "list")
+    assert status == 0 and not stderr
+    entry = listing["entries"][0]
+    assert entry["workspace_limit"] == expected
+    assert entry["conditions"] == conditions
+    assert path.read_bytes() == contents
+    assert path.stat().st_mtime_ns == OLD_NS
 
 
 @pytest.mark.req("SP-TENSORACLE-049")

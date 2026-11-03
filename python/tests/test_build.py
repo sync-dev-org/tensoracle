@@ -187,8 +187,23 @@ def test_tf32_request_is_rejected_before_graph_is_built():
 
 
 @pytest.mark.req("SP-TENSORACLE-013")
-def test_tf32_is_disabled_and_other_builder_settings_are_applied(monkeypatch):
-    """The builder clears TF32 while applying the declared workspace and optimization level."""
+@pytest.mark.req("SP-TENSORACLE-052")
+@pytest.mark.parametrize(
+    "settings, workspace_calls",
+    [
+        (BuilderSettings(optimization_level=2), []),
+        (BuilderSettings(workspace_limit=None, optimization_level=2), []),
+        (
+            BuilderSettings(workspace_limit=4096, optimization_level=2),
+            [(trt.MemoryPoolType.WORKSPACE, 4096)],
+        ),
+    ],
+    ids=["default-workspace", "explicit-none", "positive-workspace"],
+)
+def test_tf32_is_disabled_and_other_builder_settings_are_applied(
+    monkeypatch, settings, workspace_calls
+):
+    """The builder clears TF32 and sets a workspace limit only for an explicit positive integer."""
     import tensoracle._build as module
 
     class Config:
@@ -196,13 +211,13 @@ def test_tf32_is_disabled_and_other_builder_settings_are_applied(monkeypatch):
 
         def __init__(self):
             self.flags = {trt.BuilderFlag.TF32}
-            self.workspace = None
+            self.workspace_calls = []
 
         def clear_flag(self, flag):
             self.flags.discard(flag)
 
         def set_memory_pool_limit(self, pool, limit):
-            self.workspace = (pool, limit)
+            self.workspace_calls.append((pool, limit))
 
     class Network:
         num_inputs = 1
@@ -229,10 +244,20 @@ def test_tf32_is_disabled_and_other_builder_settings_are_applied(monkeypatch):
     monkeypatch.setattr(module.trt, "Builder", Builder)
     declaration = EngineBuild(
         inputs={"features": InputShape.fixed((1, 3, 2))},
-        settings=BuilderSettings(workspace_limit=4096, optimization_level=2),
+        settings=settings,
     )
     assert build_serialized_engine(lambda network: None, declaration) == b"plan"
     config = observed[0].config
     assert trt.BuilderFlag.TF32 not in config.flags
-    assert config.workspace == (trt.MemoryPoolType.WORKSPACE, 4096)
+    assert config.workspace_calls == workspace_calls
     assert config.builder_optimization_level == 2
+
+
+@pytest.mark.req("SP-TENSORACLE-052")
+@pytest.mark.parametrize("workspace_limit", [0, -1, True, False, 1.5, "4096"])
+def test_invalid_workspace_limit_is_rejected_before_building(monkeypatch, workspace_limit):
+    """Zero, negatives, booleans, and nonintegers fail before creating a TensorRT builder."""
+    monkeypatch.setattr(trt, "Builder", lambda logger: pytest.fail("builder was created"))
+    with pytest.raises(ValueError, match="workspace_limit"):
+        declaration = EngineBuild({}, BuilderSettings(workspace_limit=workspace_limit))
+        build_serialized_engine(lambda network: pytest.fail("graph was built"), declaration)

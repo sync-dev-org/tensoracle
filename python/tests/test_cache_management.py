@@ -39,17 +39,58 @@ def open_cached(tmp_path, monkeypatch):
     def graph(network):
         built.append(True)
 
-    def open_engine(*, io=None):
+    def open_engine(*, io=None, settings=None, force_rebuild=False):
         return tensoracle.open_engine(
             graph,
-            tensoracle.EngineBuild({}),
+            tensoracle.EngineBuild({}, settings or tensoracle.BuilderSettings()),
             name="timestamp",
             graph_version="1",
             weights=(weight,),
             io=io or tensoracle.EngineIO({}, {}),
+            force_rebuild=force_rebuild,
         )
 
     return open_engine, built
+
+
+@pytest.mark.req("SP-TENSORACLE-052")
+@pytest.mark.parametrize("workspace_limit", [None, 8192])
+def test_workspace_limit_changes_reuse_saved_engine(open_cached, workspace_limit):
+    """Changing only the workspace limit reuses the same file without invoking the graph."""
+    open_engine, built = open_cached
+    first = open_engine(settings=tensoracle.BuilderSettings(workspace_limit=4096))
+    contents = first.path.read_bytes()
+    reopened = open_engine(settings=tensoracle.BuilderSettings(workspace_limit=workspace_limit))
+    assert reopened.path == first.path
+    assert built == [True]
+    assert first.path.read_bytes() == contents
+
+
+@pytest.mark.req("SP-TENSORACLE-052")
+@pytest.mark.req("SP-TENSORACLE-011")
+@pytest.mark.parametrize("workspace_limit", [None, 4096])
+def test_saved_engine_records_workspace_limit_and_updates_it_only_on_rebuild(
+    open_cached, workspace_limit
+):
+    """Headers record the actual build's workspace outside conditions and forced rebuilds replace it."""
+    open_engine, built = open_cached
+
+    def header(path):
+        with path.open("rb") as stream:
+            return cache._read_header(stream, path, path.stat().st_size)
+
+    first = open_engine(settings=tensoracle.BuilderSettings(workspace_limit=workspace_limit))
+    original = header(first.path)
+    assert original["workspace_limit"] == workspace_limit
+    assert original["conditions"]["builder_settings"] == {"optimization_level": 3, "tf32": False}
+    changed_limit = 8192 if workspace_limit is None else None
+    rebuilt = open_engine(
+        settings=tensoracle.BuilderSettings(workspace_limit=changed_limit), force_rebuild=True
+    )
+    assert rebuilt.path == first.path
+    assert header(rebuilt.path)["workspace_limit"] == changed_limit
+    assert header(rebuilt.path)["conditions"] == original["conditions"]
+    assert built == [True, True]
 
 
 @pytest.mark.req("SP-TENSORACLE-042")

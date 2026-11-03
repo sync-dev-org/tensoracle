@@ -69,9 +69,15 @@ class InputShape:
 class BuilderSettings:
     """TensorRT builder options that affect the serialized engine."""
 
-    workspace_limit: int = 1 << 30
+    workspace_limit: int | None = None
     optimization_level: int = 3
     tf32: bool = False
+
+    def __post_init__(self) -> None:
+        if self.workspace_limit is not None and (
+            type(self.workspace_limit) is not int or self.workspace_limit <= 0
+        ):
+            raise ValueError("workspace_limit must be a positive integer or None")
 
 
 @dataclass(frozen=True)
@@ -103,8 +109,6 @@ def _build_serialized_engine(
 ) -> tuple[bytes, tuple[str, ...]]:
     if declaration.settings.tf32:
         raise ValueError("TF32 cannot be enabled")
-    if declaration.settings.workspace_limit <= 0:
-        raise ValueError("workspace_limit must be positive")
     if not 0 <= declaration.settings.optimization_level <= 5:
         raise ValueError("optimization_level must be between 0 and 5")
 
@@ -125,9 +129,10 @@ def _build_serialized_engine(
         _warn_shape_tensor_outputs(output_names, stacklevel=3)
         config = builder.create_builder_config()
         config.clear_flag(trt.BuilderFlag.TF32)
-        config.set_memory_pool_limit(
-            trt.MemoryPoolType.WORKSPACE, declaration.settings.workspace_limit
-        )
+        if declaration.settings.workspace_limit is not None:
+            config.set_memory_pool_limit(
+                trt.MemoryPoolType.WORKSPACE, declaration.settings.workspace_limit
+            )
         config.builder_optimization_level = declaration.settings.optimization_level
 
         inputs = {

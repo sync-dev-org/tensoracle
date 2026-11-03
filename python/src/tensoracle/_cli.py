@@ -58,6 +58,7 @@ def _inspect(path: Path) -> _Entry:
                     raise OSError("file changed during inspection")
             details["status"] = "recognized"
             details["conditions"] = header["conditions"]
+            details["workspace_limit"] = header.get("workspace_limit", "unknown")
     except (OSError, CorruptEngineError) as error:
         details["reason"] = str(error)
     return _Entry(path, observed, details)

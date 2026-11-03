@@ -7,7 +7,7 @@ import os
 import platform
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -125,7 +125,11 @@ def open_engine(
         handle = _open_plan(
             plan, path, declaration, io, actual_logger, shape_tensor_outputs=shape_tensor_outputs
         )
-        header = {"conditions": conditions, "plan_sha256": hashlib.sha256(plan).hexdigest()}
+        header = {
+            "conditions": conditions,
+            "plan_sha256": hashlib.sha256(plan).hexdigest(),
+            "workspace_limit": declaration.settings.workspace_limit,
+        }
         if shape_tensor_outputs:
             header["shape_tensor_outputs"] = list(shape_tensor_outputs)
         header_bytes = _json_bytes(header)
@@ -286,7 +290,10 @@ def _conditions(
             }
             for name, shape in declaration.inputs.items()
         },
-        "builder_settings": asdict(declaration.settings),
+        "builder_settings": {
+            "optimization_level": declaration.settings.optimization_level,
+            "tf32": declaration.settings.tf32,
+        },
         "gpu": _gpu_identity(),
         "os": platform.system(),
         "architecture": platform.machine(),

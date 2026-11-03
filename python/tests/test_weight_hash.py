@@ -297,6 +297,7 @@ def test_record_lives_in_user_cache_directory(tmp_path, monkeypatch, xdg):
 
 @pytest.mark.req("SP-TENSORACLE-002")
 @pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-052")
 def test_engine_identity_matches_the_full_hash_calculation(tmp_path, monkeypatch):
     """Stored digests produce the same conditions and engine name as full file hashing."""
     root = tmp_path / "cache"
@@ -312,7 +313,7 @@ def test_engine_identity_matches_the_full_hash_calculation(tmp_path, monkeypatch
         "weights": [hashlib.sha256(weight.read_bytes()).hexdigest()],
         "plugins": [hashlib.sha256(plugin.read_bytes()).hexdigest()],
         "inputs": {"features": {"minimum": [1, 3, 2], "optimum": [1, 3, 2], "maximum": [1, 3, 2]}},
-        "builder_settings": {"workspace_limit": 1 << 30, "optimization_level": 3, "tf32": False},
+        "builder_settings": {"optimization_level": 3, "tf32": False},
         "gpu": {"name": "GPU A"},
         "os": cache.platform.system(),
         "architecture": cache.platform.machine(),

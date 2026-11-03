@@ -347,6 +347,7 @@ def test_corrupt_plan_and_changed_header_fail_before_deserialization(tmp_path, m
 @pytest.mark.gpu
 @pytest.mark.req("SP-TENSORACLE-002")
 @pytest.mark.req("SP-TENSORACLE-011")
+@pytest.mark.req("SP-TENSORACLE-052")
 def test_force_rebuild_uses_changed_weight_contents_and_preserves_old_engine(tmp_path, monkeypatch):
     """A forced rebuild saves under the new digest without replacing the old engine."""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
@@ -378,7 +379,7 @@ def test_force_rebuild_uses_changed_weight_contents_and_preserves_old_engine(tmp
     offset = len(b"TENSORACLE\x01")
     old_header_size = int.from_bytes(old_engine[offset : offset + 8], "big")
     old_header = json.loads(old_engine[offset + 8 : offset + 8 + old_header_size])
-    assert old_header.keys() == {"conditions", "plan_sha256"}
+    assert old_header.keys() == {"conditions", "plan_sha256", "workspace_limit"}
 
     before = weights.stat()
     changed = bytearray(weights.read_bytes())
@@ -618,7 +619,6 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
         {"shape": (1, 4, 2)},
         {"input_range": ((1, 1, 2), (1, 3, 2), (1, 5, 2))},
         {"input_range": ((1, 1, 2), (1, 3, 2), (1, 6, 2))},
-        {"settings": tensoracle.BuilderSettings(workspace_limit=2048, optimization_level=0)},
         {"settings": tensoracle.BuilderSettings(optimization_level=1)},
     ]
     paths = {open_case(**variant).path for variant in variants}
