@@ -1,138 +1,133 @@
 # Build bf16, int8, and fp8 engines
 
-The graph function selects tensor types. Use the same `EngineBuild`, `open_engine`, and execution API for fp32, fp16, bf16, int8, and fp8. For bf16, cast tensors to `trt.bfloat16`. For int8 and fp8, place explicit quantize/dequantize (Q/DQ) layers and their scales in the graph. TensorRT 11's [`add_quantize` and `add_dequantize` operators](https://docs.nvidia.com/deeplearning/tensorrt/11.4.0/_static/operators/Quantize.html) accept the quantized type and dequantized type explicitly.
+The model package selects precision through tensor types in its C++ TensorRT network. Use `tensoracle::builder_options` and `tensoracle::open_engine` for every precision. TF32 is disabled; the options have no precision flag. For bf16, use TensorRT's `kBF16` casts. For int8 and fp8, place explicit quantize/dequantize (Q/DQ) layers and supply scales in safetensors.
 
-| Graph precision | Tensor placement in this example | Supported tensoracle GPU targets |
+| Graph precision | Tensor placement in this example | Target GPUs |
 | --- | --- | --- |
 | fp32 | fp32 matrix multiplication and bias, with TF32 disabled | sm86, sm89, sm120 |
-| bf16 | Cast features, matrix, and bias to bf16; cast the result to fp32 | sm86, sm89, sm120 |
-| int8 | Q/DQ the features and matrix with `trt.int8` and explicit scales | sm86, sm89, sm120 |
-| fp8 | Q/DQ the features and matrix with `trt.fp8` (E4M3) and explicit scales | sm89, sm120 |
+| fp16 | Cast features, matrix, and bias to `kHALF`; cast the result to fp32 | sm86, sm89, sm120 |
+| bf16 | Cast features, matrix, and bias to `kBF16`; cast the result to fp32 | sm86, sm89, sm120 |
+| int8 | Q/DQ features and matrix with `kINT8` and explicit scales | sm86, sm89, sm120 |
+| fp8 | Q/DQ features and matrix with `kFP8` and explicit scales | sm89, sm120 |
 
-Do not build the fp8 graph on sm86. The graph keeps fp32 input and output buffers for every precision; the internal tensors determine its arithmetic. TensorRT chooses implementations for the typed graph, so an int8 or fp8 graph can retain higher precision operations such as the bias addition. This example does not establish a speed improvement.
+Do not build the fp8 graph on sm86. The graph keeps fp32 input and output buffers while its internal tensor types select arithmetic. TensorRT may retain higher precision operations such as bias addition. Lower precision alone does not establish a speed improvement.
 
-## Prepare weights and scales outside tensoracle
+## Prepare weights and scales
 
-For a real model, use an external quantization library, such as [NVIDIA Model Optimizer](https://github.com/NVIDIA/Model-Optimizer), to determine scales from representative data or quantization-aware training. The model package translates those results into its safetensors file and graph. tensoracle does not calculate scales, calibrate a model, or translate a quantizer's export format.
+Use an external quantization tool to determine scales from representative data or quantization-aware training. The model package translates those results into safetensors and its network. tensoracle does not calculate scales, calibrate models, or translate a quantizer's export format.
 
-Store the fp32 weights and positive fp32 scales together in safetensors. In this example, `matrix` has shape `(32, 16)`, `bias` has shape `(1, 16)`, and each scale has shape `(1,)`. The keys `int8.input_scale`, `int8.weight_scale`, `fp8.input_scale`, and `fp8.weight_scale` distinguish the two quantization recipes. Both Q and DQ use the same scale for each tensor.
+The example network computes `features @ matrix + bias`. Its safetensors file contains the following tensors:
 
-The following small fixture uses maximum absolute values to choose scales. Its inputs and weights match the GPU test; this scale calculation is only a demonstration for that fixture, not a calibration recipe for other models:
+| Key | Storage type | Shape |
+| --- | --- | --- |
+| `matrix` | float32 | `(32, 16)` |
+| `bias` | float32 | `(1, 16)` |
+| `int8.input_scale`, `int8.weight_scale` | positive float32 | `(1,)` each |
+| `fp8.input_scale`, `fp8.weight_scale` | positive float32 | `(1,)` each |
 
-```python
-from pathlib import Path
+Store weights and scales in fp32 for this example, then cast or quantize in the TensorRT network. This avoids needing a NumPy representation of bf16 or fp8. tensoracle's C++ weight view also supports those safetensors storage types when the model's network handles them directly. Weight dtype, dimensions, and interpretation remain the model package's responsibility.
 
-import numpy as np
-from safetensors.numpy import save_file
+## Define the C++ network
 
-path = Path("linear.safetensors")
-features = np.random.default_rng(11).uniform(-1, 1, (16, 32)).astype(np.float32)
-rng = np.random.default_rng(29)
-matrix = rng.uniform(-0.25, 0.25, (32, 16)).astype(np.float32)
-bias = rng.uniform(-0.1, 0.1, (1, 16)).astype(np.float32)
-weights = {"matrix": matrix, "bias": bias}
-for precision, maximum in (("int8", 127), ("fp8", 448)):
-    weights[f"{precision}.input_scale"] = np.array(
-        [np.max(np.abs(features)) / maximum], dtype=np.float32
-    )
-    weights[f"{precision}.weight_scale"] = np.array(
-        [np.max(np.abs(matrix)) / maximum], dtype=np.float32
-    )
-save_file(weights, path)
+This excerpt follows the graph in `cpp/tests/builder_fixture.hpp`, used by `cpp/tests/builder.cpp`. It is network-building code for a model package; the surrounding application must supply the safetensors file, current CUDA context, buffers, and error handling. It is not a standalone inference program.
+
+```cpp
+#include <tensoracle/builder.hpp>
+#include <NvInfer.h>
+#include <algorithm>
+#include <stdexcept>
+#include <string>
+
+void define_linear(nvinfer1::INetworkDefinition& network,
+                   const tensoracle::weights_view& weights,
+                   const std::string& precision) {
+    auto constant = [&](const char* name) {
+        auto value = weights.at(name);
+        if (value.dtype != TENSORACLE_FLOAT32)
+            throw std::runtime_error("this network requires float32 weights");
+        nvinfer1::Dims shape{};
+        shape.nbDims = static_cast<int32_t>(value.rank);
+        std::copy_n(value.dimensions, value.rank, shape.d);
+        return network.addConstant(
+            shape, {nvinfer1::DataType::kFLOAT, value.data,
+                    static_cast<int64_t>(value.element_count)})->getOutput(0);
+    };
+    auto* features = network.addInput("features", nvinfer1::DataType::kFLOAT,
+                                      nvinfer1::Dims2(16, 32));
+    auto* matrix = constant("matrix");
+    auto* bias = constant("bias");
+    if (precision == "fp16" || precision == "bf16") {
+        auto type = precision == "fp16" ? nvinfer1::DataType::kHALF
+                                         : nvinfer1::DataType::kBF16;
+        features = network.addCast(*features, type)->getOutput(0);
+        matrix = network.addCast(*matrix, type)->getOutput(0);
+        bias = network.addCast(*bias, type)->getOutput(0);
+    } else if (precision == "int8" || precision == "fp8") {
+        auto type = precision == "int8" ? nvinfer1::DataType::kINT8
+                                        : nvinfer1::DataType::kFP8;
+        auto qdq = [&](nvinfer1::ITensor* value, const std::string& field) {
+            auto* scale = constant((precision + "." + field + "_scale").c_str());
+            auto* quantized = network.addQuantize(*value, *scale, type)->getOutput(0);
+            return network.addDequantize(*quantized, *scale,
+                                         nvinfer1::DataType::kFLOAT)->getOutput(0);
+        };
+        features = qdq(features, "input");
+        matrix = qdq(matrix, "weight");
+    }
+    auto* result = network.addMatrixMultiply(
+        *features, nvinfer1::MatrixOperation::kNONE,
+        *matrix, nvinfer1::MatrixOperation::kNONE)->getOutput(0);
+    result = network.addElementWise(*result, *bias,
+                                    nvinfer1::ElementWiseOperation::kSUM)->getOutput(0);
+    if (precision == "fp16" || precision == "bf16")
+        result = network.addCast(*result, nvinfer1::DataType::kFLOAT)->getOutput(0);
+    result->setName("result");
+    network.markOutput(*result);
+}
 ```
 
-[`safetensors.numpy` 0.8.0](https://github.com/huggingface/safetensors/blob/v0.8.0/bindings/python/py_src/safetensors/numpy.py) with NumPy 2.5 does not directly load bf16 or fp8 tensors into NumPy arrays: bf16 loading raises `TypeError`, and FP8 E4M3 loading raises `AttributeError`. A safetensors file can store those types, but its NumPy reader cannot represent them in this environment. Keep this example's weights and scales in fp32, then cast or quantize in TensorRT. If an existing checkpoint stores bf16 or fp8 weights, convert them with a reader that supports that dtype outside this NumPy graph path. Installing torch is not required for this example.
+The fp16/bf16 branch casts operands before arithmetic and returns fp32. The int8/fp8 branch applies per-tensor Q/DQ to features and matrix; bias stays fp32. Keeping the matrix in fp32 lets TensorRT quantize it during building with the declared scale. The callback borrows weight storage that tensoracle keeps alive through serialization.
 
-## Define the typed graph
+## Build, save, and reuse
 
-This graph computes `features @ matrix + bias`. The bf16 branch casts all three operands before arithmetic and returns fp32. The int8/fp8 branch applies per-tensor Q/DQ to the features and matrix; its bias stays fp32. Keeping the stored matrix in fp32 lets TensorRT quantize it with the supplied scale during building.
+Use a distinct engine name or graph version whenever tensor types or the network recipe change. A shared weight file cannot distinguish precision by its digest alone; scale changes within that file do change its digest.
 
-```python
-import tensorrt as trt
-from safetensors.numpy import load_file
+With `define_linear` above, the model package opens a chosen precision from C++:
 
-
-def graph(path, precision):
-    def define(network):
-        weights = load_file(path)
-
-        def constant(array):
-            array = np.ascontiguousarray(array, dtype=np.float32)
-            return network.add_constant(array.shape, array).get_output(0)
-
-        features = network.add_input("features", trt.float32, (16, 32))
-        matrix = constant(weights["matrix"])
-        bias = constant(weights["bias"])
-        if precision == "bf16":
-            features = network.add_cast(features, trt.bfloat16).get_output(0)
-            matrix = network.add_cast(matrix, trt.bfloat16).get_output(0)
-            bias = network.add_cast(bias, trt.bfloat16).get_output(0)
-        elif precision in ("int8", "fp8"):
-            quantized_type = trt.int8 if precision == "int8" else trt.fp8
-
-            def qdq(tensor, key):
-                scale = constant(weights[f"{precision}.{key}_scale"])
-                quantized = network.add_quantize(tensor, scale, quantized_type).get_output(0)
-                return network.add_dequantize(quantized, scale, trt.float32).get_output(0)
-
-            features = qdq(features, "input")
-            matrix = qdq(matrix, "weight")
-        value = network.add_matrix_multiply(
-            features, trt.MatrixOperation.NONE, matrix, trt.MatrixOperation.NONE
-        ).get_output(0)
-        value = network.add_elementwise(value, bias, trt.ElementWiseOperation.SUM).get_output(0)
-        if precision == "bf16":
-            value = network.add_cast(value, trt.float32).get_output(0)
-        value.name = "result"
-        network.mark_output(value)
-
-    return define
+```cpp
+tensoracle::engine_handle open_linear(const std::string& path,
+                                      const std::string& precision) {
+    tensoracle::builder_options options;
+    options.name = "linear-" + precision;
+    options.graph_version = "1";
+    options.weights = {path};
+    options.inputs = {{"features", {16, 32}, {16, 32}, {16, 32}}};
+    options.io = {{"features", TENSORACLE_FLOAT32, {16, 32}, true},
+                  {"result", TENSORACLE_FLOAT32, {16, 16}, false}};
+    options.workspace_limit = 64 * 1024 * 1024;
+    options.optimization_level = 0;
+    return tensoracle::open_engine(options,
+        [&](nvinfer1::INetworkDefinition& network,
+            const tensoracle::weights_view& weights) {
+            define_linear(network, weights, precision);
+        });
+}
 ```
 
-## Build, save, and reuse each precision
+Call with `"fp32"` for the reference and `"fp16"`, `"bf16"`, `"int8"`, or `"fp8"` for a candidate on the appropriate GPU. These options and network operations follow the public-builder tests. They do not set application quality limits.
 
-Use a distinct engine name or graph version whenever tensor types or the graph recipe change. The same weight file serves all four graphs here, so its digest cannot distinguish their precision. Scales are part of that file and therefore part of the saved engine identity.
+A repeat call with unchanged conditions reuses the saved engine and skips the callback, including in a new process. Saved engines live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when unset. Follow [Execute an engine](index.md#execute-an-engine) to create an execution unit and supply fp32 input/output device buffers. This network uses input `features` with shape `(16, 32)` and output `result` with shape `(16, 16)`. The model package exposes any Python inference entry through its own binding.
 
-```python
-from tensoracle import (
-    BuilderSettings, EngineBuild, EngineIO, InputShape, TensorSpec, open_engine,
-)
-
-declaration = EngineBuild(
-    {"features": InputShape.fixed((16, 32))},
-    BuilderSettings(optimization_level=0),
-)
-io = EngineIO(
-    {"features": TensorSpec(trt.float32, (16, 32))},
-    {"result": TensorSpec(trt.float32, (16, 16))},
-)
-
-
-def open_linear(precision):
-    return open_engine(
-        graph(path, precision),
-        declaration,
-        name=f"linear-{precision}",
-        graph_version="1",
-        weights=(path,),
-        io=io,
-    )
-
-
-reference_handle = open_linear("fp32")
-candidate_handle = open_linear("bf16")  # Or "int8"; "fp8" on sm89/sm120.
-```
-
-TF32 remains disabled by tensoracle, including for the fp32 reference. Engines are saved under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` (`%USERPROFILE%\.cache\tensoracle` on Windows). Repeat the same call with unchanged build conditions in another process to reuse the plan without invoking the graph function. Keep the weight file and the engine names/versions stable across the restart. Follow [Execute an engine](index.md#execute-an-engine) to allocate fp32 input/output buffers and enqueue each handle with the same inputs.
+For ranged batches, change the network's leading input dimension and the corresponding I/O dimensions to `-1`, give the input profile positive minimum/optimum/maximum bounds, and set the concrete shape before enqueue. `cpp/tests/builder_fixture.hpp` includes that variant.
 
 ## Compare outputs and choose limits
 
-First establish the fp32 engine against fixed fp32 outputs from the official model implementation, as described in [stage 1](optimization.md#1-establish-the-fp32-reference). Then run the candidate and accepted fp32 engine with identical inputs. Pass their CPU NumPy outputs to `compare_outputs` and choose quality limits in the application:
+First establish the fp32 TensorRT engine against fixed fp32 outputs from the official implementation, as described in [stage 1](optimization.md#1-establish-the-fp32-reference). Run the candidate and accepted fp32 engine with identical inputs. Pass their CPU NumPy outputs to the retained Python utility:
 
 ```python
 from tensoracle import compare_outputs
 
-# candidate_output and fp32_output are the application's engine outputs.
+# candidate_output and fp32_output come from the model package's inference binding.
 comparison = compare_outputs(candidate_output, fp32_output, atol=0.01, rtol=0)
 accepted = (
     comparison.candidate_nonfinite_count == 0
@@ -143,12 +138,4 @@ accepted = (
 )
 ```
 
-These example limits belong to the small bf16 fixture. For the fixture above, a TensorRT 11.4 run on sm120 measured:
-
-| Candidate | Maximum absolute error | Relative L2 error | Test `atol` (`rtol=0`) | Test relative L2 limit |
-| --- | --- | --- | --- | --- |
-| bf16 | 0.00357 | 0.00294 | 0.01 | 0.01 |
-| int8 | 0.00710 | 0.00572 | 0.02 | 0.02 |
-| fp8 | 0.0501 | 0.0382 | 0.12 | 0.08 |
-
-The test allows at least twice the observed errors for differences in GPU tactics. These are not tensoracle defaults or quality guarantees for other models. Choose representative data, per-output limits, and model-specific quality measurements for the real application. The GPU test also checks that the two engines occupy separate cache entries and reproduce their outputs in another process without calling either graph.
+These limits illustrate an application decision; they are not tensoracle defaults or accuracy guarantees. Choose representative data, per-output limits, and model-specific measurements for the real model. Validate after process restarts as well as after the first build, and measure performance separately. The C++ tests contain separate cases for fp32/fp16/bf16/int8 and for fp8; the fp8 case requires sm89 or sm120. This guide does not claim every precision was executed on every target GPU.

@@ -10,8 +10,31 @@ from pathlib import Path
 
 import pytest
 
+from native_build import ROOT
+
 DAY_NS = 86_400_000_000_000
 OLD_NS = 1_000_000_000
+
+
+@pytest.fixture(scope="module")
+def cache_writer(tmp_path_factory):
+    """Save test engines with the production C++ writer, without a CUDA device."""
+    build = tmp_path_factory.mktemp("cache-writer")
+    for command in (
+        [
+            "cmake",
+            "-S",
+            str(Path(__file__).parent / "native/cache"),
+            "-B",
+            str(build),
+            "-DCMAKE_BUILD_TYPE=Release",
+            f"-DTENSORACLE_CPP_ROOT={ROOT / 'cpp'}",
+        ],
+        ["cmake", "--build", str(build), "--parallel", "4"],
+    ):
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)
+        assert result.returncode == 0, result.stdout + result.stderr
+    return Path((build / "artifact-Release.txt").read_text())
 
 
 @pytest.fixture
@@ -22,8 +45,15 @@ def saved_cache(tmp_path, monkeypatch):
     return directory
 
 
-def save_engine(
-    directory, filename="one.engine", *, conditions=None, mtime=OLD_NS, size=None, metadata=None
+def _save_engine(
+    writer,
+    directory,
+    filename="one.engine",
+    *,
+    conditions=None,
+    mtime=OLD_NS,
+    size=None,
+    metadata=None,
 ):
     if conditions is None:
         conditions = {
@@ -38,17 +68,39 @@ def save_engine(
             "architecture": "x86_64",
             "tensorrt_version": "11.0",
         }
-    header = json.dumps(
-        {"conditions": conditions, "plan_sha256": "0" * 64, **(metadata or {})}
-    ).encode()
     path = directory / filename
-    path.write_bytes(b"TENSORACLE\x01" + len(header).to_bytes(8, "big") + header + b"plan")
+    result = subprocess.run(
+        [str(writer), str(path)],
+        input=json.dumps({"conditions": conditions, **(metadata or {})}),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    if metadata == {}:
+        # A valid header without a workspace record must display "unknown".
+        contents = path.read_bytes()
+        length = int.from_bytes(contents[10:18], "big")
+        header = json.loads(contents[18 : 18 + length])
+        del header["workspace_limit"]
+        encoded = json.dumps(header).encode()
+        path.write_bytes(
+            contents[:10] + len(encoded).to_bytes(8, "big") + encoded + contents[18 + length :]
+        )
     if size is not None:
         assert size >= path.stat().st_size
         with path.open("r+b") as stream:
             stream.truncate(size)
     os.utime(path, ns=(mtime, mtime))
     return path, conditions
+
+
+@pytest.fixture
+def save_engine(cache_writer):
+    from functools import partial
+
+    return partial(_save_engine, cache_writer)
 
 
 def save_record(directory, *, path, digest="a" * 64, filename="weight-one.json", **changes):
@@ -80,7 +132,9 @@ def call_cli(capsys, *args):
 @pytest.mark.req("SP-TENSORACLE-043")
 @pytest.mark.req("SP-TENSORACLE-049")
 @pytest.mark.req("SP-TENSORACLE-042")
-def test_list_distinguishes_all_conditions_and_preserves_recorded_time(saved_cache, capsys):
+def test_list_distinguishes_all_conditions_and_preserves_recorded_time(
+    save_engine, saved_cache, capsys
+):
     """Entries with matching names retain every condition, size, and exact recorded time."""
     first, conditions = save_engine(saved_cache)
     second, _ = save_engine(
@@ -115,7 +169,9 @@ def test_list_distinguishes_all_conditions_and_preserves_recorded_time(saved_cac
     [({"workspace_limit": None}, None), ({"workspace_limit": 4096}, 4096), ({}, "unknown")],
     ids=["tensorrt-default", "explicit-limit", "missing-record"],
 )
-def test_list_shows_recorded_workspace_limit_or_unknown(saved_cache, capsys, metadata, expected):
+def test_list_shows_recorded_workspace_limit_or_unknown(
+    save_engine, saved_cache, capsys, metadata, expected
+):
     """Listing distinguishes TensorRT's default, an explicit byte limit, and a missing record."""
     path, conditions = save_engine(saved_cache, metadata=metadata)
     contents = path.read_bytes()
@@ -132,7 +188,9 @@ def test_list_shows_recorded_workspace_limit_or_unknown(saved_cache, capsys, met
 @pytest.mark.parametrize(
     "damage", ["missing", "json", "version", "type", "checksum", "digest", "mismatch", "valid"]
 )
-def test_list_uses_only_valid_matching_weight_records(saved_cache, tmp_path, capsys, damage):
+def test_list_uses_only_valid_matching_weight_records(
+    save_engine, saved_cache, tmp_path, capsys, damage
+):
     """A weight path is informational and appears only for an intact matching digest record."""
     save_engine(saved_cache)
     source = tmp_path / "removed-weights.safetensors"
@@ -188,12 +246,16 @@ def test_list_identifies_placeholders_and_unrecognized_files(saved_cache, capsys
 
 @pytest.mark.req("SP-TENSORACLE-049")
 @pytest.mark.req("SP-TENSORACLE-047")
-def test_list_requires_no_gpu_tensor_runtime_weight_or_plan_body(saved_cache, tmp_path):
-    """A standard-library-only process lists a header without reading its plan or missing weights."""
+def test_list_requires_no_gpu_tensor_runtime_weight_or_plan_body(
+    save_engine, saved_cache, tmp_path
+):
+    """Native listing needs no tensor Python packages, missing weights, or memory for the plan."""
     engine, _ = save_engine(saved_cache, size=4 * 1024**3)
     save_record(saved_cache, path=tmp_path / "absent.safetensors")
     child = r"""
 import importlib.abc
+import os
+import resource
 import sys
 from pathlib import Path
 class Block(importlib.abc.MetaPathFinder):
@@ -201,23 +263,10 @@ class Block(importlib.abc.MetaPathFinder):
         if fullname.split('.')[0] in ('tensorrt', 'numpy', 'safetensors', 'cuda', 'torch'):
             raise AssertionError('unexpected dependency: ' + fullname)
 sys.meta_path.insert(0, Block())
-real_open = Path.open
-class HeaderOnly:
-    def __init__(self, stream):
-        self.stream = stream
-    def __getattr__(self, name):
-        return getattr(self.stream, name)
-    def read(self, size=-1):
-        assert 0 <= size < 65536, 'plan body was read'
-        return self.stream.read(size)
-    def __enter__(self):
-        return self
-    def __exit__(self, *args):
-        self.stream.close()
-def open_header(self, *args, **kwargs):
-    stream = real_open(self, *args, **kwargs)
-    return HeaderOnly(stream) if self.suffix == '.engine' else stream
-Path.open = open_header
+from tensoracle import _native
+# A sparse 4 GiB plan cannot fit in the remaining address space.
+limit = int(Path('/proc/self/statm').read_text().split()[0]) * os.sysconf('SC_PAGE_SIZE') + 128 * 1024**2
+resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 from tensoracle._cli import main
 raise SystemExit(main(['cache', 'list']))
 """
@@ -231,38 +280,38 @@ raise SystemExit(main(['cache', 'list']))
 
 @pytest.mark.req("SP-TENSORACLE-044")
 @pytest.mark.req("SP-TENSORACLE-050")
-def test_prune_unused_for_observes_exact_boundary_and_reports_before_removal(
-    saved_cache, capsys, monkeypatch
+def test_prune_unused_for_uses_native_time_and_reports_before_removal(
+    save_engine, saved_cache, capsys, monkeypatch
 ):
-    """Only engines strictly older than the requested days are removed after a rebuild notice."""
-    now = 100 * DAY_NS
-    monkeypatch.setattr(time, "time_ns", lambda: now)
-    before, _ = save_engine(saved_cache, "old.engine", mtime=now - 2 * DAY_NS - 1)
-    boundary, _ = save_engine(saved_cache, "boundary.engine", mtime=now - 2 * DAY_NS)
+    """Old engines are removed using the native clock after the plan and rebuild notice are flushed."""
+    now = time.time_ns()
+    before, _ = save_engine(saved_cache, "old.engine", mtime=now - 3 * DAY_NS)
     newer, _ = save_engine(saved_cache, "new.engine", mtime=now - DAY_NS)
-    real_unlink = Path.unlink
+    real_print = print
 
-    def checked_unlink(self, *args, **kwargs):
-        if self == before:
-            output = capsys.readouterr().out
-            plan = json.loads(output)
+    def checked_print(*args, **kwargs):
+        if '"event": "plan"' in str(args[0]):
+            assert before.exists() and newer.exists()
+            plan = json.loads(args[0])
             assert [entry["file"] for entry in plan["targets"]] == [before.name]
             assert any(word in plan["rebuild_notice"].lower() for word in ("rebuild", "rebuilt"))
-            print(output, end="")
-        return real_unlink(self, *args, **kwargs)
+            assert kwargs.get("flush") is True
+        real_print(*args, **kwargs)
 
-    monkeypatch.setattr(Path, "unlink", checked_unlink)
+    monkeypatch.setattr("builtins.print", checked_print)
     status, (plan, result), _ = call_cli(capsys, "prune", "--unused-for", "2")
     assert status == 0
-    assert not before.exists() and boundary.exists() and newer.exists()
+    assert not before.exists() and newer.exists()
     assert result["removed_size_bytes"] == plan["targets"][0]["size_bytes"]
     assert [entry["file"] for entry in result["removed"]] == [before.name]
-    assert result["remaining_size_bytes"] == boundary.stat().st_size + newer.stat().st_size
+    assert result["remaining_size_bytes"] == newer.stat().st_size
 
 
 @pytest.mark.req("SP-TENSORACLE-044")
 @pytest.mark.req("SP-TENSORACLE-050")
-def test_prune_max_size_removes_oldest_first_and_keeps_weight_records(saved_cache, capsys):
+def test_prune_max_size_removes_oldest_first_and_keeps_weight_records(
+    save_engine, saved_cache, capsys
+):
     """Size pruning removes engines by recorded time and never removes digest records or placeholders."""
     newest, _ = save_engine(saved_cache, "a-new.engine", mtime=3 * OLD_NS, size=1024)
     oldest, _ = save_engine(saved_cache, "z-old.engine", mtime=OLD_NS, size=1024)
@@ -284,7 +333,9 @@ def test_prune_max_size_removes_oldest_first_and_keeps_weight_records(saved_cach
 @pytest.mark.req("SP-TENSORACLE-045")
 @pytest.mark.req("SP-TENSORACLE-042")
 @pytest.mark.parametrize("selection", [("--unused-for", "1"), ("--max-size", "0B")])
-def test_dry_run_has_the_same_targets_and_preserves_bytes_and_mtime(saved_cache, capsys, selection):
+def test_dry_run_has_the_same_targets_and_preserves_bytes_and_mtime(
+    save_engine, saved_cache, capsys, selection
+):
     """Preview and removal select the same engines while preview preserves all file contents and mtimes."""
     save_engine(saved_cache)
     (saved_cache / "unknown.engine").write_bytes(b"unknown")
@@ -308,9 +359,14 @@ def test_dry_run_has_the_same_targets_and_preserves_bytes_and_mtime(saved_cache,
         ("--unused-for", "inf"),
         ("--max-size", "-1"),
         ("--max-size", "1XB"),
+        ("--max-size", str(2**63)),
+        ("--unused-for", "106752"),
+        ("--unused-for", "1e1000000"),
     ],
 )
-def test_invalid_prune_arguments_are_usage_errors_without_changes(saved_cache, selection):
+def test_invalid_prune_arguments_are_usage_errors_without_changes(
+    save_engine, saved_cache, selection
+):
     """Missing, conflicting, and invalid criteria stop with a usage error before deleting anything."""
     from tensoracle._cli import main
 
@@ -326,7 +382,7 @@ def test_invalid_prune_arguments_are_usage_errors_without_changes(saved_cache, s
 @pytest.mark.req("SP-TENSORACLE-051")
 @pytest.mark.parametrize("change", ["denied", "disappeared", "changed"])
 def test_prune_reports_concurrent_changes_and_counts_only_removed_bytes(
-    saved_cache, capsys, monkeypatch, change
+    save_engine, saved_cache, capsys, monkeypatch, change
 ):
     """Failed, changed, and disappeared files are reported separately from successful removals."""
     path, _ = save_engine(saved_cache)
@@ -342,16 +398,14 @@ def test_prune_reports_concurrent_changes_and_counts_only_removed_bytes(
                 path.write_bytes(b"new contents")
 
     monkeypatch.setattr("builtins.print", print_then_change)
-    if change == "denied":
-        real_unlink = Path.unlink
-
-        def denied(self, *args, **kwargs):
-            if self == path:
-                raise PermissionError("cache is read-only")
-            return real_unlink(self, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "unlink", denied)
-    status, (_, result), _ = call_cli(capsys, "prune", "--max-size", "0")
+    if change == "denied" and os.geteuid() == 0:
+        pytest.skip("root bypasses directory write permissions")
+    try:
+        if change == "denied":
+            saved_cache.chmod(0o500)
+        status, (_, result), _ = call_cli(capsys, "prune", "--max-size", "0")
+    finally:
+        saved_cache.chmod(0o700)
     assert result["removed"] == [] and result["removed_size_bytes"] == 0
     if change == "disappeared":
         assert status == 0 and result["remaining_size_bytes"] == 0
@@ -381,7 +435,7 @@ def test_unrecognized_bytes_prevent_success_when_max_size_cannot_be_reached(save
 def test_missing_default_cache_is_listed_without_creating_it(tmp_path, monkeypatch, capsys):
     """An unset XDG_CACHE_HOME selects the user's .cache and a missing cache stays absent."""
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     status, (listing,), _ = call_cli(capsys, "list")
     assert status == 0
     assert listing == {
@@ -390,3 +444,75 @@ def test_missing_default_cache_is_listed_without_creating_it(tmp_path, monkeypat
         "total_size_bytes": 0,
     }
     assert not (tmp_path / ".cache").exists()
+
+
+@pytest.mark.req("SP-TENSORACLE-047")
+@pytest.mark.req("SP-TENSORACLE-056")
+def test_native_result_copies_metadata_before_its_owner_is_destroyed(save_engine, saved_cache):
+    """Copied headers, paths, timestamps, and summary strings survive destruction of their C result."""
+    import gc
+
+    from tensoracle import _native
+
+    path, conditions = save_engine(saved_cache, mtime=OLD_NS + 123)
+    source = saved_cache / "absent.safetensors"
+    save_record(saved_cache, path=source)
+    result = _native.cache_list()
+    entries = result.entries()
+    summary = result.summary()
+    del result
+    gc.collect()
+    # Reuse allocator storage through several independently owned results.
+    for _ in range(10):
+        _native.cache_list()
+    assert summary["directory"] == str(saved_cache)
+    assert entries[0]["file"] == path.name
+    assert entries[0]["header"]["conditions"] == conditions
+    assert entries[0]["header"]["plan_sha256"] == hashlib.sha256(b"plan").hexdigest()
+    assert entries[0]["weight_paths"] == [{"sha256": "a" * 64, "paths": [str(source)]}]
+    assert entries[0]["recorded_at_seconds"] == 1
+    assert entries[0]["recorded_at_nanoseconds"] == 123
+
+
+@pytest.mark.req("SP-TENSORACLE-050")
+@pytest.mark.parametrize("criterion", ["unused_for_ns", "max_size_bytes"])
+def test_native_prune_rejects_integer_overflow_without_removing_files(
+    save_engine, saved_cache, criterion
+):
+    """A criterion larger than the C ABI's signed integer range is a value error before removal."""
+    from tensoracle import _native
+
+    path, _ = save_engine(saved_cache)
+    with pytest.raises(ValueError, match="64-bit"):
+        _native.cache_plan_prune(**{criterion: 2**63})
+    assert path.exists()
+
+
+@pytest.mark.req("SP-TENSORACLE-049")
+@pytest.mark.req("SP-TENSORACLE-055")
+def test_list_treats_v1_engines_as_unrecognized(saved_cache, capsys):
+    """A 1.x engine cannot be mistaken for a v2 engine or selected for removal."""
+    header = json.dumps({"conditions": {}, "plan_sha256": "0" * 64}).encode()
+    path = saved_cache / "v1.engine"
+    contents = b"TENSORACLE\x01" + len(header).to_bytes(8, "big") + header + b"plan"
+    path.write_bytes(contents)
+    status, (listing,), _ = call_cli(capsys, "list")
+    assert status == 0
+    assert listing["entries"][0]["status"] == "unrecognized"
+    status, (plan, result), _ = call_cli(capsys, "prune", "--max-size", "0")
+    assert status == 1 and not plan["targets"]
+    assert result["excluded"][0]["file"] == path.name
+    assert path.read_bytes() == contents
+
+
+@pytest.mark.req("SP-TENSORACLE-043")
+@pytest.mark.req("SP-TENSORACLE-050")
+@pytest.mark.parametrize("action", [("list",), ("prune", "--max-size", "0")])
+def test_cache_io_errors_report_failure_without_traceback(tmp_path, monkeypatch, capsys, action):
+    """A cache root that is a file yields a failing exit status with a useful diagnostic."""
+    root = tmp_path / "not-a-directory"
+    root.write_text("file")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(root))
+    status, events, stderr = call_cli(capsys, *action)
+    assert status == 1 and not events
+    assert "tensoracle:" in stderr and str(root) in stderr

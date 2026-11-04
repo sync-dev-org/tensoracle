@@ -34,15 +34,11 @@ def installed_example(tmp_path_factory):
         timeout=45,
     )
     main_wheel = next(tensoracle_dist.glob("*.whl"))
-    with zipfile.ZipFile(main_wheel) as archive:
-        for name in archive.namelist():
-            if name.startswith("tensoracle/cpp/"):
-                archive.extract(name, work / "distributed-source")
     environment = dict(os.environ)
-    cpp_root = work / "distributed-source/tensoracle/cpp"
+    constraint = work / "build-constraints.txt"
+    constraint.write_text(f"tensoracle @ {main_wheel.as_uri()}\n", encoding="utf-8")
     cmake_settings = [
         f"--config-setting=cmake.define.TENSORRT_ROOT={Path(sdk).as_posix()}",
-        f"--config-setting=cmake.define.TENSORACLE_CPP_ROOT={cpp_root.as_posix()}",
     ]
     if cuda := cuda_root():
         cmake_settings.append(
@@ -56,6 +52,10 @@ def installed_example(tmp_path_factory):
             "--wheel",
             "--out-dir",
             str(example_dist),
+            "--python",
+            sys.executable,
+            "--build-constraints",
+            str(constraint),
             *cmake_settings,
         ],
         cwd=root,
@@ -63,7 +63,7 @@ def installed_example(tmp_path_factory):
         check=True,
         capture_output=True,
         text=True,
-        timeout=45,
+        timeout=180,
     )
     python = work / "runtime" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     subprocess.run(
@@ -74,22 +74,29 @@ def installed_example(tmp_path_factory):
         timeout=30,
     )
     example_wheel = next(example_dist.glob("*.whl"))
-    subprocess.run(
+    installed = subprocess.run(
         ["uv", "pip", "install", "--python", str(python), str(main_wheel), str(example_wheel)],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         # An empty uv cache downloads about 3.85 GB, which takes 3850 s at 1 MB/s (8 Mbps).
         # Add the 45 s slowest measured cold install and round up to 70 minutes.
         timeout=4200,
     )
+    assert installed.returncode == 0, installed.stdout + installed.stderr
     result = subprocess.run(
         [
             str(python),
             "-c",
             (
-                "import json, sysconfig; from example_cubin_plugin import library_path; "
-                "print(json.dumps({'library': str(library_path()), "
+                "import json, sysconfig; from importlib.metadata import distribution; "
+                "package = distribution('tensoracle-cubin-example'); "
+                "libraries = [str(package.locate_file(p)) for p in package.files "
+                "if p.parent.as_posix() == 'example_cubin_plugin' "
+                "and 'tensoracle_example_plugin' in p.name "
+                "and p.suffix in ('.so', '.dll', '.dylib')]; "
+                "assert len(libraries) == 1, libraries; "
+                "print(json.dumps({'library': libraries[0], "
                 "'site_packages': sysconfig.get_path('purelib')}))"
             ),
         ],
@@ -109,29 +116,107 @@ def installed_example(tmp_path_factory):
         "example_wheel": example_wheel,
         "library": library,
         "plugin_member": library.relative_to(runtime["site_packages"]).as_posix(),
+        "environment": {
+            key: value
+            for key, value in environment.items()
+            if key not in {"PYTHONPATH", "PYTHONHOME", "LD_PRELOAD", "LD_LIBRARY_PATH"}
+        },
     }
 
 
-def _run(example, mode, cache, *extra):
-    environment = dict(os.environ)
-    environment["XDG_CACHE_HOME"] = str(cache)
-    environment.pop("CUDA_HOME", None)
-    environment["TENSORRT_ROOT"] = str(example["work"] / "absent-sdk")
+@pytest.mark.req("SP-TENSORACLE-060")
+def test_installed_example_exposes_its_own_inference_binding(installed_example):
+    """The example imports and exposes inference after tensoracle's Python engine API is removed."""
+    result = subprocess.run(
+        [
+            str(installed_example["python"]),
+            "-I",
+            "-c",
+            (
+                "import sys; import example_cubin_plugin as example; assert callable(example.infer); "
+                "assert 'tensoracle' not in sys.modules; assert 'tensorrt' not in sys.modules"
+            ),
+        ],
+        cwd=installed_example["work"],
+        env={**installed_example["environment"], "CUDA_VISIBLE_DEVICES": ""},
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _inference_process(example, cache, plugin=None):
     result = subprocess.run(
         [
             str(example["python"]),
-            str(example["project"] / "tests/example_runtime.py"),
-            mode,
-            *extra,
+            "-I",
+            "-c",
+            """
+import hashlib, json, sys
+from pathlib import Path
+import numpy as np
+from safetensors.numpy import load_file
+import example_cubin_plugin as example
+
+model = example.open_model(plugin=Path(sys.argv[1]) if sys.argv[1] else None)
+weights = load_file(example.weights_path())
+for execution, rows, capture in ((0, 16, False), (1, 3, False), (0, 32, True), (1, 7, True)):
+    features = np.linspace(-1, 1, rows * 32, dtype=np.float32).reshape(rows, 32)
+    actual = model.infer(features, execution=execution, capture=capture)
+    expected = (features @ weights['matrix']) * weights['scale'] + weights['bias']
+    np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-6)
+    assert model.output_shape(execution) == [rows, 16]
+    if execution == 1:
+        assert model.output_shape(0) == ([16, 16] if rows == 3 else [32, 16])
+    if rows == 16:
+        output_digest = hashlib.sha256(actual.tobytes()).hexdigest()
+path = Path(model.engine_path)
+print(json.dumps({'path': str(path), 'build_calls': model.build_calls,
+                  'engine_digest': hashlib.sha256(path.read_bytes()).hexdigest(),
+                  'output_digest': output_digest}))
+""",
+            str(plugin) if plugin is not None else "",
         ],
         cwd=example["work"],
-        env=environment,
-        check=True,
+        env={
+            **example["environment"],
+            "XDG_CACHE_HOME": str(cache),
+            "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
+        },
+        check=False,
         capture_output=True,
         text=True,
-        timeout=50,
+        timeout=180,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(result.stdout)
+
+
+@pytest.mark.gpu
+@pytest.mark.req("SP-TENSORACLE-004")
+@pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-012")
+@pytest.mark.req("SP-TENSORACLE-028")
+@pytest.mark.req("SP-TENSORACLE-038")
+@pytest.mark.req("SP-TENSORACLE-060")
+def test_cpp_plugin_inference_reuses_engines_contexts_and_captured_enqueue(installed_example):
+    """C++ plugin inference and graph replay survive restart; changed library bytes rebuild."""
+    cache = installed_example["work"] / "plugin-cache"
+    first = _inference_process(installed_example, cache)
+    assert first["build_calls"] == 1
+    reused = _inference_process(installed_example, cache)
+    assert reused["build_calls"] == 0
+    assert reused["path"] == first["path"]
+    assert reused["engine_digest"] == first["engine_digest"]
+    assert reused["output_digest"] == first["output_digest"]
+    plugin = installed_example["work"] / installed_example["library"].name
+    plugin.write_bytes(installed_example["library"].read_bytes() + b"changed plugin bytes")
+    changed = _inference_process(installed_example, cache, plugin)
+    assert changed["build_calls"] == 1
+    assert changed["path"] != first["path"]
+    assert changed["output_digest"] == first["output_digest"]
 
 
 @pytest.mark.req("SP-TENSORACLE-005")
@@ -159,73 +244,6 @@ def test_distributions_ship_cpp_without_torch_or_triton(installed_example):
         installed_example["example_wheel"],
         plugin=installed_example["plugin_member"],
     )
-
-
-@pytest.mark.gpu
-@pytest.mark.req("SP-TENSORACLE-002")
-@pytest.mark.req("SP-TENSORACLE-004")
-@pytest.mark.req("SP-TENSORACLE-005")
-@pytest.mark.req("SP-TENSORACLE-012")
-@pytest.mark.req("SP-TENSORACLE-038")
-def test_installed_wheel_builds_and_runs_both_plugins(installed_example):
-    """A producer-free wheel builds a dynamic graph and matches its reference output."""
-    result = _run(installed_example, "build", installed_example["work"] / "build-cache")
-    assert [row["rows"] for row in result["rows"]] == [3, 16]
-    assert all(row["outside_tolerance_count"] == 0 for row in result["rows"])
-    assert result["specialized"] >= 1
-    assert result["unspecialized"] >= 1
-
-
-@pytest.mark.gpu
-@pytest.mark.req("SP-TENSORACLE-009")
-@pytest.mark.req("SP-TENSORACLE-038")
-@pytest.mark.req("SP-TENSORACLE-004")
-def test_saved_engine_reopens_without_graph_and_plugin_change_selects_new_cache(installed_example):
-    """A later process reuses the plan; changing plugin bytes selects a new engine."""
-    cache = installed_example["work"] / "reuse-cache"
-    first = _run(installed_example, "build", cache)
-    second = _run(installed_example, "reuse", cache)
-    changed = _run(installed_example, "changed", cache, "--extra", str(installed_example["work"]))
-    assert second["path"] == first["path"]
-    assert changed["path"] != first["path"]
-    assert all(row["outside_tolerance_count"] == 0 for row in second["rows"])
-
-
-@pytest.mark.gpu
-@pytest.mark.req("SP-TENSORACLE-004")
-def test_direct_build_registers_before_graph_and_concurrent_contexts_run(installed_example):
-    """Direct builds see both creators, and two execution contexts run together."""
-    cache = installed_example["work"] / "concurrent-cache"
-    assert _run(installed_example, "serialized", cache)["plan_bytes"] > 0
-    _run(installed_example, "build", cache)
-    concurrent = _run(installed_example, "concurrent", cache)
-    assert all(row["outside_tolerance_count"] == 0 for row in concurrent["rows"])
-    separate = _run(installed_example, "separate-contexts", cache)
-    assert all(row["outside_tolerance_count"] == 0 for row in separate["rows"])
-
-
-@pytest.mark.gpu
-@pytest.mark.req("SP-TENSORACLE-002")
-@pytest.mark.req("SP-TENSORACLE-004")
-def test_different_library_with_same_creator_is_rejected_before_graph(installed_example):
-    """A second library with changed bytes cannot build with the first library's creator."""
-    result = _run(
-        installed_example,
-        "duplicate-creator",
-        installed_example["work"] / "duplicate-cache",
-        "--extra",
-        str(installed_example["work"]),
-    )
-    assert result == {"error_type": "PluginLibraryError", "graph_called": False}
-
-
-@pytest.mark.gpu
-@pytest.mark.req("SP-TENSORACLE-013")
-@pytest.mark.req("SP-TENSORACLE-002")
-def test_fp32_example_differs_from_tf32_control(installed_example):
-    """The caller's IEEE dot retains a difference that its TF32 control loses."""
-    values = _run(installed_example, "control", installed_example["work"] / "control-cache")
-    assert abs(values["tf32"] - values["ieee_expected"]) > 0.003
 
 
 @pytest.mark.req("SP-TENSORACLE-004")

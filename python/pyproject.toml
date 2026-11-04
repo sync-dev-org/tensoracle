@@ -10,7 +10,6 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: GPU :: NVIDIA CUDA :: 13",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3.12",
@@ -35,7 +34,7 @@ issues = "https://github.com/sync-dev-org/tensoracle/issues"
 [project.optional-dependencies]
 convert = ["torch>=2.6"]
 producer = [
-    "triton==3.8.0",
+    "nvidia-cuda-nvrtc==13.2.*",
     "nvidia-cuda-nvcc==13.2.*",
     "nvidia-cuda-cuobjdump==13.2.*",
     "nvidia-cuda-crt==13.2.*",
@@ -43,25 +42,31 @@ producer = [
 ]
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = [
+    "scikit-build-core>=0.11,<2",
+    "nanobind>=2.4,<3",
+    "setuptools-scm>=8",
+    "tensorrt-cu13-libs>=11,<12",
+    "nvidia-cuda-runtime==13.2.*",
+    "nvidia-cuda-crt==13.2.*",
+]
 build-backend = "build_backend"
 backend-path = ["."]
 
-[tool.hatch.version]
-source = "vcs"
-fallback-version = "0.0.0.dev0"
-
-[tool.hatch.version.raw-options]
-root = ".."
-fallback_root = "."
+[tool.setuptools_scm]
+fallback_version = "0.0.0.dev0"
 version_scheme = "only-version"
 local_scheme = "no-local-version"
+version_file = "src/tensoracle/_version.py"
 
-[tool.hatch.build.hooks.vcs]
-version-file = "src/tensoracle/_version.py"
+[tool.scikit-build]
+minimum-version = "0.11"
+wheel.packages = ["src/tensoracle"]
+wheel.py-api = "cp312"
+build.tool-args = ["-j4"]
+sdist.include = ["src/tensoracle/_version.py"]
 
-[tool.hatch.build.targets.sdist]
-exclude = [
+sdist.exclude = [
     "/.nf/",
     "/.github/",
     "/AGENTS.md",
@@ -72,13 +77,8 @@ exclude = [
     "/noren-words.txt",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/tensoracle"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"cpp/cmake" = "tensoracle/cpp/cmake"
-"cpp/include" = "tensoracle/cpp/include"
-"cpp/src" = "tensoracle/cpp/src"
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
 
 [dependency-groups]
 docs = [
@@ -101,6 +101,17 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
+
+[tool.uv]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "build_backend.py" },
+    { file = "CMakeLists.txt" },
+    { file = "bindings.cpp" },
+    { file = "cubin_bindings.cpp" },
+    { file = "../cpp/**" },
+    { git = { commit = true, tags = true } },
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,6 +2,7 @@
 
 import configparser
 import email
+import json
 import os
 import re
 import shutil
@@ -16,9 +17,13 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 import markdown
+import numpy as np
 import pytest
 import yaml
 from packaging.requirements import Requirement
+from safetensors.numpy import save_file
+
+from native_build import cuda_root
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
@@ -100,7 +105,7 @@ def test_sdist_contains_public_sources_without_development_files(distributions):
 def test_sdist_exclusions_match_the_public_snapshot(publication_config, tmp_path):
     """Source archives exclude development paths and the public Pages workflow."""
     config = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))
-    exclusions = config["tool"]["hatch"]["build"]["targets"]["sdist"]["exclude"]
+    exclusions = config["tool"]["scikit-build"]["sdist"]["exclude"]
     paths = (
         subprocess.run(
             ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
@@ -129,6 +134,22 @@ def test_public_snapshot_includes_only_the_pages_workflow(publication_config, tm
 
     assert included - excluded == {PAGES_WORKFLOW}
     assert paths - {PAGES_WORKFLOW} <= excluded
+
+
+def test_publication_config_classifies_every_tracked_file(publication_config, tmp_path):
+    """Every tracked source or development file has an explicit publication decision."""
+    paths = set(
+        subprocess.run(
+            ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
+        )
+        .stdout.rstrip("\0")
+        .split("\0")
+    )
+    included = matching_paths(tmp_path, publication_config["include"], paths)
+    excluded = matching_paths(tmp_path, publication_config["exclude"], paths)
+
+    unclassified = sorted(paths - included - excluded)
+    assert not unclassified
 
 
 @pytest.mark.req("SP-TENSORACLE-024")
@@ -230,21 +251,274 @@ def test_wheel_contains_only_the_package_and_distribution_metadata(distributions
 
 
 @pytest.mark.req("SP-TENSORACLE-022")
-def test_wheel_is_portable_python_with_uncompiled_cpp(distributions):
-    """The wheel uses py3-none-any and delivers C++ source without native binaries."""
-    assert distributions["wheel"].name.endswith("-py3-none-any.whl")
+@pytest.mark.req("SP-TENSORACLE-057")
+def test_wheel_delivers_the_stable_abi_and_cpp_sdk(distributions):
+    """The cp312-abi3 platform wheel supplies its SDK and depends on TensorRT's wheel."""
+    assert re.search(
+        r"-cp312-abi3-(?:linux|manylinux[^-]*)_x86_64\.whl$", distributions["wheel"].name
+    )
     with zipfile.ZipFile(distributions["wheel"]) as archive:
         paths = archive.namelist()
         wheel = next(name for name in paths if name.endswith(".dist-info/WHEEL"))
         metadata = email.message_from_bytes(archive.read(wheel))
-        assert metadata["Root-Is-Purelib"] == "true"
-        assert metadata.get_all("Tag") == ["py3-none-any"]
-        assert not [name for name in paths if name.endswith((".so", ".pyd", ".dll", ".dylib"))]
-        for directory in ("cmake", "include", "src"):
-            for source in (ROOT / "cpp" / directory).rglob("*"):
-                if source.is_file():
-                    member = source.relative_to(ROOT / "cpp").as_posix()
-                    assert archive.read(f"tensoracle/cpp/{member}") == source.read_bytes()
+        assert metadata["Root-Is-Purelib"] == "false"
+        assert all(tag.startswith("cp312-abi3-") for tag in metadata.get_all("Tag"))
+        assert "tensoracle/_native.abi3.so" in paths
+        assert "tensoracle/cpp/lib/libtensoracle.so.2" in paths
+        assert "tensoracle/cpp/lib/cmake/tensoracle/tensoracleConfig.cmake" in paths
+        for source in (ROOT / "cpp/include").rglob("*"):
+            if source.is_file():
+                member = source.relative_to(ROOT / "cpp").as_posix()
+                assert archive.read(f"tensoracle/cpp/{member}") == source.read_bytes()
+        for member in (
+            "src/cubin_plugin.cpp",
+            "cmake/TensoracleCuda.cmake",
+            "cmake/TensoracleCubinPlugin.cmake",
+        ):
+            assert archive.read(f"tensoracle/cpp/{member}") == (ROOT / "cpp" / member).read_bytes()
+        assert not any(
+            name.split("/")[-1].startswith(
+                ("libnvinfer", "libcuda", "libnvonnxparser", "libCatch2")
+            )
+            or ".libs/" in name
+            for name in paths
+        )
+
+
+@pytest.mark.req("SP-TENSORACLE-022")
+@pytest.mark.req("SP-TENSORACLE-056")
+@pytest.mark.req("SP-TENSORACLE-057")
+def test_installed_wheel_serves_python_and_cpp_without_the_source_tree(distributions, tmp_path):
+    """An isolated install imports the binding and builds against only the wheel's SDK."""
+    runtime = tmp_path / "runtime"
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
+    python = runtime / "bin/python"
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), str(distributions["wheel"])],
+        check=True,
+        timeout=120,
+    )
+    result = subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            (
+                "from tensoracle import _native; import sysconfig; "
+                "assert _native.version() == (2, 0, 0); "
+                "assert _native.tensorrt_version()[0] == 11; "
+                "print(sysconfig.get_path('platlib'))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    sdk = Path(result.stdout.strip()) / "tensoracle/cpp"
+    source = tmp_path / "consumer"
+    source.mkdir()
+    (source / "main.cpp").write_text(
+        "#include <tensoracle/tensoracle.hpp>\n"
+        "int main() { tensoracle::check_version(); "
+        "return tensoracle::tensorrt_version().major == 11 ? 0 : 1; }\n",
+        encoding="utf-8",
+    )
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.26)\n"
+        "project(wheel_consumer LANGUAGES CXX)\n"
+        "find_package(tensoracle 2 CONFIG REQUIRED)\n"
+        "add_executable(consumer main.cpp)\n"
+        "target_link_libraries(consumer PRIVATE tensoracle::tensoracle)\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    for name in ("LD_LIBRARY_PATH", "TENSORACLE_SDK_ROOT", "TENSORRT_ROOT", "CUDAToolkit_ROOT"):
+        environment.pop(name, None)
+    build = tmp_path / "build"
+    for command in (
+        ["cmake", "-S", str(source), "-B", str(build), f"-DCMAKE_PREFIX_PATH={sdk}"],
+        ["cmake", "--build", str(build), "--parallel", "2"],
+        [str(build / "consumer")],
+    ):
+        subprocess.run(command, cwd=tmp_path, env=environment, check=True, timeout=45)
+
+
+@pytest.fixture(scope="module")
+def consumer_wheel(distributions, tmp_path_factory):
+    """Build a separate binding against the wheel in a PEP 517 build environment."""
+    work = tmp_path_factory.mktemp("consumer-wheel")
+    source = work / "source"
+    shutil.copytree(ROOT / "examples/wheel_consumer", source)
+    constraint = work / "build-constraints.txt"
+    constraint.write_text(f"tensoracle @ {distributions['wheel'].as_uri()}\n", encoding="utf-8")
+    output = work / "dist"
+    settings = []
+    if cuda := cuda_root():
+        settings.append(f"--config-setting=cmake.define.CUDAToolkit_ROOT={cuda.as_posix()}")
+    result = subprocess.run(
+        [
+            "uv",
+            "build",
+            str(source),
+            "--wheel",
+            "--python",
+            sys.executable,
+            "--out-dir",
+            str(output),
+            "--build-constraints",
+            str(constraint),
+            *settings,
+        ],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    wheel = next(output.glob("*.whl"))
+    # Runtime checks have neither the consumer's build source nor build environment.
+    shutil.rmtree(source)
+    runtime = work / "runtime"
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True, timeout=30)
+    python = runtime / "bin/python"
+    environment = dict(os.environ)
+    for name in (
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "TENSORACLE_SDK_ROOT",
+        "TENSORACLE_CUDA_ROOT",
+        "TENSORRT_ROOT",
+        "CUDAToolkit_ROOT",
+        "CMAKE_PREFIX_PATH",
+        "CUDA_HOME",
+        "CUDA_PATH",
+    ):
+        environment.pop(name, None)
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), str(distributions["wheel"]), str(wheel)],
+        cwd=work,
+        env=environment,
+        check=True,
+        timeout=180,
+    )
+    return {"work": work, "python": python, "wheel": wheel, "environment": environment}
+
+
+def _consumer_process(consumer, script, *arguments):
+    result = subprocess.run(
+        [str(consumer["python"]), "-I", "-c", script, *map(str, arguments)],
+        cwd=consumer["work"],
+        env=consumer["environment"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.req("SP-TENSORACLE-022")
+@pytest.mark.req("SP-TENSORACLE-055")
+@pytest.mark.req("SP-TENSORACLE-056")
+@pytest.mark.req("SP-TENSORACLE-057")
+def test_consumer_wheel_imports_with_a_relative_dependency_on_the_separate_wheel(
+    consumer_wheel, tmp_path
+):
+    """A separate binding imports using libtensoracle's SONAME and relative RUNPATH."""
+    with zipfile.ZipFile(consumer_wheel["wheel"]) as archive:
+        names = archive.namelist()
+        assert not any(
+            Path(name).name.startswith(("libtensoracle", "libnvinfer", "libcuda"))
+            or ".libs/" in name
+            for name in names
+        )
+        native = next(name for name in names if name.endswith("/_native.abi3.so"))
+        binary = archive.extract(native, tmp_path)
+    dynamic = subprocess.run(
+        ["readelf", "--dynamic", "--wide", binary],
+        env={**os.environ, "LC_ALL": "C"},
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    ).stdout
+    needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
+    assert "libtensoracle.so.2" in needed
+    assert all("/" not in name for name in needed)
+    runpaths = re.findall(r"\(RUNPATH\).*?\[([^]]+)\]", dynamic)
+    assert runpaths == ["$ORIGIN/../tensoracle/cpp/lib"]
+    assert "(RPATH)" not in dynamic
+    installed = _consumer_process(
+        consumer_wheel,
+        """
+import json, sys, sysconfig
+from pathlib import Path
+from tensoracle_consumer import _native
+assert 'tensoracle' not in sys.modules
+site = Path(sysconfig.get_path('platlib'))
+libraries = {line.split()[-1] for line in Path('/proc/self/maps').read_text().splitlines()
+             if '/libtensoracle.so.' in line}
+print(json.dumps({'version': _native.version(), 'module': _native.__file__,
+                  'site': str(site), 'libraries': sorted(libraries), 'path': sys.path}))
+""",
+    )
+    assert installed["version"] == [2, 0, 0]
+    site = Path(installed["site"])
+    assert Path(installed["module"]).parent == site / "tensoracle_consumer"
+    assert len(installed["libraries"]) == 1
+    assert Path(installed["libraries"][0]).parent == site / "tensoracle/cpp/lib"
+    assert not any(Path(path).is_relative_to(ROOT) for path in installed["path"])
+
+
+@pytest.mark.gpu
+@pytest.mark.req("SP-TENSORACLE-009")
+@pytest.mark.req("SP-TENSORACLE-054")
+@pytest.mark.req("SP-TENSORACLE-056")
+@pytest.mark.req("SP-TENSORACLE-059")
+def test_consumer_wheel_infers_and_reuses_the_engine_in_another_process(consumer_wheel, tmp_path):
+    """The caller's C++ binding uses safetensors and skips its builder after restart."""
+    weights = tmp_path / "bias.safetensors"
+    bias = np.array([0.5, -2.0, 3.25, -0.75], dtype=np.float32)
+    save_file({"bias": bias}, weights)
+    values = np.array([-1.5, 4.0, 0.25, -8.0], dtype=np.float32)
+    consumer = {
+        **consumer_wheel,
+        "environment": {**consumer_wheel["environment"], "XDG_CACHE_HOME": str(tmp_path / "cache")},
+    }
+    script = """
+import json, os, resource, sys
+from datetime import datetime
+import numpy as np
+from tensoracle_consumer import infer
+started = datetime.now().astimezone().isoformat()
+result = infer(sys.argv[1], np.array(json.loads(sys.argv[2]), dtype=np.float32))
+assert 'tensoracle' not in sys.modules
+result['output'] = result['output'].tolist()
+result.update(pid=os.getpid(), started=started, finished=datetime.now().astimezone().isoformat(),
+              host_maxrss_kib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+print(json.dumps(result))
+"""
+    first = _consumer_process(consumer, script, weights, json.dumps(values.tolist()))
+    print("consumer build process:", json.dumps(first))
+    np.testing.assert_array_equal(first["output"], values + bias)
+    assert first["build_calls"] == 1
+    engine = Path(first["engine_path"])
+    assert engine.is_relative_to(tmp_path / "cache")
+    saved = engine.read_bytes()
+    assert saved
+
+    second = _consumer_process(consumer, script, weights, json.dumps(values.tolist()))
+    print("consumer reuse process:", json.dumps(second))
+    assert first["pid"] != second["pid"]
+    np.testing.assert_array_equal(second["output"], values + bias)
+    assert second["engine_path"] == first["engine_path"]
+    assert second["build_calls"] == 0
+    assert engine.read_bytes() == saved
 
 
 @pytest.mark.req("SP-TENSORACLE-047")
@@ -302,9 +576,9 @@ def test_backend_prepares_metadata_and_editable_source(tmp_path):
             "run",
             "--no-project",
             "--with",
-            "hatchling",
+            "scikit-build-core",
             "--with",
-            "hatch-vcs",
+            "setuptools-scm",
             "--python",
             sys.executable,
             "python",
@@ -368,7 +642,16 @@ def test_backend_removes_staging_files_after_metadata_failure(tmp_path):
             shutil.copytree(source, repository / name)
         else:
             shutil.copyfile(source, repository / name)
-    for name in ("pyproject.toml", "uv.lock", "build_backend.py", "src", "tests"):
+    for name in (
+        "pyproject.toml",
+        "uv.lock",
+        "build_backend.py",
+        "CMakeLists.txt",
+        "bindings.cpp",
+        "cubin_bindings.cpp",
+        "src",
+        "tests",
+    ):
         source = PROJECT / name
         if source.is_dir():
             shutil.copytree(source, project / name, ignore=shutil.ignore_patterns("__pycache__"))
@@ -389,9 +672,9 @@ def test_backend_removes_staging_files_after_metadata_failure(tmp_path):
             "run",
             "--no-project",
             "--with",
-            "hatchling",
+            "scikit-build-core",
             "--with",
-            "hatch-vcs",
+            "setuptools-scm",
             "--python",
             sys.executable,
             "python",
@@ -459,7 +742,6 @@ def test_wheel_metadata_describes_the_public_package(distributions):
         "Development Status :: 5 - Production/Stable",
         "Environment :: GPU :: NVIDIA CUDA :: 13",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
         "Operating System :: Microsoft :: Windows",
         "Programming Language :: Python :: 3.12",

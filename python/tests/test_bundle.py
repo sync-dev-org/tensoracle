@@ -68,8 +68,8 @@ def _bundle(tmp_path, sm=86):
     path.parent.mkdir()
     path.write_bytes(cubin)
     manifest = {
-        "schema_version": 1,
-        "producer": {"triton": "3.8.0", "ptxas": "13.2.0"},
+        "schema_version": 2,
+        "producer": {"nvrtc": "13.2", "ptxas": "13.2.0"},
         "entries": [
             {
                 "id": "sample",
@@ -79,16 +79,10 @@ def _bundle(tmp_path, sm=86):
                 "sha256": hashlib.sha256(cubin).hexdigest(),
                 "bytes": len(cubin),
                 "signature": [{"name": "x", "type": "*fp32"}],
-                "hidden_trailing_parameters": [
-                    {"name": "global_scratch", "parameter_bytes": 8},
-                    {"name": "profile_scratch", "parameter_bytes": 8},
-                ],
                 "resources": {
                     "compiled_shared_memory_bytes": 0,
                     "launch_dynamic_shared_memory_bytes": 0,
                     "registers_per_thread": 8,
-                    "global_scratch_bytes": 0,
-                    "profile_scratch_bytes": 0,
                 },
                 "specialization": {"divisible_by": {}},
             }
@@ -118,13 +112,15 @@ def test_inspector_distinguishes_missing_corrupt_and_false_sm(tmp_path):
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
-def test_inspector_rejects_unsupported_launch_contract(tmp_path):
-    """A nonzero scratch requirement cannot be accepted by the current launcher."""
+def test_inspector_rejects_triton_launch_contract(tmp_path):
+    """A v2 CUDA C++ manifest cannot add Triton hidden launch parameters."""
     _bundle(tmp_path)
     manifest = json.loads((tmp_path / "bundle.json").read_text())
-    manifest["entries"][0]["resources"]["global_scratch_bytes"] = 64
+    manifest["entries"][0]["hidden_trailing_parameters"] = [
+        {"name": "global_scratch", "parameter_bytes": 8}
+    ]
     (tmp_path / "bundle.json").write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="scratch"):
+    with pytest.raises(ValueError, match="hidden"):
         inspect_bundle(tmp_path)
 
 

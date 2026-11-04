@@ -34,9 +34,32 @@ def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
         check=True,
         timeout=45,
     )
-    subprocess.run(["cmake", "--build", str(build), "--config", "Release"], check=True, timeout=45)
     subprocess.run(
-        ["ctest", "--test-dir", str(build), "-C", "Release", "--output-on-failure"],
+        [
+            "cmake",
+            "--build",
+            str(build),
+            "--config",
+            "Release",
+            "--target",
+            "tensoracle_core_test",
+            "--parallel",
+            "4",
+        ],
+        check=True,
+        timeout=45,
+    )
+    subprocess.run(
+        [
+            "ctest",
+            "--test-dir",
+            str(build),
+            "-C",
+            "Release",
+            "-R",
+            "^tensoracle_fields_and_sha256$",
+            "--output-on-failure",
+        ],
         check=True,
         timeout=10,
     )

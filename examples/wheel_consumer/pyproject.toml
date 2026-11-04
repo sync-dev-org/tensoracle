@@ -1,0 +1,22 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.11,<2",
+    "nanobind>=2.4,<3",
+    "tensoracle",
+    "nvidia-cuda-runtime==13.2.*",
+    "nvidia-cuda-crt==13.2.*",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "tensoracle-wheel-consumer"
+version = "0.1.0"
+description = "A separate nanobind wheel using tensoracle's C++ SDK"
+requires-python = ">=3.12,<3.14"
+dependencies = ["tensoracle"]
+
+[tool.scikit-build]
+minimum-version = "0.11"
+wheel.packages = ["src/tensoracle_consumer"]
+wheel.py-api = "cp312"
+build.tool-args = ["-j4"]

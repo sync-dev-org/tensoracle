@@ -1,26 +1,38 @@
-# Build plugins with tensoracle's C++ sources
+# Use tensoracle's C++ SDK and plugin sources
 
-Tensoracle supplies the shared C++ implementation and CMake helpers for cubin plugins. Your model package supplies the kernels and model-specific plugin behavior, compiles the native plugin, and packages it for the application.
+The v2 wheel supplies a shared C++ library, public headers, CMake package configuration, and source-based cubin plugin helpers. Your model package defines the TensorRT network and engine-opening code in C++, links the shared library, and exposes inference through its own binding. For custom plugins it also supplies CUDA C++ kernels and model-specific plugin behavior.
 
-## C++ sources in the wheel
+v2.0.0 is available on Linux x86_64, including WSL2, as a `manylinux_2_28`, `cp312-abi3` wheel. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release adds a Windows wheel.
+
+## C++ SDK in the wheel
 
 The tensoracle wheel includes:
 
 ```text
 tensoracle/cpp/
+  include/tensoracle/tensoracle.h
+  include/tensoracle/tensoracle.hpp
+  include/tensoracle/builder.h
+  include/tensoracle/builder.hpp
+  include/tensoracle/engine.h
+  include/tensoracle/engine.hpp
   include/tensoracle/cubin_plugin.hpp
+  lib/libtensoracle.so.2
+  lib/cmake/tensoracle/tensoracleConfig.cmake
   src/cubin_plugin.cpp
   cmake/TensoracleCubinPlugin.cmake
   cmake/TensoracleCuda.cmake
 ```
 
-The wheel contains no native binaries and uses the `py3-none-any` tag. Your plugin's native library is compiled separately and belongs to your model package.
+The SDK also includes plugin, cache, and cubin C ABI headers and C++ wrappers. Your plugin's native library is compiled separately and belongs to your model package. TensorRT and NVIDIA driver libraries are not copied into the tensoracle wheel.
+
+Locate `tensoracle/cpp` with the metadata command below and add it to `CMAKE_PREFIX_PATH`. Link a model target with `find_package(tensoracle 2 CONFIG REQUIRED)` and `target_link_libraries(my_model PRIVATE tensoracle::tensoracle)`. The [user guide](index.md#connect-a-c-model-package) and [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer) show the integration and relative runtime library lookup. The C ABI and header-only C++ wrappers are listed in [the API reference](api/index.md).
 
 ## Prepare the build inputs
 
-Use CMake 3.20 or later and a C++17 compiler. Follow [Prepare a TensorRT SDK](tensorrt-sdk.md) to obtain and verify the TensorRT 11 headers and library and prepare the PyPI CUDA headers and driver link library. That guide covers Linux, WSL2, and [Windows](tensorrt-sdk.md#windows-x86_64); no OS-installed CUDA Toolkit is required.
+Use CMake 3.26 or later for the model package SDK integration and a C++17 compiler. The source-based cubin plugin helper alone requires CMake 3.20 or later. Follow [Prepare a TensorRT SDK](tensorrt-sdk.md) to obtain and verify the TensorRT 11 headers and library and prepare the PyPI CUDA headers and driver link library on Linux, including WSL2; no OS-installed CUDA Toolkit is required.
 
-Generate a cubin bundle with the [cubin producer](api/producer.md). The bundle directory must contain `bundle.cpp`, `bundle.json`, and the cubin files. Cubin production runs on Linux; the same bundle can be used to build a Windows plugin DLL. Follow [Build a cubin plugin](index.md#build-a-cubin-plugin) for the model-specific plugin interface and tensor declarations.
+Generate a cubin bundle from CUDA C++ source with the [cubin producer](api/producer.md). The bundle directory must contain `bundle.cpp`, `bundle.json`, and the cubin files. Follow [Build a cubin plugin](index.md#build-a-cubin-plugin) for the model-specific plugin interface and tensor declarations.
 
 ## Use the packaged CMake helper
 
@@ -58,8 +70,17 @@ cmake -S /absolute/path/to/plugin-project -B build/plugin \
 cmake --build build/plugin --config Release
 ```
 
-The [plugin guide](https://github.com/sync-dev-org/tensoracle#build-a-cubin-plugin) documents the required `getCreators` export and the optional `tensoracle_find_cuda` function and `tensoracle_cuda_driver` target for consumers that also need the resolved CUDA inputs.
+The native library must export TensorRT's `getCreators`. To use the resolved CUDA inputs in another target, call `tensoracle_find_cuda(OUT_INCLUDE_DIR cuda_include OUT_DRIVER_LIBRARY cuda_driver)` after including `TensoracleCuda.cmake` or `TensoracleCubinPlugin.cmake`. Both keywords name variables set in the calling scope. The public IMPORTED target `tensoracle_cuda_driver` carries the same include directory and driver library. For example:
+
+```cmake
+tensoracle_find_cuda(
+    OUT_INCLUDE_DIR cuda_include
+    OUT_DRIVER_LIBRARY cuda_driver)
+target_link_libraries(my_model PRIVATE tensoracle_cuda_driver)
+```
+
+`my_model` stands for your existing CMake target. The function uses the same `CUDAToolkit_ROOT` variable, environment setting, and default locations as `tensoracle_add_cubin_plugin`, with the same missing-input errors.
 
 ## Package and inspect the plugin
 
-Follow the [cubin plugin example](https://github.com/sync-dev-org/tensoracle/blob/main/examples/cubin_plugin/README.md#build-and-inspect-the-wheel) for packaging the native library and bundle in your model wheel and testing it in a runtime environment. Use the [bundle inspection API](api/bundle.md) to check the bundle and its match with the compiled plugin before distribution.
+Package the native library and its generated bundle together in your model wheel. Use the [bundle inspection API](api/bundle.md) to check the bundle and its match with the compiled plugin before distribution. Put required library paths in C++ `builder_options.plugins` before opening the model's engine; test construction, separate-process reuse, inference, and output quality through the model's binding. The [optimization workflow](optimization.md) describes those quality gates.

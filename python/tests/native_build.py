@@ -65,17 +65,3 @@ def build_library(work, name, source):
     path = directory / f"{name}.c"
     path.write_text('#include "export.h"\n' + source, encoding="utf-8")
     return build_native(directory, name, (path,), shared=True)
-
-
-def build_cubin(work, source, tools, sm):
-    """Ask CMake to locate nvcc and compile a cubin for the test GPU."""
-    _, cuda = tools
-    return _build(
-        work,
-        {
-            "TENSORACLE_CPP_ROOT": (ROOT / "cpp").as_posix(),
-            "TEST_CUBIN_SOURCE": source.as_posix(),
-            "TEST_CUDA_ARCH": sm,
-            "CUDAToolkit_ROOT": cuda.as_posix(),
-        },
-    )

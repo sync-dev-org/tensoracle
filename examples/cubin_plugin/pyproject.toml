@@ -1,5 +1,11 @@
 [build-system]
-requires = ["scikit-build-core>=0.11"]
+requires = [
+    "scikit-build-core>=0.11,<2",
+    "nanobind>=2.4,<3",
+    "tensoracle",
+    "nvidia-cuda-runtime==13.2.*",
+    "nvidia-cuda-crt==13.2.*",
+]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -12,3 +18,5 @@ dependencies = ["tensoracle", "cuda-python>=13.0"]
 [tool.scikit-build]
 wheel.packages = ["example_cubin_plugin"]
 cmake.source-dir = "."
+wheel.py-api = "cp312"
+build.tool-args = ["-j4"]

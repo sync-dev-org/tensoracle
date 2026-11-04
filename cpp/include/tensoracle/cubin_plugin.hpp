@@ -124,8 +124,6 @@ struct KernelImage {
     std::int32_t target_sm;
     std::int32_t registers_per_thread;
     std::int32_t dynamic_shared_bytes;
-    std::int32_t global_scratch_bytes;
-    std::int32_t profile_scratch_bytes;
     // The producer derives these rules from the manifest's ordered signature.
     std::size_t public_argument_count;
     ArgumentRule const* argument_rules;

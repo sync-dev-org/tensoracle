@@ -1,25 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(tensoracle_test_fixtures LANGUAGES C CXX)
 
-if(TEST_CUBIN_SOURCE)
-    include("${TENSORACLE_CPP_ROOT}/cmake/TensoracleCuda.cmake")
-    _tensoracle_find_cuda()
-    set(_nvcc "${_tensoracle_cuda_root}/bin/nvcc${CMAKE_EXECUTABLE_SUFFIX}")
-    if(NOT EXISTS "${_nvcc}")
-        message(FATAL_ERROR "nvcc is missing at ${_nvcc}; install PyPI nvidia-cuda-nvcc 13.2")
-    endif()
-    set(_cubin "${CMAKE_CURRENT_BINARY_DIR}/kernel.cubin")
-    add_custom_command(OUTPUT "${_cubin}"
-        COMMAND "${_nvcc}" --cubin "-arch=sm_${TEST_CUDA_ARCH}"
-            "${TEST_CUBIN_SOURCE}" -o "${_cubin}"
-        DEPENDS "${TEST_CUBIN_SOURCE}"
-        VERBATIM)
-    add_custom_target(test_cubin ALL DEPENDS "${_cubin}")
-    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/artifact-$<CONFIG>.txt"
-        CONTENT "${_cubin}")
-    return()
-endif()
-
 if(TEST_SHARED)
     add_library(${TEST_TARGET} SHARED ${TEST_SOURCES})
 else()

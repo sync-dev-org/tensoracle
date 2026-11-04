@@ -1,94 +1,132 @@
-"""Build from the Python project using the repository's canonical shared sources."""
+"""Supply shared repository sources to scikit-build-core from the Python project."""
 
+import json
+import os
 import shutil
 import tempfile
-import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 
-from hatchling import build as hatchling_build
-from hatchling.builders.sdist import SdistBuilder
-from hatchling.builders.wheel import WheelBuilder
+from scikit_build_core import build as native_build
+from setuptools_scm import get_version
 
-get_requires_for_build_editable = hatchling_build.get_requires_for_build_editable
-get_requires_for_build_sdist = hatchling_build.get_requires_for_build_sdist
-get_requires_for_build_wheel = hatchling_build.get_requires_for_build_wheel
+get_requires_for_build_editable = native_build.get_requires_for_build_editable
+get_requires_for_build_sdist = native_build.get_requires_for_build_sdist
+get_requires_for_build_wheel = native_build.get_requires_for_build_wheel
 
 
 @contextmanager
-def _builder(builder_class):
+def _source_tree(*, editable=False):
     project = Path(__file__).resolve().parent
-    config = tomllib.loads((project / "pyproject.toml").read_text(encoding="utf-8"))
-    # Source archives already contain the shared files next to pyproject.toml.
     source_archive = (project / "PKG-INFO").is_file()
     repository = project if source_archive else project.parent
     shared = ("README.md", "LICENSE", "cpp", "docs", "examples", "mkdocs.yml", ".gitignore")
     for name in shared:
         if not (repository / name).exists():
             raise FileNotFoundError(f"Required build source is missing: {repository / name}")
-    if source_archive:
-        yield builder_class(str(project), config=config)
-        return
-
-    with tempfile.TemporaryDirectory(prefix="tensoracle-build-") as directory:
-        staged = Path(directory)
-        for base, names in (
-            (project, ("pyproject.toml", "uv.lock", "build_backend.py", "src", "tests")),
-            (repository, shared),
-        ):
-            for name in names:
-                source, destination = base / name, staged / name
-                if source.is_dir():
-                    shutil.copytree(
-                        source,
-                        destination,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+    version = get_version(
+        root=str(repository),
+        fallback_version="0.0.0.dev0",
+        version_scheme="only-version",
+        local_scheme="no-local-version",
+    )
+    previous_cwd = Path.cwd()
+    variable = "SETUPTOOLS_SCM_PRETEND_VERSION"
+    previous_version = os.environ.get(variable)
+    os.environ[variable] = version
+    try:
+        if source_archive:
+            os.chdir(project)
+            yield
+            return
+        with tempfile.TemporaryDirectory(prefix="tensoracle-build-") as directory:
+            staged = Path(directory)
+            for base, names in (
+                (
+                    project,
+                    (
+                        "pyproject.toml",
+                        "uv.lock",
+                        "build_backend.py",
+                        "CMakeLists.txt",
+                        "bindings.cpp",
+                        "cubin_bindings.cpp",
+                        "src",
+                        "tests",
+                    ),
+                ),
+                (repository, shared),
+            ):
+                for name in names:
+                    source, destination = base / name, staged / name
+                    if source.is_dir():
+                        shutil.copytree(
+                            source,
+                            destination,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
+                        )
+                    else:
+                        shutil.copyfile(source, destination)
+            if editable:
+                # Source redirects must survive deletion of the staging directory.
+                settings = staged / "pyproject.toml"
+                settings.write_text(
+                    settings.read_text(encoding="utf-8").replace(
+                        'wheel.packages = ["src/tensoracle"]',
+                        f"wheel.packages = [{json.dumps(str(project / 'src/tensoracle'))}]",
+                    ),
+                    encoding="utf-8",
+                )
+            os.chdir(staged)
+            try:
+                yield
+                if editable:
+                    shutil.copyfile(
+                        staged / "src/tensoracle/_version.py",
+                        project / "src/tensoracle/_version.py",
                     )
-                else:
-                    shutil.copyfile(source, destination)
-        hatch = config["tool"]["hatch"]
-        hatch["version"]["raw-options"]["root"] = str(repository)
-        hatch["build"]["dev-mode-dirs"] = [str(project / "src")]
-        yield builder_class(str(staged), config=config)
+            finally:
+                os.chdir(previous_cwd)
+    finally:
+        os.chdir(previous_cwd)
+        if previous_version is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous_version
 
 
-def _build(builder_class, directory, version):
+def _call(hook, directory, config_settings=None, metadata_directory=None, *, editable=False):
     output = str(Path(directory).resolve())
-    with _builder(builder_class) as builder:
-        artifact = next(builder.build(directory=output, versions=[version]))
-        if version == "editable":
-            generated = Path(builder.root) / "src/tensoracle/_version.py"
-            target = Path(__file__).resolve().parent / "src/tensoracle/_version.py"
-            if generated != target:
-                shutil.copyfile(generated, target)
-        return Path(artifact).name
+    metadata = str(Path(metadata_directory).resolve()) if metadata_directory else None
+    with _source_tree(editable=editable):
+        if hook in (native_build.build_wheel, native_build.build_editable):
+            return hook(output, config_settings, metadata)
+        return hook(output, config_settings)
 
 
 def build_sdist(sdist_directory, config_settings=None):
-    return _build(SdistBuilder, sdist_directory, "standard")
+    return _call(native_build.build_sdist, sdist_directory, config_settings)
 
 
 def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
-    return _build(WheelBuilder, wheel_directory, "standard")
+    return _call(native_build.build_wheel, wheel_directory, config_settings, metadata_directory)
 
 
 def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
-    return _build(WheelBuilder, wheel_directory, "editable")
+    return _call(
+        native_build.build_editable,
+        wheel_directory,
+        config_settings,
+        metadata_directory,
+        editable=True,
+    )
 
 
 def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
-    with _builder(WheelBuilder) as builder:
-        builder.metadata.validate_fields()
-        directory = Path(metadata_directory) / f"{builder.artifact_project_id}.dist-info"
-        directory.mkdir(parents=True, exist_ok=True)
-        metadata = builder.config.core_metadata_constructor(builder.metadata)
-        (directory / "METADATA").write_text(metadata, encoding="utf-8")
-        for relative in builder.metadata.core.license_files:
-            target = directory / "licenses" / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(Path(builder.root) / relative, target)
-        return directory.name
+    return _call(native_build.prepare_metadata_for_build_wheel, metadata_directory, config_settings)
 
 
 def prepare_metadata_for_build_editable(metadata_directory, config_settings=None):
-    return prepare_metadata_for_build_wheel(metadata_directory, config_settings)
+    return _call(
+        native_build.prepare_metadata_for_build_editable, metadata_directory, config_settings
+    )

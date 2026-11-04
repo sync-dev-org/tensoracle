@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.26)
+project(tensoracle_sdk_consumer LANGUAGES CXX)
+find_package(tensoracle 2 CONFIG REQUIRED)
+if(NOT COMMAND tensoracle_add_cubin_plugin OR NOT COMMAND tensoracle_find_cuda)
+    message(FATAL_ERROR "The installed SDK must include the public plugin helpers")
+endif()
+add_executable(consumer main.cpp)
+target_link_libraries(consumer PRIVATE tensoracle::tensoracle)
+target_compile_options(consumer PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Werror>)
+enable_testing()
+add_test(NAME consumer COMMAND consumer)

@@ -1,0 +1,4 @@
+@PACKAGE_INIT@
+include("${CMAKE_CURRENT_LIST_DIR}/tensoracleTargets.cmake")
+include("@PACKAGE_TENSORACLE_HELPER_DIR@/TensoracleCubinPlugin.cmake")
+check_required_components(tensoracle)

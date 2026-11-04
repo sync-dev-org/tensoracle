@@ -186,13 +186,13 @@ else:
 
 
 @pytest.mark.req("SP-TENSORACLE-005")
-def test_inference_and_conversion_imports_leave_torch_unloaded():
-    """Importing the package and engine or conversion entries does not load torch."""
+def test_utility_and_conversion_imports_leave_torch_unloaded():
+    """Importing the package and comparison or conversion entries does not load torch."""
     source = """
 import sys
 import tensoracle
 assert 'torch' not in sys.modules
-from tensoracle import build_serialized_engine, open_engine
+from tensoracle import compare_outputs
 assert 'torch' not in sys.modules
 from tensoracle.convert import pth_to_safetensors
 assert 'torch' not in sys.modules

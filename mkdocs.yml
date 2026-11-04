@@ -32,11 +32,12 @@ plugins:
 
 nav:
   - Home: index.md
+  - Migrate from 1.x: migration.md
   - Optimization workflow: optimization.md
   - bf16, int8, and fp8 engines: precision.md
   - TensorRT SDK setup: tensorrt-sdk.md
-  - C++ plugin builds: cpp-python-repositories.md
+  - C++ SDK and plugin builds: cpp-python-repositories.md
   - API reference:
-      - Engine and comparison: api/index.md
+      - C++ interfaces and comparison: api/index.md
       - Cubin bundle inspection: api/bundle.md
       - Cubin producer: api/producer.md

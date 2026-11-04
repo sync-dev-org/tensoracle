@@ -1,37 +1,90 @@
 # tensoracle
 
-Build and execute TensorRT engines from graphs defined with TensorRT's Python network API. The graph function owns the model's safetensors weights and tensor types. Engine building, engine reuse, execution, and output comparison do not require torch. Only the optional `.pth` checkpoint converter requires torch, installed with `tensoracle[convert]`.
+Build, save, reuse, and execute TensorRT engines through a C++ library embedded in your model package. Define the TensorRT network and engine-opening code in C++, then expose inference through your own binding, such as nanobind. Python utilities provide output comparison, cubin production and inspection, cache management commands, and `.pth` checkpoint conversion.
+
+Engine building, reuse, execution, output comparison, and cubin production do not require torch. Only the optional converter requires `tensoracle[convert]`.
+
+Read the [v2 user guide](https://sync-dev-org.github.io/tensoracle/) and [Migrate from 1.x](https://sync-dev-org.github.io/tensoracle/migration/).
 
 ## Terms and workflows
 
 - A **TensorRT engine** is TensorRT's executable form of a model, optimized for a GPU, precision, and TensorRT version. It can be held in memory or saved to disk.
-- **Building an engine** means creating that executable form from a model graph. `tensoracle` builds from a graph function supplied by the model package.
-- A **cubin plugin** is a native TensorRT plugin whose GPU kernels are supplied as compiled CUDA binary (`.cubin`) files. The model package owns the kernels and plugin behavior.
+- **Building an engine** means creating that executable form from the model package's C++ network-building function and safetensors weights.
+- A **cubin plugin** is a native TensorRT plugin whose GPU kernels are supplied as compiled CUDA binary (`.cubin`) files. The model package owns its CUDA C++ kernels and plugin behavior.
 
-Choose the path that matches your work:
-
-| Role | Use | Additional tools beyond the `tensoracle` package |
+| Role | Use | Additional requirements |
 | --- | --- | --- |
-| Inference application | [Reopen a saved engine](#use-a-saved-engine-for-inference) and enqueue it with `handle.create_execution()`. | The application supplies device buffers and CUDA streams, for example through CuPy or `cuda-python`. |
-| Standard graph developer | [Define and build a graph](#define-and-build-a-standard-graph), [save and reopen](#save-and-reopen-an-engine), and [compare outputs](#compare-output-arrays). | None for standard TensorRT layers. |
-| Cubin plugin developer | [Build a cubin plugin](#build-a-cubin-plugin) and package it with the model. | `tensoracle[producer]`, PyPI CUDA headers, TensorRT SDK, CMake 3.20 or later, and a C++17 compiler. |
+| Inference application | Call the model package's inference binding. | NVIDIA GPU and driver; the model package manages CUDA buffers and streams. |
+| Model package developer | Open and execute engines through tensoracle's C++ SDK, exposing inference through your own binding. | TensorRT 11 headers, CMake 3.26 or later, C++17 compiler, and a binding framework when needed. |
+| Cubin plugin developer | Compile CUDA C++ kernels and package a native plugin with the model. | `tensoracle[producer]`, PyPI CUDA headers and tools, TensorRT SDK, CMake, and a C++17 compiler. |
 
-| Requirement | Inference application | Standard graph developer | Cubin plugin developer |
-| --- | --- | --- | --- |
-| Python 3.12 or 3.13, `numpy`, `safetensors` | Package dependencies | Package dependencies; the graph reads safetensors weights | Package dependencies in the plugin runtime |
-| `tensorrt-cu13` 11.x | Open and run engines | Build and open engines | Open plugin engines |
-| NVIDIA GPU and driver | Open and run engines | Build and run engines | Run and test engines; cubin production itself can run without a GPU |
-| CuPy or `cuda-python` | The application chooses its buffer and stream library | The application chooses its buffer and stream library | `cuda-python` is used by the example runtime and tests, not by `tensoracle` |
-| Triton 3.8.0 | Not needed | Not needed | Installed with `tensoracle[producer]` for cubin production |
-| PyPI CUDA tools and headers | Not needed | Not needed | `tensoracle[producer]` supplies cubin tools; `nvidia-cuda-nvcc` and `nvidia-cuda-runtime` 13.2 supply the native build inputs |
-| TensorRT 11 SDK | Not needed | Not needed | Native plugin build |
-| CMake 3.20 or later and C++17 compiler | Not needed | Not needed | Native plugin build |
+v2.0.0 supplies a Linux x86_64 `manylinux_2_28`, `cp312-abi3` wheel, including WSL2. The package currently declares Python 3.12 and 3.13 support. Target GPUs are sm86, sm89, and sm120 with TensorRT 11; fp8 requires sm89 or sm120. Windows x86_64 users must keep using tensoracle 1.x until a later v2 minor release adds a Windows wheel.
 
-The supported targets are Linux x86_64 (including WSL2) and Windows x86_64, TensorRT 11, and GPU generations sm86, sm89, and sm120. The same `py3-none-any` wheel installs on both operating systems. Cubin production with `tensoracle[producer]` runs on Linux; cubins do not depend on the OS, so a plugin DLL built on Windows can embed cubins produced on Linux. The producer and native build tools are separate from the `tensoracle` runtime dependencies. Engine building, engine reuse, output comparison, and cubin production do not require torch. Converting `.pth` checkpoints requires the `convert` extra described below.
+The wheel contains the C++ public headers, `libtensoracle`, CMake package configuration, and cubin plugin helper sources. TensorRT is resolved through a wheel dependency; the NVIDIA driver is not bundled. Public C++ interfaces and saved engine files remain compatible within a major version.
 
-Follow the [four-stage optimization workflow](https://github.com/sync-dev-org/tensoracle/blob/main/docs/optimization.md) to establish output quality, evaluate lower precision and plugins, and measure speed.
+## Build and reopen an engine in C++
 
-Follow [Build plugins with tensoracle's C++ sources](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) to locate the sources in the wheel and use the CMake helper in your plugin build.
+Include `tensoracle/builder.hpp` and link `tensoracle::tensoracle` from `find_package(tensoracle 2 CONFIG REQUIRED)`. Locate the wheel's SDK with:
+
+```bash
+python -c 'from importlib.metadata import distribution; print(distribution("tensoracle").locate_file("tensoracle/cpp"))'
+```
+
+Pass that directory in `CMAKE_PREFIX_PATH`. The model package supplies a callback taking `nvinfer1::INetworkDefinition&` and `const tensoracle::weights_view&`. tensoracle reads declared safetensors and keeps their values alive through the build.
+
+This excerpt follows the [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer). It assumes the example's `build_network` function, four-element float32 `bias.safetensors`, and caller-owned current CUDA context. The [user guide](https://sync-dev-org.github.io/tensoracle/#build-and-reopen-an-engine) shows the callback; the complete example supplies allocation, error handling, and nanobind integration.
+
+```cpp
+#include <tensoracle/builder.hpp>
+
+tensoracle::builder_options options;
+options.name = "wheel-consumer-add";
+options.graph_version = "1";
+options.weights = {"bias.safetensors"};
+options.inputs = {{"input", {4}, {4}, {4}}};
+options.io = {{"input", TENSORACLE_FLOAT32, {4}, true},
+              {"output", TENSORACLE_FLOAT32, {4}, false}};
+options.workspace_limit = 64 * 1024 * 1024;
+options.optimization_level = 0;
+auto engine = tensoracle::open_engine(options, build_network);
+```
+
+On a valid cache hit, `tensoracle::open_engine` skips the callback, including after a process restart. Engine identity includes weights, plugin bytes, name, graph version, input profiles, builder optimization level, GPU compatibility properties, OS, CPU architecture, and TensorRT version. Update the graph version when network code changes; use separate names or versions for different precisions. Tensor types in the network determine precision, and TF32 is disabled.
+
+Leave `workspace_limit` unset to use TensorRT's default or supply a positive byte count. It does not enter the cache identity; set `options.force_rebuild = true` to rebuild with a changed limit. Saved files live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when unset. The [user guide](https://sync-dev-org.github.io/tensoracle/#save-and-reuse-an-engine) describes integrity checks, errors, and weight digest reuse.
+
+## Execute through the model package
+
+The C++ model package calls `engine.create_execution()`, sets ranged input shapes together, queries output shapes and types, and enqueues every I/O device address on its own CUDA stream. Each execution unit retains the engine and owns an independent TensorRT context. The caller owns allocation, transfers, stream ordering, and completion checks. tensoracle does not synchronize enqueue or release; wait before changing shapes, freeing buffers, or closing the unit.
+
+The [execution guide](https://sync-dev-org.github.io/tensoracle/#execute-an-engine) follows the consumer wheel's C++ API usage. The model package exposes its inference function to Python. Python applications do not construct or execute engines through tensoracle's Python utilities.
+
+For CUDA Graphs, warm up one enqueue after each shape change before capturing on a nondefault stream. The graph fixes shapes, addresses, and execution unit; keep resources alive until work completes and the graph is destroyed. The caller creates and recreates graphs. Engines with loops, conditionals, or host-synchronizing layers or plugins cannot be captured. See the [capture guide](https://sync-dev-org.github.io/tensoracle/#capture-and-replay-with-cuda-graphs).
+
+## Manage saved engines
+
+```bash
+tensoracle cache list
+tensoracle cache prune --unused-for 30 --dry-run
+tensoracle cache prune --unused-for 30
+tensoracle cache prune --max-size 10GiB --dry-run
+```
+
+These commands use the same cache directory as the C++ engine opener. They inspect headers and metadata without a GPU, original weights, or plan deserialization. Listing reports conditions, size, recorded time, workspace limit, and known weight paths. Empty files are `building or leftover`; invalid headers, including 1.x engine files, are `unrecognized`. Pruning never deletes either category.
+
+An engine file's modification time records its initial save or last successful open. It does not indicate whether inference continues. Failed loads and management commands do not change it. Timestamp write failures do not prevent a successful load; records that could not be written, or predate timestamp recording, may be stale.
+
+Pruning requires exactly one of `--unused-for DAYS` and `--max-size SIZE`. It prints a plan and rebuild notice before deletion and separates removed, excluded, missing, and failed files in its result. `--dry-run` changes nothing. Run pruning during maintenance without concurrent builds or opens. The [management guide](https://sync-dev-org.github.io/tensoracle/#manage-saved-engines) describes sizes, selection, and exit statuses.
+
+## Build a cubin plugin
+
+Install `tensoracle[producer]` to generate sm86, sm89, and sm120 cubins from CUDA C++ source. The C++ producer uses NVRTC, `ptxas >=13.2,<14`, and `cuobjdump` from PyPI CUDA 13.2 wheels, without a GPU or OS-installed CUDA Toolkit. Triton kernels are not accepted. See the [producer API](https://sync-dev-org.github.io/tensoracle/api/producer/) for `KernelSpec` and `compile_bundle`.
+
+Build the native plugin with [the wheel's C++ sources and CMake helpers](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) and a separately prepared [TensorRT SDK](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/). Export TensorRT's `getCreators` and list all required libraries in `tensoracle::builder_options::plugins`. tensoracle inspects and registers them before construction or deserialization and hashes their bytes into the engine identity. Explicit registration is also available through `tensoracle/plugins.hpp`.
+
+Package the plugin library and cubin bundle in your model wheel. `tensoracle.bundle.inspect_bundle` and `inspect_wheel` verify the manifest, cubin digests and actual architectures, declared argument ABI, and the plugin's embedded cubins without loading it. The manifest records NVRTC and ptxas versions and kernel source digests. The [plugin guide](https://sync-dev-org.github.io/tensoracle/#build-a-cubin-plugin) describes tensor types, formats, and the common lifecycle helper.
+
+Follow the [four-stage optimization workflow](https://sync-dev-org.github.io/tensoracle/optimization/) and [precision guide](https://sync-dev-org.github.io/tensoracle/precision/) when validating a model or plugin.
 
 ## Convert a PyTorch checkpoint
 
@@ -53,370 +106,6 @@ pth_to_safetensors("model.pth", "model.safetensors")
 The input must be a mapping with string keys whose values are tensors or nested mappings. Nested keys are joined with `.`: `{"state_dict": {"layer.weight": tensor}}` becomes `state_dict.layer.weight`. The converter preserves each tensor's dtype, shape, and values, including shared or noncontiguous dense tensors. It rejects non-tensor metadata and duplicate flattened names before writing the destination. Weight renaming and model-specific preprocessing belong to the model package.
 
 The converter loads weights on the CPU with `torch.load(..., weights_only=True)` and rejects checkpoint objects instead of falling back to unrestricted pickle loading. The extra requires torch 2.6 or later, which includes the fix for [CVE-2025-32434](https://github.com/pytorch/pytorch/security/advisories/GHSA-53q9-r3pm-6pq6). Torch is imported only when conversion is called; it is absent from the package's required dependencies and is not imported by engine building or reuse. Calling the converter without torch raises `ImportError` with the installation command for `tensoracle[convert]`.
-
-## Define and build a standard graph
-
-```python
-import numpy as np
-import tensorrt as trt
-from safetensors.numpy import load_file
-
-from tensoracle import BuilderSettings, EngineBuild, InputShape, build_serialized_engine
-
-
-def graph(network: trt.INetworkDefinition) -> None:
-    weights = load_file("model.safetensors")
-    features = network.add_input("features", trt.float32, (1, -1, 2))
-    bias = np.ascontiguousarray(weights["bias"][None, None, :], dtype=np.float32)
-    constant = network.add_constant(bias.shape, bias).get_output(0)
-    result = network.add_elementwise(features, constant, trt.ElementWiseOperation.SUM)
-    output = result.get_output(0)
-    output.name = "result"
-    network.mark_output(output)
-
-
-declaration = EngineBuild(
-    inputs={"features": InputShape.ranged((1, 1, 2), (1, 64, 2), (1, 448, 2))},
-    settings=BuilderSettings(workspace_limit=None, optimization_level=3),
-)
-plan: bytes = build_serialized_engine(graph, declaration)
-```
-
-Use `InputShape.fixed((1, 64, 2))` for one input size; the graph may declare that size directly or use `-1` for a dimension fixed by the profile. For a range, put `-1` in each varying dimension of the graph input and declare its minimum, optimum, and maximum sizes. Every graph input needs a matching entry in `EngineBuild.inputs`.
-
-The engine's precision is determined by the tensor types that the graph function places in the network. For an fp16 graph, use `trt.float16` tensors and `np.float16` weights where needed; the graph can also contain fp32 tensors. `EngineBuild` declares input shapes and builder settings. TF32 is always disabled; `BuilderSettings(tf32=True)` raises `ValueError`. The function returns serialized plan bytes. Invalid declarations raise `ValueError`, and a failed TensorRT build raises `RuntimeError`.
-
-`BuilderSettings.workspace_limit` defaults to `None`, which leaves the workspace limit at TensorRT's default without calling `set_memory_pool_limit`. To impose a limit, pass a positive integer in bytes, such as `workspace_limit=4 << 30` for 4 GiB. Zero, negative values, booleans, and noninteger values raise `ValueError`.
-
-The same API builds bf16, int8, and fp8 graphs. Cast tensors to `trt.bfloat16` for bf16; for int8/fp8, place `add_quantize` / `add_dequantize` layers and load their scales from safetensors. The application determines scales with an external quantization library and chooses output quality limits with `compare_outputs`. fp8 targets sm89 and sm120; bf16 and int8 also target sm86. Follow [Build bf16, int8, and fp8 engines](https://github.com/sync-dev-org/tensoracle/blob/main/docs/precision.md) for a complete example, NumPy dtype constraints, and comparison against an fp32 engine. Use different engine names or graph versions for different precisions.
-
-## Save and reopen an engine
-
-`open_engine` builds on the first call and reuses the saved engine on later calls, including calls from another process. It invokes `graph` only when building. Declare the expected input and output names, TensorRT types, and build-time shapes:
-
-```python
-from pathlib import Path
-
-from tensoracle import EngineIO, TensorSpec, open_engine
-
-handle = open_engine(
-    graph,
-    declaration,
-    name="example",
-    graph_version="1",
-    weights=(Path("model.safetensors"),),
-    io=EngineIO(
-        inputs={"features": TensorSpec(trt.float32, (1, -1, 2))},
-        outputs={"result": TensorSpec(trt.float32, (1, -1, 2))},
-    ),
-)
-engine = handle.engine  # Keep handle.runtime alive while using the engine.
-```
-
-Saved files live in the `tensoracle` directory under `XDG_CACHE_HOME`, or under the home directory's `.cache` when that variable is unset. The same rule applies on every OS; on Windows the home directory is `%USERPROFILE%`, so the default is `%USERPROFILE%\.cache\tensoracle`. The cache identity includes the contents of all declared safetensors weight files and optional `plugins` files, the engine name, graph version, input shapes, the builder's `optimization_level` and `tf32` settings, the GPU's compatibility properties, OS, CPU architecture, and TensorRT version. The GPU is the device of the current CUDA context, or device 0 when no context is current. Its properties are the product name, compute capability, memory bus width, L2 cache size, shared memory limits, texture alignment, multiprocessor count, whether the GPU is integrated, ECC mode, and total memory; another device with the same properties reuses the saved engine. Raise `graph_version` when graph code changes; without a version change, the previous engine is reused. Use a different `name` or `graph_version` for engines with different tensor types, such as fp32 and fp16. Include in `graph_version` any other caller value that changes the engine contents but is not part of the cache identity, such as a plugin manifest or a build recipe. Pass `force_rebuild=True` to replace a cached engine even when it is intact. tensoracle closes a saved engine file after reading it, so another process using an opened engine does not block replacement. On Windows, a process that keeps the saved file itself open prevents replacement or removal with `PermissionError`; after that process closes the file, a file left empty by the failed rebuild is rejected as `CorruptEngineError` and can be rebuilt with `force_rebuild=True`.
-
-`workspace_limit` is excluded from the cache identity. Changing it reuses a matching saved engine; pass `force_rebuild=True` to `open_engine` to build again with the new limit. The saved header records the workspace limit used for that build, including `None`, as a reference outside the conditions used for matching. Cache reads leave this reference unchanged. `tensoracle cache list` shows the recorded limit.
-
-`plugins` names native TensorRT plugin libraries. Both `open_engine` and `build_serialized_engine` accept it. Each function checks that every library exports `getCreators`, loads it through TensorRT's registry, and retains it for the process before building the graph or deserializing an engine. Repeating the same library does not register it twice. `open_engine` also hashes the loaded library bytes into the engine identity; a changed library selects a different saved engine in a new process. A missing, unreadable, or incompatible library, or a library changed after loading in the same process, raises `PluginLibraryError` before a cached plan is opened. Keep the library and its cubin bundle together in the caller's wheel.
-
-The caller must pass through `plugins=` all libraries providing the plugin creators (name, version, namespace) used by the graph and saved engine, with no missing or unnecessary libraries. For plugin libraries, tensoracle guarantees inspection and registration of the supplied files and inclusion of their SHA-256 digests in the saved engine identity. It does not verify that those files provide the creators actually used: if the graph uses a creator registered earlier by another library in the same process, tensoracle cannot detect that mismatch. Passing a different library that provides the same creator causes TensorRT to reject registration and tensoracle to raise `PluginLibraryError`.
-
-For each weight file, `open_engine` stores its SHA-256 alongside the saved engines and reuses it across processes when the file's absolute path, size, modification time, and inode still match. If any of these change, or the stored digest cannot be used, it reads the weight file again. Plugin files are hashed on every call. This shortcut accepts a risk: changing a file in place while keeping the same size and modification time can leave the old digest in use, so an engine built from the previous weights may be returned. Pass `force_rebuild=True` to read the weights again, refresh their stored digests, and save the engine under the digest of the current contents.
-
-`TensorSpec` also accepts optional `location=trt.TensorLocation.DEVICE` and `format=trt.TensorFormat.LINEAR`. `open_engine` checks them only when supplied, alongside names, modes, dtypes, build-time shapes, and profiles. An `EngineIOError` identifies the tensor, mismatching field, observed value, expected value, and saved file path. Execution does not take another I/O declaration.
-
-`CorruptEngineError` reports incomplete or damaged saved files and plans that TensorRT cannot deserialize. When deserialization fails, its message asks the caller to check the required plugin libraries in `plugins=`. `EngineConditionError` reports a saved header with different build conditions. These types and `EngineIOError` derive from `EngineCacheError`. The caller chooses whether to rebuild after an error.
-
-## Manage saved engines
-
-Inspect saved engines and preview or perform cleanup with the installed command:
-
-```bash
-tensoracle cache list
-tensoracle cache prune --unused-for 30 --dry-run
-tensoracle cache prune --unused-for 30
-tensoracle cache prune --max-size 10GiB --dry-run
-tensoracle cache prune --max-size 10GiB
-```
-
-The commands use the same `XDG_CACHE_HOME` / home `.cache` directory as `open_engine`. They read only filesystem metadata, engine headers, and saved weight digest records. They do not read or checksum the plan body, load the original weights, deserialize engines, import TensorRT, or query a GPU. Listing recognizes the header format; it does not establish that an engine can be loaded.
-
-`cache list` prints one JSON object with `directory`, `entries`, and `total_size_bytes`. Each entry contains the file name, size in bytes, recorded time in UTC (`recorded_at`) and exact nanoseconds (`recorded_at_ns`), and the complete header conditions. This distinguishes engines with the same name and graph version but different weights or plugins. Each recognized entry also contains `workspace_limit`: a positive integer in bytes for an explicit build limit, JSON `null` when the build left the limit at TensorRT's default, or `"unknown"` when the header has no reference value. `weight_paths` associates each weight digest with paths from valid, checksum-verified `weight-*.json` records whose SHA-256 matches that digest; an empty `paths` array means unknown. These paths are references and do not establish which application uses an engine or whether the weight file still exists. Empty files have status `building or leftover`; unreadable or invalid headers have status `unrecognized` and a reason.
-
-An engine's `.engine` modification time records its initial save or the last successful `open_engine` cache read. Failed loads and these management commands leave that time unchanged. A timestamp write failure, including a read-only cache, does not prevent a successful load, and a disappeared file is never recreated to record its time. The record describes the time of `open_engine`, not whether inference continues afterward. Files saved before timestamp recording was introduced, and files whose timestamp could not be written, may not reflect the actual last successful read.
-
-`cache prune` requires exactly one of `--unused-for DAYS` and `--max-size SIZE`. Days are finite nonnegative numbers, may be fractional, and mean 24 hours each; only timestamps strictly earlier than the cutoff are selected. Sizes accept nonnegative bytes or the case-insensitive units `B`, `KiB`, `MiB`, `GiB`, and `TiB` (powers of 1024). Fractions such as `1.5GiB` are allowed and fractional bytes are rounded down. Size pruning selects the oldest recorded times first, breaking ties by file name, until the total `.engine` bytes would fit. Empty and unrecognized files count toward that total but are always excluded from deletion. Weight digest records are kept.
-
-Before deletion, pruning prints a JSON `plan` containing the selected engines, excluded files, and a notice that removed engines will be rebuilt the next time they are used. It then prints a JSON `result` separating removed, excluded, failed, and already missing files, the bytes actually removed, and the remaining total. `--dry-run` shows the same targets without changing file contents or recorded times; its result also gives the projected total. Exit status is 0 for success, 1 for filesystem failures, failed deletions, or an unattainable size limit, and 2 for invalid usage. Files that disappear before removal are reported in `missing` and do not count as bytes removed. Observed file changes are reported as failed removals with a reason.
-
-Run pruning during maintenance when no engine is being built or opened in the same cache directory. Cleanup provides no lock or guarantee of protection against concurrent builds and reads. Inspect the selection with `--dry-run` before performing cleanup. `tensoracle cache prune --help` describes the options.
-
-## Use a saved engine for inference
-
-An inference application can call `open_engine` with the same build declaration and files used to save the engine. For example, assume the model package exports `graph`, `declaration`, and `io` matching the example above:
-
-```python
-from pathlib import Path
-
-from my_model import declaration, graph, io
-from tensoracle import open_engine
-
-handle = open_engine(
-    graph,
-    declaration,
-    name="example",
-    graph_version="1",
-    weights=(Path("model.safetensors"),),
-    io=io,
-)
-```
-
-`my_model` stands for the application's own model package. It must provide the graph function, build declaration, and expected `EngineIO` even when the saved engine is reused. On a valid cache hit, `open_engine` does not call `graph`. If the engine is absent, it builds one, so an inference environment that must avoid building needs a matching saved engine already in the user cache. `open_engine` returns a TensorRT engine and its owning runtime; `open_engine` itself does not execute the engine or manage GPU buffers.
-
-The execution flow is: open the engine, create an execution unit, set all ranged input shapes together, read concrete output shapes and dtypes, allocate output buffers, then enqueue the device addresses on a caller-owned stream. Each `EngineExecution` keeps the handle alive and owns an independent TensorRT context. Fixed inputs and single-point profiles are initialized when the unit is created. Ranged inputs retain their shapes until the next successful `set_input_shapes` call. A partial TensorRT setting failure blocks queries for concrete shapes and enqueue until a complete setting succeeds.
-
-### Keep data on the GPU with CuPy
-
-Install CuPy in the application when using this example. For the `features` / `result` graph above, the arrays stay on the device until the caller chooses to read the result:
-
-```python
-import cupy as cp
-import tensorrt as trt
-
-with handle.create_execution() as execution:
-    execution.set_input_shapes({"features": (1, 4, 2)})
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        features = cp.arange(8, dtype=cp.float32).reshape(1, 4, 2) / 4
-        result = cp.empty(
-            execution.get_tensor_shape("result"),
-            dtype=trt.nptype(execution.get_tensor_dtype("result")),
-        )
-        execution.enqueue(
-            {"features": features.data.ptr, "result": result.data.ptr},
-            stream=stream.ptr,
-        )
-        stream.synchronize()  # The caller waits before closing or reading on the host.
-        output = cp.asnumpy(result)
-```
-
-### Supply host copies with cuda-python
-
-The same execution API accepts buffers allocated by `cuda-python`. The application adds allocation, copies, waiting, and release:
-
-```python
-import numpy as np
-import tensorrt as trt
-from cuda.bindings import runtime as cudart
-
-
-def cuda(result):
-    status, *values = result
-    if status != cudart.cudaError_t.cudaSuccess:
-        raise RuntimeError(f"CUDA returned {status}")
-    return values[0] if values else None
-
-
-with handle.create_execution() as execution:
-    execution.set_input_shapes({"features": (1, 4, 2)})
-    features = np.arange(8, dtype=np.float32).reshape(1, 4, 2) / 4
-    output = np.empty(
-        execution.get_tensor_shape("result"),
-        dtype=trt.nptype(execution.get_tensor_dtype("result")),
-    )
-    source, target, stream = None, None, None
-    try:
-        source = cuda(cudart.cudaMalloc(features.nbytes))
-        target = cuda(cudart.cudaMalloc(output.nbytes))
-        stream = cuda(cudart.cudaStreamCreate())
-        cuda(cudart.cudaMemcpyAsync(
-            source, features.ctypes.data, features.nbytes,
-            cudart.cudaMemcpyKind.cudaMemcpyHostToDevice, stream,
-        ))
-        execution.enqueue({"features": int(source), "result": int(target)}, stream=int(stream))
-        cuda(cudart.cudaMemcpyAsync(
-            output.ctypes.data, target, output.nbytes,
-            cudart.cudaMemcpyKind.cudaMemcpyDeviceToHost, stream,
-        ))
-    finally:
-        if stream is not None:
-            cuda(cudart.cudaStreamSynchronize(stream))
-            cuda(cudart.cudaStreamDestroy(stream))
-        if target is not None:
-            cuda(cudart.cudaFree(target))
-        if source is not None:
-            cuda(cudart.cudaFree(source))
-```
-
-`enqueue` requires exactly one positive integer address per input and output and a nonnegative integer stream handle; bool is rejected. Stream 0 is accepted, but prefer a nondefault stream for explicit ordering. Tensoracle does not inspect the buffers: the caller must provide the actual dtype, shape, format, contiguous layout where required, and sufficient storage. CuPy and `cuda-python` are application choices, not required dependencies or extras of tensoracle.
-
-The caller selects the CUDA device and context, orders inputs written on other streams before enqueue, and keeps buffers, streams, plugin preparation resources, and the execution unit alive until completion. Use one execution unit serially; do not call it concurrently from multiple threads. Confirm completion before changing shapes or streams, reusing buffers, or closing. `close()` and context exit release the TensorRT context before the handle, without waiting, and repeated close calls do nothing. Operations on a closed unit raise `RuntimeError` before touching TensorRT. The unit does not retain caller arrays or expose its TensorRT context.
-
-Tensoracle neither allocates or frees device buffers, copies data, nor calls stream or device synchronization. TensorRT itself may allocate internal resources or act synchronously for some networks and plugins. Execution units reject HOST-location tensors, externally supplied shape tensor values, and data-dependent output sizes at creation. Ordinary networks that compute shapes internally from input dimensions are supported. Profile switching and caller-owned TensorRT workspace memory are outside this API.
-
-Networks with outputs marked as shape tensors emit `tensoracle.ShapeTensorOutputWarning` during building and when creating an execution unit (`create_execution()` or `EngineExecution(handle)`). The warning names the affected tensors: `create_execution()` cannot handle these engines, and calling it crashes the process. Building continues by default. To stop either operation safely, turn this warning into an exception with `warnings.filterwarnings("error", category=tensoracle.ShapeTensorOutputWarning)` after importing `warnings` and `tensoracle`. Saved engines retain the shape output names outside the cache conditions; older files without these names are reused without an execution warning.
-
-### Capture and replay with CUDA Graphs
-
-Tensoracle supports recording one `EngineExecution.enqueue` call with CUDA stream capture and replaying the resulting graph. The application owns graph creation, recapture, and destruction; tensoracle provides no capture or replay operations.
-
-Use a dedicated execution unit (`handle.create_execution()`) for each graph. After setting input shapes, enqueue once and wait for completion before starting capture, so TensorRT finishes deferred initialization. Capture and replay on a nondefault stream; the example uses a nonblocking stream. Keep synchronous CUDA calls and work on the legacy default stream out of capture.
-
-The graph fixes the input shapes, tensor addresses, and execution unit. Keep the execution unit, its handle, buffers, and plugin preparation resources alive until the graph is destroyed and outstanding work has finished. To use different shapes or addresses, capture a new graph for that combination or select another graph with its own execution unit. Input contents may change at the same addresses between completed replays.
-
-For the `features` / `result` engine above, use the `cuda(...)` helper from the preceding example:
-
-```python
-from contextlib import ExitStack
-
-import numpy as np
-import tensorrt as trt
-from cuda.bindings import runtime as cudart
-
-with handle.create_execution() as execution:
-    execution.set_input_shapes({"features": (1, 4, 2)})
-    # Omit set_input_shapes for fixed inputs and single-point profiles.
-    features = np.arange(8, dtype=np.float32).reshape(1, 4, 2) / 4
-    output = np.empty(
-        execution.get_tensor_shape("result"),
-        dtype=trt.nptype(execution.get_tensor_dtype("result")),
-    )
-    with ExitStack() as resources:
-        stream = cuda(cudart.cudaStreamCreateWithFlags(cudart.cudaStreamNonBlocking))
-        resources.callback(lambda: cuda(cudart.cudaStreamDestroy(stream)))
-        source = cuda(cudart.cudaMalloc(features.nbytes))
-        resources.callback(lambda: cuda(cudart.cudaFree(source)))
-        target = cuda(cudart.cudaMalloc(output.nbytes))
-        resources.callback(lambda: cuda(cudart.cudaFree(target)))
-        addresses = {"features": int(source), "result": int(target)}
-        try:
-            cuda(cudart.cudaMemcpyAsync(
-                source, features.ctypes.data, features.nbytes,
-                cudart.cudaMemcpyKind.cudaMemcpyHostToDevice, stream,
-            ))
-            execution.enqueue(addresses, stream=int(stream))
-            cuda(cudart.cudaStreamSynchronize(stream))  # Warm up before capture.
-
-            cuda(cudart.cudaStreamBeginCapture(
-                stream, cudart.cudaStreamCaptureMode.cudaStreamCaptureModeThreadLocal,
-            ))
-            try:
-                execution.enqueue(addresses, stream=int(stream))  # Exactly one call.
-            finally:
-                graph = cuda(cudart.cudaStreamEndCapture(stream))
-            resources.callback(lambda: cuda(cudart.cudaGraphDestroy(graph)))
-            instance = cuda(cudart.cudaGraphInstantiate(graph, 0))
-            resources.callback(lambda: cuda(cudart.cudaGraphExecDestroy(instance)))
-
-            for _ in range(3):
-                cuda(cudart.cudaGraphLaunch(instance, stream))
-            cuda(cudart.cudaMemcpyAsync(
-                output.ctypes.data, target, output.nbytes,
-                cudart.cudaMemcpyKind.cudaMemcpyDeviceToHost, stream,
-            ))
-        finally:
-            # Wait before ExitStack destroys the graph and releases its buffers.
-            cuda(cudart.cudaStreamSynchronize(stream))
-```
-
-Engines with loops or conditionals, or layers or plugins that synchronize with the host during inference, cannot be captured. CUDA reports capture failures through `cudaErrorStreamCapture*` errors. Always end an attempted capture and release any graph resources before falling back to ordinary `enqueue`. See [TensorRT's CUDA Graph limitations](https://docs.nvidia.com/deeplearning/tensorrt/latest/performance/optimization.html#inference-with-cuda-graphs).
-
-## Build a cubin plugin
-
-Follow [Prepare a TensorRT SDK](https://github.com/sync-dev-org/tensoracle/blob/main/docs/tensorrt-sdk.md) to acquire and verify the headers and native library for a build SDK, including the fixed inputs for SDK 11.2.1.2 and the `TENSORRT_ROOT` setup.
-
-Install the producer extra when you need to compile cubins from your own kernels:
-
-```bash
-pip install 'tensoracle[producer]'
-```
-
-Use the [C++ sources and CMake helper supplied in the tensoracle wheel](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) to build your native plugin.
-
-`tensoracle.producer.compile_bundle` uses the extra's **Triton 3.8.0** with **ptxas >=13.2,<14** and **cuobjdump** from the PyPI `nvidia-cuda-nvcc` and `nvidia-cuda-cuobjdump` wheels. The extra pins those tools, `nvidia-cuda-crt`, and `nvidia-nvvm` to the 13.2 series. It does not read `CUDA_HOME`; explicit `ptxas` and `cuobjdump` paths override the wheel defaults independently. A missing tool identifies its package and searched path and explains how to install the extra or pass a path. The normal import, engine build, and engine reuse paths do not import the producer or Triton. Cubin production does not need a GPU or import torch; run it without importing torch first. The caller supplies Triton functions and `KernelSpec` records with their public argument types, compile time constants, and any divisibility assumptions. The producer writes sm86, sm89, and sm120 cubins, `bundle.json`, and a C++ translation unit that embeds exactly those cubins. The generated C++ entry records carry each public argument's order, type, count, and divisibility rule into the common launcher. It rejects an unexpected parameter ABI or nonzero scratch requirement. The included [example](https://github.com/sync-dev-org/tensoracle/blob/main/examples/cubin_plugin/README.md#rebuild-the-cubins) has the command to rebuild its cubins from a repository clone.
-
-Neither cubin production nor native plugin building requires an OS-installed CUDA Toolkit. For the native build, install PyPI `nvidia-cuda-nvcc==13.2.*` and `nvidia-cuda-runtime==13.2.*`, then pass their `site-packages/nvidia/cu13` directory as `CUDAToolkit_ROOT` (a CMake variable or environment variable). The helper uses its `cuda.h` and links the NVIDIA driver's `libcuda.so` on Linux, including `/usr/lib/wsl/lib/libcuda.so` on WSL, or the wheel's `lib/x64/cuda.lib` on Windows. TensorRT headers still come from the separately prepared SDK. The [SDK guide](https://github.com/sync-dev-org/tensoracle/blob/main/docs/tensorrt-sdk.md#5-pass-the-verified-root-to-the-build-and-tests) gives the setup commands. An explicit OS Toolkit root and the existing default locations remain supported for native builds.
-
-The caller implements the graph's meaning, field meanings, weight placement, launch sequence, and variant selection. The common C++ implementation owns typed fields in their original order, handles `IPluginV3` lifecycle methods, checks cubin digests and resources, loads one module per CUDA context, checks the generated argument count and specialization rules, appends the two supported zero scratch pointers, and launches kernels. The caller selects a variant using `Kernel::accepts` and derives the count passed to `Kernel::launch` from its argument array. The common implementation releases modules and device allocations in their owning contexts. The library must export TensorRT's `getCreators`; a static registration constructor is not supported.
-
-To record the CUDA inputs used by the plugin build, call `tensoracle_find_cuda` from `TensoracleCuda.cmake` (also included by `TensoracleCubinPlugin.cmake`):
-
-```cmake
-include("${TENSORACLE_CPP_ROOT}/cmake/TensoracleCuda.cmake")
-tensoracle_find_cuda(
-    OUT_INCLUDE_DIR cuda_include
-    OUT_DRIVER_LIBRARY cuda_driver)
-message(STATUS "CUDA headers: ${cuda_include}")
-message(STATUS "CUDA driver link library: ${cuda_driver}")
-```
-
-Both keywords are required and name variables set in the calling scope: `cuda_include` receives the directory containing `cuda.h`, and `cuda_driver` receives the driver link library's path. Unknown arguments are rejected. The function uses the same `CUDAToolkit_ROOT` CMake variable, environment variable, and default locations as `tensoracle_add_cubin_plugin`, and reports the same error when an input is missing. You can call it repeatedly, before or after adding the plugin.
-
-The function also makes the public IMPORTED target `tensoracle_cuda_driver` available. Link another CMake target to it to inherit the same include directory and driver library:
-
-```cmake
-add_library(cuda_consumer SHARED cuda_consumer.cpp)
-target_link_libraries(cuda_consumer PRIVATE tensoracle_cuda_driver)
-```
-
-`tensoracle::cubin::PluginBase` accepts a `PluginIO` declaration as its fourth constructor argument. `inputs` lists one `TensorSpec` per input in network order; each spec declares a TensorRT `type` and `format`. `output` declares the single output's type and format, and `shape_input_index` selects the input whose shape the output copies. For example, declare two fp16 / HWC8 inputs and one fp16 / HWC8 output with the shape of input 0:
-
-```cpp
-#include "tensoracle/cubin_plugin.hpp"
-
-tensoracle::cubin::PluginIO residual_io()
-{
-    using namespace tensoracle::cubin;
-    TensorSpec half{nvinfer1::DataType::kHALF, nvinfer1::TensorFormat::kHWC8};
-    return PluginIO{{half, half}, half, 0};
-}
-```
-
-Use `PluginBase(name, plugin_namespace, std::move(fields), residual_io())` in the derived plugin's constructor. For one fp16 / HWC8 input, use `PluginIO{{half}, half, 0}`. The base class checks tensor counts, types, and formats during format negotiation, configuration, and shape changes. Implement `validate_shape(nvinfer1::Dims const* inputs, std::int32_t input_count, nvinfer1::Dims const& output) const noexcept` to check the dimensions of every input in declaration order and the output; configuration may include wildcard dimensions (`-1`). For a residual operation, this callback can reject different shapes for its two inputs. The caller's kernel must handle the declared storage format. Omitting the fourth argument keeps one fp32 / LINEAR input and output with input 0's shape, so `PluginBase(name, plugin_namespace, fields)` remains valid. An empty input list or an invalid `shape_input_index` throws `std::invalid_argument` at construction.
-
-For configurations the declaration cannot express, such as multiple outputs or computed output shapes, developers can override the virtual V3 methods in a derived class or ask tensoracle's maintainers to extend the declaration.
-
-`tensoracle.bundle.inspect_bundle(bundle_directory, plugin=library_path)` checks the manifest, each cubin's SHA-256 and actual ELF SM, the supported hidden arguments and zero scratch sizes, and the cubin bytes embedded in the library. `inspect_wheel(wheel_path, plugin="path/inside/wheel.so")` performs the same checks on a wheel without installing it. Their distinct exceptions identify a missing cubin, corrupt cubin, false SM claim, or plugin and bundle mismatch. The manifest records the Triton and ptxas versions and each kernel's source SHA-256, without a producer host or OS path. The TensorRT versions tested with the included example are listed below.
-
-## Tested environments
-
-On 2026-10-10, one example wheel was built for each TensorRT SDK version without changing the example cubin bundle (digest `86816421d8f6f66a19dcf3469677d7656f33c3c5398024c5b7d7882ba98c5571`). Each SDK was assembled from NVIDIA's release headers and the `tensorrt-cu13-libs` wheel, and each wheel passed `inspect_wheel`. These five wheels were built with gcc 15.2.0, CMake 4.2.3, and CUDA toolkit 13.3.73, and the same files were run on every GPU below. The matrix covers TensorRT runtime `11.0.0.114`, `11.1.0.106`, `11.2.1.2`, `11.3.0.99`, and `11.4.0.106` against example wheels built with the same five SDK versions (25 pairs per GPU). The tables list only what was run.
-
-| GPU | Matrix result | Python | OS / glibc / kernel / NVIDIA driver |
-| --- | --- | --- | --- |
-| NVIDIA RTX PRO 4000 Blackwell (sm120) | 25 of 25 pairs passed | 3.13.15 | WSL2 / glibc 2.43 / `6.18.33.2-microsoft-standard-WSL2` / 616.92 |
-| NVIDIA RTX 6000 Ada Generation (sm89) | 25 of 25 pairs passed | 3.13.15 | WSL2 / glibc 2.43 / `6.18.33.2-microsoft-standard-WSL2` / 596.72 |
-| NVIDIA RTX A6000 (sm86) | 25 of 25 pairs passed | 3.13.7 | WSL2 / glibc 2.39 / `6.18.40.1-microsoft-standard-WSL2` / 597.16 |
-
-For every pair, the example `build`, the `reuse` of the same saved engine in a separate process without calling the graph, the TF32 `control`, and `open_engine` with `compare_outputs` without the plugin all succeeded. Both example plugins matched their reference values within tolerance, and both the specialized and unspecialized variants launched. The TF32 control was distinguishable from the IEEE reference. At the start of each run, the runner checked the actual GPU SM and the exact TensorRT version installed in the environment.
-
-The example was also built with an older compiler and CUDA toolkit:
-
-| Build | Runtime check | Python | OS / glibc |
-| --- | --- | --- | --- |
-| gcc 13.3.0 / CMake 4.2.3 / CUDA toolkit 12.9.86 / TensorRT SDK 11.2.1.2 | `build` and a separate-process `reuse` with TensorRT runtime 11.2.1.2 on sm86 succeeded with zero outputs outside tolerance and both variants launched | 3.13.7 | WSL2 / glibc 2.39 |
-
-Each GPU subprocess had a 50-second limit. Speed was not measured.
-
-On 2026-10-18, the test suite and a native plugin build were run on Windows:
-
-| GPU | Result | Python | OS / NVIDIA driver / build tools / TensorRT |
-| --- | --- | --- | --- |
-| NVIDIA RTX 6000 Ada Generation (sm89) | `pytest`: 246 passed, 20 skipped (Linux-only memory checks and optional `convert` and `producer` dependencies) | 3.12.11 | Windows 11 Pro x64 build 26200 / 596.72 / Visual Studio 2022 (MSVC 19.44), CMake 3.31.6, Ninja, CUDA toolkit 12.8.93 / runtime and SDK 11.4.0.106 |
-
-On Windows, the standalone `cpp/` build and CTest passed, the CMake helper built the example plugin DLL against `nvinfer_11.lib`, and the plugin engine was built and reused in a separate process. The `py3-none-any` wheel built on Linux was installed unchanged on Windows. With `PATH` reduced to the Windows system directories and no CUDA or TensorRT SDK paths, the driver's `nvcuda.dll` and the pip-installed TensorRT runtime were sufficient to build and reuse engines.
-
-On 2026-10-27, `python/tests/test_example_plugin.py` was run on each GPU below with the example cubin bundle (digest `207d41310c87ae8b75b0301e881df881cdd2475eec07b82092e0ec66febbd5c0`). Each example wheel was built with TensorRT SDK `11.2.1.2` and tested with TensorRT runtime `11.4.0.106` (`tensorrt-cu13`). These runs cover one SDK/runtime pair per GPU, separately from the 25-pair matrix above. `inspect_wheel` confirmed that each wheel's library embeds cubins from this bundle.
-
-| GPU | Result | Python | OS / glibc / kernel / NVIDIA driver | CUDA toolkit (plugin build) |
-| --- | --- | --- | --- | --- |
-| NVIDIA RTX PRO 4000 Blackwell (sm120) | 7 passed, 0 failed, 0 skipped | 3.13.15 | WSL2 / glibc 2.43 / `6.18.54.1-microsoft-standard-WSL2` / 616.92 | 13.3 |
-| NVIDIA RTX 6000 Ada Generation (sm89) | 7 passed, 0 failed, 0 skipped | 3.13.15 | WSL2 / glibc 2.43 / `6.18.33.2-microsoft-standard-WSL2` / 596.72 | 13.2.86 |
-| NVIDIA RTX A6000 (sm86) | 7 passed, 0 failed, 0 skipped | 3.13.7 | WSL2 / glibc 2.39 / `6.18.54.1-microsoft-standard-WSL2` / 597.16 | 13.0.88 |
-
-The tests built and installed the example wheel in a temporary runtime environment, built and ran both plugins, reused a saved TensorRT engine in a separate process without calling the graph, selected a different engine cache entry when the plugin library changed, ran concurrently in two CUDA contexts, compared fp32 and TF32, and rejected a library embedding a different bundle.
-
-Native Linux, other kernels, Windows with sm86 or sm120, and TensorRT 11 versions not listed here have not been tested.
 
 ## Compare output arrays
 

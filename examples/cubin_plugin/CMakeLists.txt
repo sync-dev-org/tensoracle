@@ -1,15 +1,24 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.26)
 project(tensoracle_cubin_example LANGUAGES CXX)
 
-if(NOT DEFINED TENSORACLE_CPP_ROOT)
-    set(TENSORACLE_CPP_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../cpp")
-endif()
-include("${TENSORACLE_CPP_ROOT}/cmake/TensoracleCubinPlugin.cmake")
+find_package(Python 3.12 REQUIRED COMPONENTS
+    Interpreter Development.Module Development.SABIModule)
+find_package(nanobind CONFIG REQUIRED)
+execute_process(COMMAND "${Python_EXECUTABLE}" -c
+    "from importlib.metadata import distribution; print(distribution('tensoracle').locate_file(''))"
+    OUTPUT_VARIABLE _site OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+list(PREPEND CMAKE_PREFIX_PATH "${_site}/tensoracle/cpp")
+find_package(tensoracle 2 CONFIG REQUIRED)
 if(NOT DEFINED TENSORRT_ROOT)
     message(FATAL_ERROR "Set TENSORRT_ROOT to the checked TensorRT 11 SDK")
 endif()
 if(NOT DEFINED TENSORACLE_BUNDLE_ROOT)
     set(TENSORACLE_BUNDLE_ROOT "${CMAKE_CURRENT_LIST_DIR}/bundle")
+endif()
+if(NOT CUDAToolkit_ROOT)
+    execute_process(COMMAND "${Python_EXECUTABLE}" -c
+        "from importlib.metadata import distribution; print(distribution('nvidia-cuda-runtime').locate_file('nvidia/cu13'))"
+        OUTPUT_VARIABLE CUDAToolkit_ROOT OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 endif()
 
 tensoracle_add_cubin_plugin(
@@ -17,6 +26,17 @@ tensoracle_add_cubin_plugin(
     TENSORRT_ROOT "${TENSORRT_ROOT}"
     BUNDLE_ROOT "${TENSORACLE_BUNDLE_ROOT}"
     SOURCES "${CMAKE_CURRENT_LIST_DIR}/plugin.cpp")
+
+nanobind_add_module(_native STABLE_ABI bindings.cpp)
+target_include_directories(_native PRIVATE "${TENSORRT_ROOT}/include")
+target_link_libraries(_native PRIVATE tensoracle::tensoracle tensoracle_cuda_driver)
+file(RELATIVE_PATH _library_from_module
+    "${_site}/example_cubin_plugin" "${_site}/tensoracle/cpp/lib")
+set_target_properties(_native PROPERTIES
+    BUILD_RPATH_USE_ORIGIN YES
+    INSTALL_RPATH "$ORIGIN/${_library_from_module}"
+    INSTALL_RPATH_USE_LINK_PATH NO)
+install(TARGETS _native LIBRARY DESTINATION example_cubin_plugin)
 
 install(TARGETS tensoracle_example_plugin LIBRARY DESTINATION example_cubin_plugin
     RUNTIME DESTINATION example_cubin_plugin)

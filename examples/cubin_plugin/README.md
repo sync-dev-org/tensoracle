@@ -1,50 +1,95 @@
 # Cubin plugin example
 
-This project is the caller side of tensoracle's cubin workflow. `kernels.py` supplies five Triton entries for each of sm86, sm89, and sm120. `bundle/` contains their checked cubins, manifest, and generated C++ source. `plugin.cpp` builds two TensorRT `IPluginV3` creators with tensoracle's C++ helpers. The Python package defines the graph and includes the native library and cubins in its wheel.
+`kernels.cu` contains caller-owned CUDA C++ kernels. `kernels.py` declares their entry symbols, ordered public arguments, integer compile constants, and specialization conditions. The C++ tensoracle producer uses the PyPI NVRTC compiler to produce PTX and the PyPI ptxas assembler to produce cubins for sm86, sm89, and sm120. It requires no GPU or OS-installed CUDA Toolkit.
 
-The first plugin computes an fp32 32 by 16 dot product and then scales it in a second launch. Its fields mean matrix weights and a scalar multiplier. The second plugin adds a 16 element bias; its field means an additive offset. Both serialize their fields and copy parameters to the device. The input row count ranges from 1 to 32. The producer records the pointer alignment and row divisibility conditions in the generated C++ entry. The plugin asks `Kernel::accepts` whether the specialized entry accepts the current arguments, then uses the unspecialized entry when it does not. The common launcher rejects any argument count or specialization mismatch. The `dot.tf32-control` cubin is a numerical control, while the plugin uses `input_precision="ieee"`.
+The dot plugin computes an fp32 32 by 16 matrix product and scales the output in a second launch. The bias plugin adds a 16 element bias. Both use TensorRT IPluginV3 and retain serialized fields and per-context device parameters. The dot plugin selects an entry using the declared pointer alignment and row divisibility conditions, with an unspecialized entry for other inputs. The `dot.tf32-control` entry rounds its inputs to TF32 for numerical comparison; the plugin uses the fp32 entry.
 
 ## Rebuild the cubins
 
-The producer extra supplies Triton 3.8.0 and the PyPI CUDA tools, including `ptxas >=13.2,<14` and `cuobjdump`. No OS-installed CUDA Toolkit is required. From the tensoracle repository root, run:
-
-```bash
-uv run --project python --extra producer python -c 'from pathlib import Path; from examples.cubin_plugin.kernels import kernel_specs; from tensoracle.producer import compile_bundle; compile_bundle(kernel_specs(), Path("examples/cubin_plugin/bundle"))'
-```
-
-This installs Triton 3.8.0 and the 13.2 series of `nvidia-cuda-nvcc`, `nvidia-cuda-cuobjdump`, `nvidia-cuda-crt`, and `nvidia-nvvm` with `tensoracle[producer]`, then recreates `bundle/` without using a GPU. The tools come from `nvidia/cu13/bin/` in the installed wheels, and `CUDA_HOME` is ignored. Explicit `ptxas` and `cuobjdump` paths passed to `compile_bundle` override the wheel defaults independently. The producer checks the cubin ELF SM, public and hidden argument layout, register count, and zero scratch sizes before writing the manifest. Run the tests below with the producer extra alone so torch is absent; `compile_bundle` rejects an already imported torch.
-
-Check that the generated bundle has the expected files and passes inspection without using a GPU:
-
-```bash
-uv run --project python --extra producer pytest -m "not gpu" python/tests/test_producer.py
-```
-
-Without Triton or the wheel tools, the compilation tests skip with an explanation of what is missing.
-
-## Build and inspect the wheel
-
-Follow [Prepare a TensorRT SDK](../../docs/tensorrt-sdk.md) to obtain and verify the headers and library, then set `TENSORRT_ROOT` to that TensorRT 11 SDK containing `include/NvInfer.h` and a `lib` directory. The procedure supplies fixed inputs for SDK 11.2.1.2 and explains how to verify other TensorRT 11 releases. The example has been built against SDK 11.0.0.114, 11.1.0.106, 11.2.1.2, 11.3.0.99, and 11.4.0.106 and run on sm86, sm89, and sm120; see the [tested environments](../../README.md#tested-environments). `TENSORACLE_CPP_ROOT` may point to the `cpp` directory inside an installed tensoracle wheel; when building from this repository it defaults to `../../cpp`.
+Prepare the TensorRT headers as described in [the SDK guide](../../docs/tensorrt-sdk.md), and set `TENSORACLE_SDK_ROOT` to that SDK when building tensoracle. From the repository root:
 
 ```bash
 uv sync --project python --extra producer
-export CUDAToolkit_ROOT="$(uv run --project python --extra producer python -c 'from importlib.metadata import distribution; print(distribution("nvidia-cuda-runtime").locate_file("nvidia/cu13"))')"
-uv build examples/cubin_plugin --wheel \
-  "--config-setting=cmake.define.TENSORRT_ROOT=$TENSORRT_ROOT" \
-  "--config-setting=cmake.define.CUDAToolkit_ROOT=$CUDAToolkit_ROOT"
+uv run --project python --extra producer python -c 'from pathlib import Path; from examples.cubin_plugin.kernels import kernel_specs; from tensoracle.producer import compile_bundle; compile_bundle(kernel_specs(), Path("examples/cubin_plugin/bundle"))'
 ```
 
-The native build uses the PyPI `nvidia-cuda-nvcc` and `nvidia-cuda-runtime` 13.2 root's `cuda.h` and the NVIDIA driver's `libcuda.so` on Linux, including WSL. Windows builds use the wheel's `lib/x64/cuda.lib`; follow the SDK guide's Windows commands to prepare that environment without the Linux-only Triton producer. Neither build needs an OS-installed CUDA Toolkit. The example's build backend and CUDA tooling belong to this project, not to tensoracle's runtime dependencies. Before installation, inspect the wheel with `tensoracle.bundle.inspect_wheel(wheel, plugin="example_cubin_plugin/libtensoracle_example_plugin.so")`. For a wheel built on Windows, pass `plugin="example_cubin_plugin/tensoracle_example_plugin.dll"`. This compares the library's embedded digest and cubin bytes with the manifest and cubin files.
+The producer extra supplies the CUDA 13.2 series of `nvidia-cuda-nvrtc`, `nvidia-cuda-nvcc`, `nvidia-cuda-cuobjdump`, `nvidia-cuda-crt`, and `nvidia-nvvm`. The C++ implementation validates ptxas >=13.2,<14 before writing cubins or a manifest. `cuda_root` can select a PyPI `nvidia/cu13` directory; independent `nvrtc`, `ptxas`, and `cuobjdump` path overrides are also available. `CUDA_HOME` is ignored.
 
-Install the tensoracle wheel and this example wheel into a runtime Python environment with TensorRT 11 and `cuda-python`, but without Triton, torch, or the TensorRT SDK. `open_engine` registers the library before calling `graph` or opening a saved engine. The tests use two separate processes and an `XDG_CACHE_HOME` directory to verify that the second process reuses the saved engine without building a graph.
-
-## Test on each GPU generation
-
-Run from the tensoracle repository with the SDK and PyPI CUDA root paths set. The GPU tests build the example wheel, install it in a temporary runtime environment, and run dynamic shapes, direct builds, saved engine reuse, simultaneous execution in two distinct CUDA contexts, and an fp32 versus TF32 control. Each GPU subprocess has a 50 second limit.
+`bundle.json` uses schema version 2. Every entry records its CUDA C++ entry symbol, ordered argument names and types, compile constants, source and cubin SHA-256, actual SM, register count, static shared memory, dynamic shared memory, and specialization conditions. CUDA C++ entries have no hidden Triton arguments or scratch fields. `bundle.cpp` embeds the cubin bytes and supplies the matching `KernelImage` entries.
 
 ```bash
-TENSORACLE_SDK_ROOT="$TENSORRT_ROOT" TENSORACLE_CUDA_ROOT="$CUDAToolkit_ROOT" \
-  uv run --project python pytest -q python/tests/test_example_plugin.py
+uv run --project python --extra producer pytest -m 'not gpu' python/tests/test_producer.py
 ```
 
-Record the GPU name, SM, TensorRT runtime version, test result, and wheel digest on sm86, sm89, and sm120 separately. The code and wheel contain all three cubin generations; successful execution on one generation does not establish the other two.
+## Build and inspect the example wheel
+
+The example owns `bindings.cpp`, which uses tensoracle's C++ interface to open an engine, construct its network from safetensors, register the two plugins, and run inference. Python only supplies arrays and selects paths. It uses no TensorRT Python API or tensoracle Python engine API.
+
+Build tensoracle's v2 wheel first, with `TENSORACLE_SDK_ROOT` set to the checked TensorRT 11 SDK:
+
+```bash
+uv build python --wheel --out-dir /tmp/tensoracle-wheels
+```
+
+For an unpublished v2 build, create `/tmp/tensoracle-build-constraints.txt` with the absolute file URI of that wheel. This makes the isolated example build use the same C++ SDK:
+
+```text
+tensoracle @ file:///tmp/tensoracle-wheels/<tensoracle-wheel-filename>.whl
+```
+
+Build and install the example and tensoracle into a new environment:
+
+```bash
+uv build examples/cubin_plugin --wheel --out-dir /tmp/example-wheels \
+  --build-constraints /tmp/tensoracle-build-constraints.txt \
+  "--config-setting=cmake.define.TENSORRT_ROOT=$TENSORACLE_SDK_ROOT"
+uv venv --python 3.13 /tmp/tensoracle-example-runtime
+uv pip install --python /tmp/tensoracle-example-runtime/bin/python \
+  /tmp/tensoracle-wheels/*.whl /tmp/example-wheels/*.whl
+```
+
+The build requires CMake 3.26 or later and a C++17 compiler. Its build dependencies supply nanobind and the PyPI CUDA 13.2 headers. `CUDAToolkit_ROOT` can select another PyPI `nvidia/cu13` directory. TensorRT headers come from `TENSORRT_ROOT`, while the plugin's CUDA Driver API link library comes from the installed driver. No OS CUDA Toolkit is required.
+
+The CMake project uses `find_package(tensoracle 2 CONFIG REQUIRED)` against the installed wheel and `tensoracle_add_cubin_plugin` to compile the plugin. Its own nanobind extension links to `tensoracle::tensoracle`. The extension's RUNPATH is `$ORIGIN/../tensoracle/cpp/lib`; the example wheel contains no copy of tensoracle, TensorRT, or the CUDA driver. Importing the example does not initialize CUDA.
+
+Inspect the example wheel with `tensoracle.bundle.inspect_wheel(wheel, plugin="example_cubin_plugin/libtensoracle_example_plugin.so")`. The C++ inspector reads the ZIP, validates the bundle and actual cubin architectures, and compares the plugin's exported digest and embedded bytes against the bundle. Inspection does not execute plugin initializers or initialize CUDA.
+
+## Run inference
+
+Start the installed interpreter outside the source tree, with an available GPU:
+
+```bash
+cd /tmp
+/tmp/tensoracle-example-runtime/bin/python -I
+```
+
+```python
+import numpy as np
+from safetensors.numpy import load_file
+import example_cubin_plugin as example
+
+model = example.open_model()
+x = np.linspace(-1, 1, 16 * 32, dtype=np.float32).reshape(16, 32)
+output = model.infer(x)
+weights = load_file(example.weights_path())
+expected = (x @ weights["matrix"]) * weights["scale"] + weights["bias"]
+np.testing.assert_allclose(output, expected, rtol=2e-5, atol=2e-6)
+print(model.engine_path, model.build_calls)
+```
+
+`example.infer(x)` opens a model and returns its output in one call. `open_model(weights=..., plugin=..., force_rebuild=True)` can select another safetensors file or plugin library, or replace a saved engine. Reopen in another process with the same weights and `XDG_CACHE_HOME` to reuse the same saved engine; `build_calls` then reports zero.
+
+Each model retains two independent TensorRT execution contexts. `model.infer(x, execution=1)` uses the second context, and `model.output_shape(1)` reports its output shape. Inputs must be contiguous NumPy fp32 arrays with shape `(rows,32)` and 1 through 32 rows. The C++ code owns each call's buffers and non-default stream, synchronizes before returning a CPU output, and keeps CUDA resources inside the binding.
+
+`model.infer(x, capture=True)` warms up after setting the input shape, captures one enqueue, and replays it with new input bytes. C++ owns the graph, its buffers, and its destruction. The example's two plugins enqueue only GPU work and support capture.
+
+## GPU verification
+
+Bundle production, plugin compilation, import, and bundle inspection do not establish that a kernel runs correctly on a GPU. After reserving the host's GPU, run from the repository root:
+
+```bash
+TENSORACLE_SDK_ROOT="$TENSORACLE_SDK_ROOT" TENSORACLE_CUDA_ROOT="$CUDAToolkit_ROOT" \
+  uv run --project python pytest -q python/tests/test_example_plugin.py -m gpu
+```
+
+The test installs both wheels, checks dot and bias inference, preserves each execution context's shape, captures and replays plugin enqueue, reuses an engine in a new process, and rebuilds when plugin bytes change. Record sm86, sm89, and sm120 results separately. CPU checks use `-m 'not gpu'`.

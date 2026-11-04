@@ -1,6 +1,6 @@
 # Prepare a TensorRT SDK
 
-Use the Linux procedure below to prepare the headers and `libnvinfer` needed to build a native cubin plugin on Linux x86_64, including WSL2. For Windows x86_64, use the [Windows procedure](#windows-x86_64). The Linux SDK root contains 13 headers in `include/`, `lib/libnvinfer.so.11`, and a relative `lib/libnvinfer.so` symlink pointing to `libnvinfer.so.11`. CMake, a C++17 compiler, and the CUDA headers from PyPI are separate build prerequisites; no OS-installed CUDA Toolkit is required. TensorRT headers are absent from the Python wheels and must be prepared separately. Normal engine reuse does not need this SDK root.
+Use the Linux procedure below to prepare the headers and `libnvinfer` needed to build a C++ model package or native cubin plugin on Linux x86_64, including WSL2. v2.0.0 supplies only a Linux wheel; [Windows x86_64 users](#windows-x86_64) must stay on tensoracle 1.x until a later v2 minor release adds a Windows wheel. The Linux SDK root contains 13 headers in `include/`, `lib/libnvinfer.so.11`, and a relative `lib/libnvinfer.so` symlink pointing to `libnvinfer.so.11`. CMake (3.26 or later for the v2 SDK), a C++17 compiler, and the CUDA headers from PyPI are separate build prerequisites; no OS-installed CUDA Toolkit is required. TensorRT headers are absent from the Python wheels and must be prepared separately. Normal engine reuse does not need this SDK root.
 
 The inputs below are fixed for SDK **11.2.1.2**: headers from a release commit of [NVIDIA TensorRT OSS](https://github.com/NVIDIA/TensorRT), and the exact `tensorrt-cu13-libs` wheel from [NVIDIA's package index](https://pypi.nvidia.com/tensorrt-cu13-libs/). The wheel platform is `manylinux_2_28_x86_64`; use that file rather than an aarch64 or Windows wheel.
 
@@ -96,25 +96,25 @@ The preprocessor must print four lines containing `11`, `2`, `1`, and `2` in tha
 
 The SONAME identifies only the major version. Matching `libnvinfer.so.11` does not distinguish different TensorRT 11 releases or establish that the headers and library belong together. Check the exact four-part header version and the expected SHA-256 of the wheel, extracted library, and each header to detect a mixture of releases sharing the same major version.
 
-## 5. Pass the verified root to the build and tests
+## 5. Pass the verified root to the model build
 
-Keep `TENSORRT_ROOT` set to the absolute path of the verified `sdk` directory. From the tensoracle repository root, install the producer extra into the development environment and locate its PyPI CUDA root. The lock selects `nvidia-cuda-nvcc` and `nvidia-cuda-runtime` 13.2.86. For a separate build environment, install `nvidia-cuda-nvcc==13.2.*` and `nvidia-cuda-runtime==13.2.*` with that environment's package manager and locate `nvidia/cu13` in the same way.
+Keep `TENSORRT_ROOT` set to the absolute path of the verified `sdk` directory. Install the CUDA headers in the model package's build environment and locate their root without importing tensoracle:
 
 ```bash
-uv sync --project python --extra producer
-export CUDAToolkit_ROOT="$(uv run --project python --extra producer python -c 'from importlib.metadata import distribution; print(distribution("nvidia-cuda-runtime").locate_file("nvidia/cu13"))')"
-cmake -S cpp -B build/cpp -DCMAKE_BUILD_TYPE=Release \
-  "-DTENSORRT_ROOT=$TENSORRT_ROOT" "-DCUDAToolkit_ROOT=$CUDAToolkit_ROOT"
-cmake --build build/cpp
-ctest --test-dir build/cpp --output-on-failure
-uv build examples/cubin_plugin --wheel \
-  "--config-setting=cmake.define.TENSORRT_ROOT=$TENSORRT_ROOT" \
-  "--config-setting=cmake.define.CUDAToolkit_ROOT=$CUDAToolkit_ROOT"
-TENSORACLE_SDK_ROOT="$TENSORRT_ROOT" TENSORACLE_CUDA_ROOT="$CUDAToolkit_ROOT" \
-  uv run --project python --extra producer pytest -q python/tests/test_example_plugin.py
+python -m pip install 'nvidia-cuda-nvcc==13.2.*' 'nvidia-cuda-runtime==13.2.*'
+export CUDAToolkit_ROOT="$(python -c 'from importlib.metadata import distribution; print(distribution("nvidia-cuda-runtime").locate_file("nvidia/cu13"))')"
+export TENSORACLE_CPP_ROOT="$(python -c 'from importlib.metadata import distribution; print(distribution("tensoracle").locate_file("tensoracle/cpp"))')"
 ```
 
-The native helper reads `cuda.h` from this root and links the installed NVIDIA driver's `libcuda.so`; on WSL it searches `/usr/lib/wsl/lib`. It prints the selected headers and driver library during configuration. `CUDAToolkit_ROOT` can also be passed through the environment. Existing OS Toolkit roots and the default search through `nvcc` on `PATH` and `/usr/local/cuda` remain supported. Tests marked `gpu` require an NVIDIA GPU and driver. The SDK is a build input. The application still selects the TensorRT runtime and verifies its own plugin with that runtime.
+The installed tensoracle package must be v2 for the shared C++ SDK. Add `$TENSORACLE_CPP_ROOT` to `CMAKE_PREFIX_PATH` and link `tensoracle::tensoracle`. The target defining the network needs the SDK's `include/` directory. The [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer) reads this root from `TENSORACLE_SDK_ROOT`:
+
+```bash
+export TENSORACLE_SDK_ROOT="$TENSORRT_ROOT"
+```
+
+For cubin plugin builds, pass the verified SDK as `TENSORRT_ROOT` and PyPI CUDA root as `CUDAToolkit_ROOT` to `tensoracle_add_cubin_plugin`, as shown in the [CMake helper guide](cpp-python-repositories.md). The helper reads `cuda.h` from that CUDA root and links the installed NVIDIA driver's `libcuda.so`; on WSL it searches `/usr/lib/wsl/lib`. It prints the selected headers and driver library during configuration. Existing OS Toolkit roots and default locations remain supported, but an OS-installed CUDA Toolkit is not required.
+
+The SDK is a build input. At runtime, tensoracle resolves TensorRT through its installed wheel dependency. Test the model's engine construction, separate-process reuse, inference, and numerical outputs through its own binding with an NVIDIA GPU and driver. Cubin generation and bundle inspection can run without a GPU.
 
 ## Use another TensorRT 11 release
 
@@ -122,94 +122,4 @@ Use the same acquisition and verification steps for another TensorRT 11 release,
 
 ## Windows x86_64
 
-Use NVIDIA's official Windows ZIP to obtain both the headers and the MSVC import library. The TensorRT runtime wheel supplies DLLs, but it does not replace the SDK's `include/` directory and `lib/nvinfer_11.lib`. See NVIDIA's [Windows ZIP installation guide](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-zip.html) and [TensorRT 11 downloads](https://developer.nvidia.com/tensorrt/download/11x).
-
-The following inputs are fixed for **11.4.0.106**, Windows amd64, CUDA 13.4. Use Visual Studio 2022 with MSVC, CMake, and Ninja available in an **x64 Native Tools Command Prompt for VS 2022**, then start PowerShell from that prompt. The CUDA build inputs below come from PyPI's 13.2 wheels; an OS-installed CUDA Toolkit is not needed. tensoracle's Python runtime dependencies select the CUDA 13 TensorRT runtime separately. Do not combine Windows import libraries with Linux shared libraries.
-
-Choose a new workspace. The command creating it must fail if the directory already exists. Download the fixed ZIP, record its digest, and extract it without installing software system-wide:
-
-```powershell
-$ErrorActionPreference = 'Stop'
-$SdkWork = Join-Path $env:USERPROFILE '.cache/tensoracle-sdk-11.4.0.106-windows'
-New-Item -ItemType Directory -Path $SdkWork | Out-Null
-Set-Location $SdkWork
-$ZipName = 'TensorRT-Enterprise-11.4.0.106-Windows-amd64-cuda-13.4-Release-external.zip'
-$Url = 'https://developer.download.nvidia.com/compute/machine-learning/tensorrt/11.4.0/zip/' + $ZipName
-Invoke-WebRequest -Uri $Url -OutFile $ZipName
-Get-FileHash -Algorithm SHA256 $ZipName | Format-List | Out-File archive-sha256.txt
-Expand-Archive -LiteralPath $ZipName -DestinationPath extracted
-$env:TENSORRT_ROOT = Join-Path $SdkWork 'extracted/TensorRT-11.4.0.106'
-```
-
-Verify the extracted build inputs against these SHA-256 values. These values identify the SDK members needed by the build, including the nested Python plugin header; they are not a digest of the whole ZIP. Stop on a mismatch rather than using an incomplete or mixed SDK:
-
-```powershell
-$Expected = @'
-64a59d5bfdb1dd0b7a6a98992d3b617d926b760a6134c09a8bec0e62227ff5ff lib/nvinfer_11.lib
-886f693c1d958651eeee58ed4d02c0f31da355c112102539d6bd4d567f56a3a4 include/NvOnnxConfig.h
-81fb4be15a2432bf45c858176e347e017a8f5d9a20d82225141cd263a5114c32 include/NvInfer.h
-870a47268d1d5e08dcb72b14157292a16ba541cc9d95327a860977aba11c759a include/NvInferPluginBase.h
-e5558eb96fc2b08a964f73ca096213a2bab9f356a897122f2c0c56a2a6553315 include/NvInferImpl.h
-7629d76e5a6bc1ee910ab90c117cdfa1f350349321e211cc9003dbad3f03b5ef include/NvInferRuntimePlugin.h
-7141cc8fc7d0274ba76c085a395b2be195b68d2ef205a381ddd41f8d0b323299 include/NvInferRuntime.h
-e8c04d3cd04fd3e6abdb95a3398d2bee5c171f86eb772b3b8f30f66d21006e9a include/NvInferRuntimeBase.h
-8b155e73287ca63e276fc55297ae5b8723888d925afbf63a392e908faede8e02 include/NvInferPluginUtils.h
-c28e2c4cbd8f1f0ed7ea6a4fe002906b92916abd3b778e71344649e522509b39 include/NvInferVersion.h
-6c30ffcd9c688bd286362aae3e00c0369961b78e7b0bffd08cae739f5d780ca1 include/NvInferRuntimeCommon.h
-3ab7107afc15e4317a17a57b31d7d42d677091380918bfc2dc45eb4ab38570ad include/NvInferPlugin.h
-440c0ea9cdfc8940d598daff766bc6db098b83d4250f7404c0930dd013ecd0eb include/NvOnnxParser.h
-99a80d98a7cdcac515d64a5f48dafe2a6d4f920c4513ec3f2b07bacf7c4ab09f include/NvInferLegacyDims.h
-2ee14ba7c2cf595af1d8f3ad33bc340fbadaa03a8e1bcea1bbfbe18235d965e7 include/impl/NvInferPythonPlugin.h
-'@
-$Expected -split "`n" | ForEach-Object {
-    $Digest, $Relative = $_.Trim() -split ' ', 2
-    $File = Join-Path $env:TENSORRT_ROOT $Relative
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $File).Hash -ne $Digest) {
-        throw "SDK checksum differs: $Relative"
-    }
-}
-$Expected | Set-Content -Encoding ascii SHA256SUMS
-```
-
-Check the exact header version using MSVC's preprocessor. It must print `11`, `4`, `0`, and `106`, in that order; the import library's filename identifies only the major version:
-
-```powershell
-@'
-#include "NvInferVersion.h"
-NV_TENSORRT_MAJOR
-NV_TENSORRT_MINOR
-NV_TENSORRT_PATCH
-NV_TENSORRT_BUILD
-'@ | Set-Content -Encoding ascii version.cpp
-cl /nologo /EP /I "$env:TENSORRT_ROOT/include" version.cpp
-if ($LASTEXITCODE) { throw 'SDK version check failed' }
-```
-
-From the tensoracle repository root, configure and test the standalone C++ project, then build the example plugin wheel with the same verified SDK:
-
-```powershell
-$env:TENSORACLE_SDK_ROOT = $env:TENSORRT_ROOT
-uv sync --project python
-if ($LASTEXITCODE) { throw 'Development environment setup failed' }
-uv pip install --python python/.venv/Scripts/python.exe `
-    'nvidia-cuda-nvcc==13.2.*' 'nvidia-cuda-runtime==13.2.*'
-if ($LASTEXITCODE) { throw 'PyPI CUDA installation failed' }
-$env:CUDAToolkit_ROOT = (& python/.venv/Scripts/python.exe -c 'from importlib.metadata import distribution; print(distribution("nvidia-cuda-runtime").locate_file("nvidia/cu13"))')
-if ($LASTEXITCODE) { throw 'PyPI CUDA root lookup failed' }
-$env:TENSORACLE_CUDA_ROOT = $env:CUDAToolkit_ROOT
-cmake -S cpp -B build/windows -G Ninja -DCMAKE_BUILD_TYPE=Release `
-    "-DTENSORRT_ROOT=$env:TENSORRT_ROOT" "-DCUDAToolkit_ROOT=$env:TENSORACLE_CUDA_ROOT"
-if ($LASTEXITCODE) { throw 'CMake configuration failed' }
-cmake --build build/windows --config Release
-if ($LASTEXITCODE) { throw 'C++ build failed' }
-ctest --test-dir build/windows -C Release --output-on-failure
-if ($LASTEXITCODE) { throw 'CTest failed' }
-uv build examples/cubin_plugin --wheel `
-    "--config-setting=cmake.define.TENSORRT_ROOT=$env:TENSORRT_ROOT" `
-    "--config-setting=cmake.define.CUDAToolkit_ROOT=$env:TENSORACLE_CUDA_ROOT"
-if ($LASTEXITCODE) { throw 'Example wheel build failed' }
-uv run --project python pytest python/tests/test_example_plugin.py
-if ($LASTEXITCODE) { throw 'Example plugin tests failed' }
-```
-
-The example build uses `cpp/cmake/TensoracleCubinPlugin.cmake`, which finds `nvinfer_11.lib` in the SDK's `lib/` directory, `cuda.h` in the PyPI root's `include/`, and the CUDA driver import library at `lib/x64/cuda.lib` in that root. The built plugin is a DLL. Keep its TensorRT runtime available through the application's installed Python dependencies; the SDK directory is a build input and does not need to be added to the runtime `PATH`. For another TensorRT 11 release, establish new expected digests and check that release's exact header version before building.
+v2.0.0 has no Windows wheel. Keep Windows Python applications on tensoracle 1.x until a later v2 minor release supplies one. Preparing Windows TensorRT headers does not make the Linux v2 wheel installable in Windows Python. WSL2 users can follow the Linux SDK procedure inside their Linux environment. See [Migrate from 1.x](migration.md#check-the-platform-first) for platform and package requirements.
