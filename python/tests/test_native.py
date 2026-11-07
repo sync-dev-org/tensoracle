@@ -5,6 +5,8 @@ from importlib.metadata import distribution
 
 import pytest
 
+from native_build import sdk_version
+
 
 @pytest.mark.req("SP-TENSORACLE-053")
 @pytest.mark.req("SP-TENSORACLE-056")
@@ -12,7 +14,7 @@ def test_native_versions_are_available_without_initializing_cuda():
     """The binding reports tensoracle and TensorRT versions as three integers."""
     from tensoracle import _native
 
-    assert _native.version() == (2, 0, 0)
+    assert _native.version() == sdk_version()
     tensorrt = _native.tensorrt_version()
     assert len(tensorrt) == 3
     assert all(isinstance(value, int) for value in tensorrt)

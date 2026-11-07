@@ -23,7 +23,7 @@ import yaml
 from packaging.requirements import Requirement
 from safetensors.numpy import save_file
 
-from native_build import cuda_root
+from native_build import cuda_root, sdk_version
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
@@ -306,7 +306,7 @@ def test_installed_wheel_serves_python_and_cpp_without_the_source_tree(distribut
             "-c",
             (
                 "from tensoracle import _native; import sysconfig; "
-                "assert _native.version() == (2, 0, 0); "
+                f"assert _native.version() == {sdk_version()!r}; "
                 "assert _native.tensorrt_version()[0] == 11; "
                 "print(sysconfig.get_path('platlib'))"
             ),
@@ -468,7 +468,7 @@ print(json.dumps({'version': _native.version(), 'module': _native.__file__,
                   'site': str(site), 'libraries': sorted(libraries), 'path': sys.path}))
 """,
     )
-    assert installed["version"] == [2, 0, 0]
+    assert installed["version"] == list(sdk_version())
     site = Path(installed["site"])
     assert Path(installed["module"]).parent == site / "tensoracle_consumer"
     assert len(installed["libraries"]) == 1

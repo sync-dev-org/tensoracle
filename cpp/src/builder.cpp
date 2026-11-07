@@ -75,6 +75,8 @@ cache_request request_from(const tensoracle_builder_options* options) {
 built_plan build_plan(const cache_request& request, const tensoracle_network_builder& callback) {
     auto weights = load_safetensors(request.weights);
     auto& logger = process_engine_logger();
+    // TensorRT requires the timing cache to outlive the builder using it.
+    std::unique_ptr<nvinfer1::ITimingCache> timing;
     std::unique_ptr<nvinfer1::IBuilder> builder(nvinfer1::createInferBuilder(logger));
     if (!builder) throw std::runtime_error("TensorRT failed to create a builder");
     std::unique_ptr<nvinfer1::INetworkDefinition> network(builder->createNetworkV2(0));
@@ -113,6 +115,16 @@ built_plan build_plan(const cache_request& request, const tensoracle_network_bui
         }
     }
     if (profile) require(profile->isValid() && config->addOptimizationProfile(profile) >= 0, "TensorRT rejected the optimization profile");
+    timing.reset(config->createTimingCache(nullptr, 0));
+    if (!timing) throw std::runtime_error("TensorRT failed to create a timing cache");
+    if (!config->setTimingCache(*timing, false)) throw std::runtime_error("TensorRT rejected the timing cache");
+    // A cold TensorRT build can serialize large zero-filled buffers. Rebuild
+    // with the populated in-memory cache before persisting the plan, releasing
+    // the first plan to avoid retaining both serialized engines at once.
+    {
+        std::unique_ptr<nvinfer1::IHostMemory> warmup(builder->buildSerializedNetwork(*network, *config));
+        if (!warmup) throw std::runtime_error("TensorRT failed to build the serialized engine");
+    }
     std::unique_ptr<nvinfer1::IHostMemory> plan(builder->buildSerializedNetwork(*network, *config));
     if (!plan) throw std::runtime_error("TensorRT failed to build the serialized engine");
     auto* first = static_cast<const uint8_t*>(plan->data());

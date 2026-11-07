@@ -2,6 +2,7 @@
 #include "builder_internal.hpp"
 #include <tensoracle/cache.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <cstdio>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -10,6 +11,56 @@
 #endif
 
 using namespace builder_fixture;
+TEST_CASE("Saved LeakyReLU engines stay small and reuse correct half precision outputs", "[SP-TENSORACLE-009][gpu]") {
+    context gpu; temporary_directory files; auto path = files.path / "weights"; write_weights(path);
+    auto request = options(path); request.name = "leaky-relu";
+    request.workspace_limit = 4ULL * 1024 * 1024 * 1024; request.optimization_level = 3;
+    const std::vector<int64_t> dimensions{1, 64, 135, 240};
+    request.inputs = {{"features", dimensions, dimensions, dimensions}};
+    request.io = {{"features", TENSORACLE_FLOAT16, dimensions, true}, {"result", TENSORACLE_FLOAT16, dimensions, false}};
+    int calls = 0;
+    auto define = [&](nvinfer1::INetworkDefinition& network, const tensoracle::weights_view&) {
+        ++calls;
+        auto* input = network.addInput("features", nvinfer1::DataType::kHALF, nvinfer1::Dims4(1, 64, 135, 240));
+        REQUIRE(input);
+        auto* activation = network.addActivation(*input, nvinfer1::ActivationType::kLEAKY_RELU);
+        REQUIRE(activation); activation->setAlpha(0.1f);
+        auto* result = activation->getOutput(0); REQUIRE(result);
+        result->setName("result"); network.markOutput(*result);
+    };
+    auto started = std::chrono::steady_clock::now();
+    auto engine = tensoracle::open_engine(request, define);
+    auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    auto bytes = fs::file_size(engine.path());
+    std::printf("LeakyReLU saved bytes=%llu build seconds=%.6f\n", (unsigned long long)bytes, elapsed);
+    // Without a warm timing cache, TensorRT 11.4 serializes about 29 MB for this one layer.
+    CHECK(bytes < 1024 * 1024);
+    REQUIRE(calls == 1);
+
+    // IEEE binary16 values: [-10, -5, -2.5, -1.25, 0, 1, 2, 4].
+    const uint16_t input_pattern[]{0xc900, 0xc500, 0xc100, 0xbd00, 0, 0x3c00, 0x4000, 0x4400};
+    // LeakyReLU(x, 0.1): [-1, -0.5, -0.25, -0.125, 0, 1, 2, 4].
+    const uint16_t output_pattern[]{0xbc00, 0xb800, 0xb400, 0xb000, 0, 0x3c00, 0x4000, 0x4400};
+    const size_t count = 64 * 135 * 240;
+    std::vector<uint16_t> values(count), expected(count), actual(count);
+    for (size_t i = 0; i < count; ++i) {
+        values[i] = input_pattern[i % 8]; expected[i] = output_pattern[i % 8];
+    }
+    device_buffer source(count * sizeof(uint16_t)), target(count * sizeof(uint16_t)); stream queue;
+    cuda_check(cuMemcpyHtoD(source.value, values.data(), count * sizeof(uint16_t)));
+    auto run_activation = [&](const tensoracle::engine_handle& saved) {
+        auto execution = saved.create_execution();
+        execution.enqueue({{"features", reinterpret_cast<void*>(source.value)}, {"result", reinterpret_cast<void*>(target.value)}}, queue.value);
+        cuda_check(cuStreamSynchronize(queue.value));
+        cuda_check(cuMemcpyDtoH(actual.data(), target.value, count * sizeof(uint16_t)));
+        REQUIRE(std::equal(actual.begin(), actual.end(), expected.begin()));
+    };
+    run_activation(engine);
+    auto reopened = tensoracle::open_engine(request, define);
+    REQUIRE(calls == 1); REQUIRE(reopened.path() == engine.path());
+    run_activation(reopened);
+}
+
 TEST_CASE("Public builder retains weights through serialization and reuses ranged named engines", "[SP-TENSORACLE-007][SP-TENSORACLE-008][SP-TENSORACLE-009][SP-TENSORACLE-052][SP-TENSORACLE-059][gpu]") {
     context gpu; temporary_directory files; auto path = files.path / "linear.safetensors"; write_weights(path);
     auto request = options(path, "fp32", true); int calls = 0;

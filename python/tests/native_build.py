@@ -1,6 +1,7 @@
 """Build native test fixtures using the host's CMake toolchain and artifact names."""
 
 import os
+import re
 import subprocess
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -8,6 +9,15 @@ from pathlib import Path
 NATIVE = Path(__file__).resolve().parent / "native"
 PROJECT = NATIVE.parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
+
+
+def sdk_version():
+    """Read the expected library version from the public SDK header."""
+    header = (ROOT / "cpp/include/tensoracle/tensoracle.h").read_text(encoding="utf-8")
+    return tuple(
+        int(re.search(rf"^#define TENSORACLE_VERSION_{part} (\d+)$", header, re.MULTILINE)[1])
+        for part in ("MAJOR", "MINOR", "PATCH")
+    )
 
 
 def cuda_root():
