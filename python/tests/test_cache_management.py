@@ -20,7 +20,10 @@ def open_cached(tmp_path, monkeypatch):
     builder = SimpleNamespace(
         create_network=lambda flags: SimpleNamespace(num_inputs=0, num_outputs=0),
         create_builder_config=lambda: SimpleNamespace(
-            clear_flag=lambda flag: None, set_memory_pool_limit=lambda pool, limit: None
+            clear_flag=lambda flag: None,
+            set_memory_pool_limit=lambda pool, limit: None,
+            create_timing_cache=lambda data: object(),
+            set_timing_cache=lambda timing, ignore_mismatch: True,
         ),
         build_serialized_network=lambda network, config: b"TensorRT plan",
     )

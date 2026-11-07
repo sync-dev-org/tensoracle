@@ -68,6 +68,8 @@ def test_unavailable_host_memory_release_preserves_the_build_result(monkeypatch,
         create_builder_config=lambda: SimpleNamespace(
             clear_flag=lambda flag: None,
             set_memory_pool_limit=lambda pool, limit: None,
+            create_timing_cache=lambda data: object(),
+            set_timing_cache=lambda timing, ignore_mismatch: True,
         ),
         build_serialized_network=serialize,
     )

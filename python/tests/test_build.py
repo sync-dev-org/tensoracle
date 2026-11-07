@@ -219,6 +219,12 @@ def test_tf32_is_disabled_and_other_builder_settings_are_applied(
         def set_memory_pool_limit(self, pool, limit):
             self.workspace_calls.append((pool, limit))
 
+        def create_timing_cache(self, data):
+            return object()
+
+        def set_timing_cache(self, timing, ignore_mismatch):
+            return True
+
     class Network:
         num_inputs = 1
         num_outputs = 0

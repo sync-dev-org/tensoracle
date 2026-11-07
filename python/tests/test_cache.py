@@ -101,6 +101,8 @@ def test_save_large_built_plan_keeps_other_threads_running(tmp_path, monkeypatch
         create_builder_config=lambda: SimpleNamespace(
             clear_flag=lambda flag: None,
             set_memory_pool_limit=lambda pool, limit: None,
+            create_timing_cache=lambda data: object(),
+            set_timing_cache=lambda timing, ignore_mismatch: True,
         ),
         build_serialized_network=lambda network, config: plan,
     )
@@ -498,7 +500,7 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
 
     monkeypatch.setattr(trt, "get_plugin_registry", PluginRegistry)
 
-    state = {"builds": 0, "graph_calls": 0, "shape": (1, 3, 2), "range": None}
+    state = {"graph_calls": 0, "shape": (1, 3, 2), "range": None}
 
     class FakeEngine:
         num_io_tensors = 2
@@ -546,6 +548,12 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
         def add_optimization_profile(self, profile):
             pass
 
+        def create_timing_cache(self, data):
+            return object()
+
+        def set_timing_cache(self, timing, ignore_mismatch):
+            return True
+
     class FakeBuilder:
         def __init__(self, logger):
             pass
@@ -560,7 +568,6 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
             return FakeProfile()
 
         def build_serialized_network(self, network, config):
-            state["builds"] += 1
             return b"small plan"
 
     monkeypatch.setattr(trt, "Builder", FakeBuilder)
@@ -607,9 +614,9 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
         )
 
     first = open_case()
-    assert state["builds"] == 1
+    assert state["graph_calls"] == 1
     assert open_case(weight_files=(same_contents,)).path == first.path
-    assert state["builds"] == 1
+    assert state["graph_calls"] == 1
     variants = [
         {"name": "decoder"},
         {"graph_version": "2"},
@@ -636,12 +643,12 @@ def test_each_declared_condition_selects_a_distinct_cache_entry(tmp_path, monkey
         paths.add(open_case().path)
     assert first.path not in paths
     assert len(paths) == len(variants) + 4
-    assert state["builds"] == len(paths) + 1
+    assert state["graph_calls"] == len(paths) + 1
     assert (
         open_case(graph=lambda network: pytest.fail("graph changed without version bump")).path
         == first.path
     )
-    assert state["builds"] == len(paths) + 1
+    assert state["graph_calls"] == len(paths) + 1
 
 
 @pytest.mark.gpu

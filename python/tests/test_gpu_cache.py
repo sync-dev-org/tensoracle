@@ -1,13 +1,78 @@
-"""Separate saved engines by the CUDA device properties used for compatibility."""
+"""Save compact engines and separate them by CUDA device compatibility."""
 
 import ctypes
+import time
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import tensorrt as trt
+from safetensors.numpy import save_file
 
 import tensoracle
 import tensoracle._cache as cache
+
+
+@pytest.mark.gpu
+@pytest.mark.req("SP-TENSORACLE-009")
+def test_compact_saved_engine_executes_and_reopens_without_calling_graph(tmp_path, monkeypatch):
+    """A LeakyReLU engine stays below 1 MiB and computes correctly before and after reopening."""
+    import cupy as cp
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    weights = tmp_path / "weights.safetensors"
+    save_file({"slope": np.array([0.125], dtype=np.float16)}, weights)
+    shape = (1, 64, 135, 240)
+    graph_calls = []
+
+    def graph(network):
+        graph_calls.append(1)
+        features = network.add_input("features", trt.float16, shape)
+        layer = network.add_activation(features, trt.ActivationType.LEAKY_RELU)
+        layer.alpha = 0.125
+        result = layer.get_output(0)
+        result.name = "result"
+        network.mark_output(result)
+
+    def open_engine(callback):
+        return tensoracle.open_engine(
+            callback,
+            tensoracle.EngineBuild({"features": tensoracle.InputShape.fixed(shape)}),
+            name="compact-leaky-relu",
+            graph_version="1",
+            weights=(weights,),
+            io=tensoracle.EngineIO(
+                {"features": tensoracle.TensorSpec(trt.float16, shape)},
+                {"result": tensoracle.TensorSpec(trt.float16, shape)},
+            ),
+        )
+
+    started = time.perf_counter()
+    first = open_engine(graph)
+    elapsed = time.perf_counter() - started
+    size = first.path.stat().st_size
+    print(f"LeakyReLU saved engine: {size} bytes, build/open: {elapsed:.6f} s")
+    assert graph_calls == [1]
+    assert size < 1024 * 1024
+
+    def forbidden(network):
+        pytest.fail("saved engine invoked the graph callback")
+
+    reopened = open_engine(forbidden)
+    assert reopened.path == first.path
+    assert reopened.path.stat().st_size == size
+    assert graph_calls == [1]
+    host = np.linspace(-1, 1, np.prod(shape), dtype=np.float32).astype(np.float16).reshape(shape)
+    expected = np.where(host >= 0, host, host * np.float16(0.125))
+    value = cp.asarray(host)
+    for handle in (first, reopened):
+        output = cp.asarray(np.full_like(host, np.nan))
+        with handle.create_execution() as execution:
+            execution.enqueue(
+                {"features": value.data.ptr, "result": output.data.ptr},
+                stream=cp.cuda.get_current_stream().ptr,
+            )
+            np.testing.assert_array_equal(cp.asnumpy(output), expected)
 
 
 @pytest.fixture
@@ -128,17 +193,18 @@ def test_changed_gpu_property_builds_a_separate_saved_engine(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     builds = []
 
-    def serialize(network, config):
+    def graph(network):
         builds.append(cuda_driver.device)
-        return b"serialized engine"
 
     builder = SimpleNamespace(
         create_network=lambda flags: SimpleNamespace(num_inputs=0, num_outputs=0),
         create_builder_config=lambda: SimpleNamespace(
             clear_flag=lambda flag: None,
             set_memory_pool_limit=lambda pool, limit: None,
+            create_timing_cache=lambda data: object(),
+            set_timing_cache=lambda timing, ignore_mismatch: True,
         ),
-        build_serialized_network=serialize,
+        build_serialized_network=lambda network, config: b"serialized engine",
     )
     monkeypatch.setattr(trt, "Builder", lambda logger: builder)
     monkeypatch.setattr(
@@ -153,7 +219,7 @@ def test_changed_gpu_property_builds_a_separate_saved_engine(
 
     def open_engine():
         return tensoracle.open_engine(
-            lambda network: None,
+            graph,
             tensoracle.EngineBuild({}),
             name="encoder",
             graph_version="1",

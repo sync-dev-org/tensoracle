@@ -114,7 +114,7 @@ def _build_serialized_engine(
 
     register_libraries(plugins)
 
-    builder = network = config = profile = serialized = tensor = None
+    builder = network = config = profile = serialized = tensor = timing = None
     inputs = {}
     try:
         builder = trt.Builder(logger or trt.Logger(trt.Logger.ERROR))
@@ -161,12 +161,22 @@ def _build_serialized_engine(
         if profile is not None:
             config.add_optimization_profile(profile)
 
-        serialized = builder.build_serialized_network(network, config)
-        if serialized is None:
-            raise RuntimeError("TensorRT failed to build the serialized engine")
+        timing = config.create_timing_cache(b"")
+        if timing is None:
+            raise RuntimeError("TensorRT failed to create a timing cache")
+        if not config.set_timing_cache(timing, ignore_mismatch=False):
+            raise RuntimeError("TensorRT rejected the timing cache")
+        # A cold build can serialize large zero-filled buffers. Rebuild with the
+        # populated in-memory cache, releasing the first plan before the second.
+        for _ in range(2):
+            serialized = None
+            serialized = builder.build_serialized_network(network, config)
+            if serialized is None:
+                raise RuntimeError("TensorRT failed to build the serialized engine")
         return bytes(serialized), output_names
     finally:
         # Tensor references also keep the network alive, including in exception frames.
         inputs.clear()
-        del tensor, profile, serialized, config, network, builder
+        # TensorRT requires the timing cache to outlive the builder using it.
+        del tensor, profile, serialized, config, network, builder, timing
         release_host_memory()
