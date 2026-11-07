@@ -4,7 +4,7 @@ tensoracle v2 moves engine construction, saving and reuse, execution, and plugin
 
 ## Check the platform first
 
-v2.0.0 supplies only a Linux x86_64 `manylinux_2_28` wheel with the `cp312-abi3` tag. It includes the C++ shared library, public headers, and CMake package configuration. The package currently declares Python 3.12 and 3.13 support. TensorRT 11 and sm86, sm89, and sm120 remain the targets; fp8 requires sm89 or sm120.
+v2 supplies only a Linux x86_64 `manylinux_2_28` wheel with the `cp312-abi3` tag. It includes the C++ shared library, public headers, and CMake package configuration. The package currently declares Python 3.12 and 3.13 support. TensorRT 11 and sm86, sm89, and sm120 remain the targets; fp8 requires sm89 or sm120.
 
 Windows x86_64 users must stay on tensoracle 1.x until a later v2 minor release adds a Windows wheel. Use `tensoracle<2` in a Windows application's dependency declaration during that period. WSL2 can use the Linux wheel inside its Linux Python environment.
 

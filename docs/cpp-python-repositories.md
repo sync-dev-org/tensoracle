@@ -2,7 +2,7 @@
 
 The v2 wheel supplies a shared C++ library, public headers, CMake package configuration, and source-based cubin plugin helpers. Your model package defines the TensorRT network and engine-opening code in C++, links the shared library, and exposes inference through its own binding. For custom plugins it also supplies CUDA C++ kernels and model-specific plugin behavior.
 
-v2.0.0 is available on Linux x86_64, including WSL2, as a `manylinux_2_28`, `cp312-abi3` wheel. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release adds a Windows wheel.
+v2 is available on Linux x86_64, including WSL2, as a `manylinux_2_28`, `cp312-abi3` wheel. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release adds a Windows wheel.
 
 ## C++ SDK in the wheel
 
