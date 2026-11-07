@@ -4,6 +4,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <type_traits>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -130,4 +132,213 @@ TEST_CASE("Safetensors exposes nonempty half bfloat16 int8 and fp8 values withou
     std::memset(&output, 0xa5, sizeof(output)); output.struct_size = offsetof(prefix, trailing);
     REQUIRE(tensoracle_weights_find(storage.get(), "half", reinterpret_cast<tensoracle_weight*>(&output), nullptr) == TENSORACLE_SUCCESS);
     REQUIRE(std::string(output.name) == "half"); for (auto byte : output.trailing) REQUIRE(byte == 0xa5);
+}
+
+TEST_CASE("Callers own weights opened from a path and retain tensor values until close", "[SP-TENSORACLE-061]") {
+    static_assert(!std::is_copy_constructible_v<tensoracle::weights_handle>);
+    static_assert(std::is_nothrow_move_constructible_v<tensoracle::weights_handle>);
+    static_assert(std::is_nothrow_move_assignable_v<tensoracle::weights_handle>);
+    directory files; auto path = files.path / "owned.safetensors";
+    float values[] = {1.25f, -2.5f};
+    json header{{"matrix", {{"dtype", "F32"}, {"shape", {1, 2}}, {"data_offsets", {0, 8}}}}};
+    save(path, header.dump(), std::string(reinterpret_cast<const char*>(values), sizeof(values)));
+    auto owner = tensoracle::open_weights(path);
+    auto view = owner.view();
+    REQUIRE(view.size() == 1);
+    auto tensor = view.at(size_t(0));
+    REQUIRE(std::string(tensor.name) == "matrix");
+    REQUIRE(tensor.dtype == TENSORACLE_FLOAT32);
+    REQUIRE(tensor.rank == 2);
+    REQUIRE(tensor.dimensions[0] == 1);
+    REQUIRE(tensor.dimensions[1] == 2);
+    REQUIRE(tensor.element_count == 2);
+    REQUIRE(tensor.byte_size == sizeof(values));
+    REQUIRE(view.at("matrix").data == tensor.data);
+    REQUIRE(reinterpret_cast<uintptr_t>(tensor.data) % alignof(float) == 0);
+    auto moved = std::move(owner);
+    REQUIRE(owner.get() == nullptr);
+    tensoracle::weights_handle assigned;
+    assigned = std::move(moved);
+    REQUIRE(moved.get() == nullptr);
+    fs::remove(path);
+    REQUIRE(std::memcmp(tensor.data, values, sizeof(values)) == 0);
+    auto* raw = assigned.release();
+    REQUIRE(assigned.get() == nullptr);
+    REQUIRE(tensoracle_weights_count(raw, nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(std::memcmp(tensor.data, values, sizeof(values)) == 0);
+    REQUIRE(tensoracle_weights_destroy(raw) == TENSORACLE_SUCCESS);
+    assigned.close();
+    REQUIRE(tensoracle_weights_destroy(nullptr) == TENSORACLE_SUCCESS);
+}
+
+TEST_CASE("Callers read metadata keys and values and see an empty map when metadata is absent", "[SP-TENSORACLE-061]") {
+    directory files; auto path = files.path / "metadata.safetensors";
+    const std::map<std::string, std::string> expected{{"", ""}, {"format", "model-v1"}, {"説明", "重み"}};
+    save(path, json{{"__metadata__", expected}}.dump(), "");
+    auto owner = tensoracle::open_weights(path);
+    auto view = owner.view();
+    REQUIRE(view.size() == 0);
+    REQUIRE(view.metadata_size() == expected.size());
+    std::map<std::string, std::string> actual;
+    for (size_t i = 0; i < view.metadata_size(); ++i) {
+        auto entry = view.metadata_at(i);
+        actual.emplace(entry.first, entry.second);
+    }
+    REQUIRE(actual == expected);
+    auto retained = view.metadata_at("format");
+    REQUIRE(std::string(view.metadata_at("説明")) == "重み");
+    REQUIRE(std::string(view.metadata_at("")) == "");
+    fs::remove(path);
+    REQUIRE(std::string(retained) == "model-v1");
+    REQUIRE(owner.metadata_size() == expected.size());
+    REQUIRE(owner.metadata_at("format") == "model-v1");
+    auto first = owner.metadata_at(size_t(0));
+    REQUIRE(expected.at(std::string(first.first)) == first.second);
+    for (const auto& header : {"{}", "{\"__metadata__\":{}}"}) {
+        save(path, header, "");
+        auto empty = tensoracle::open_weights(path);
+        REQUIRE(empty.view().metadata_size() == 0);
+    }
+}
+
+TEST_CASE("Opening weights rejects the same malformed files as engine weight loading", "[SP-TENSORACLE-061]") {
+    directory files; auto path = files.path / "bad.safetensors";
+    auto base = json{{"x", {{"dtype", "F32"}, {"shape", {2}}, {"data_offsets", {0, 8}}}}};
+    std::vector<std::pair<std::string, std::string>> cases;
+    for (int failure = 0; failure < 10; ++failure) {
+        auto header = base;
+        if (failure == 0) header["x"]["shape"] = {-1};
+        if (failure == 1) header["x"]["shape"] = {true};
+        if (failure == 2) header["x"]["data_offsets"] = {1, 9};
+        if (failure == 3) header["x"]["data_offsets"] = {0, 4};
+        if (failure == 4) header["x"]["dtype"] = "unsupported";
+        if (failure == 5) header["__metadata__"] = {{"not-a-string", 1}};
+        if (failure == 6) header["x"]["shape"] = {INT64_MAX, 8};
+        if (failure == 7) header["y"] = header["x"];
+        if (failure == 8) header["x"]["data_offsets"] = {4, 0};
+        if (failure == 9) { header["x"]["shape"] = {1}; header["x"]["data_offsets"] = {4, 8}; }
+        cases.emplace_back(header.dump(), std::string(8, '\0'));
+    }
+    cases.emplace_back("{\"x\":{},\"x\":{}}", "");
+    cases.emplace_back("{\"__metadata__\":{\"x\":\"a\",\"x\":\"b\"}}", "");
+    cases.emplace_back(std::string("{}\0ignored", 10), "");
+    cases.emplace_back("{", "");
+    for (const auto& item : cases) {
+        save(path, item.first, item.second);
+        std::string expected;
+        try { auto weights = tensoracle::detail::load_safetensors({path}); FAIL("malformed file accepted"); }
+        catch (const std::invalid_argument& error) { expected = error.what(); }
+        tensoracle_weights* output = reinterpret_cast<tensoracle_weights*>(1);
+        tensoracle_error* diagnostic = nullptr;
+        REQUIRE(tensoracle_weights_open(path.c_str(), &output, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+        REQUIRE(output == nullptr);
+        tensoracle::error_handle error(diagnostic);
+        const char* message = nullptr;
+        REQUIRE(tensoracle_error_message(error.get(), &message, nullptr) == TENSORACLE_SUCCESS);
+        REQUIRE(std::string(message) == expected);
+    }
+    save(path, "{}", "");
+    { std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out); file.put(char(127)); }
+    REQUIRE_THROWS_AS(tensoracle::open_weights(path), tensoracle::error);
+    fs::remove(path);
+    tensoracle_weights* output = reinterpret_cast<tensoracle_weights*>(1);
+    tensoracle_error* diagnostic = nullptr;
+    REQUIRE(tensoracle_weights_open(path.c_str(), &output, &diagnostic) == TENSORACLE_INTERNAL_ERROR);
+    REQUIRE(output == nullptr);
+    tensoracle::error_handle error(diagnostic);
+    const char* message = nullptr;
+    REQUIRE(tensoracle_error_message(error.get(), &message, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(std::string(message).find(path.string()) != std::string::npos);
+}
+
+TEST_CASE("Invalid weight and metadata requests return diagnostics without transferring ownership", "[SP-TENSORACLE-061]") {
+    directory files; auto path = files.path / "metadata.safetensors";
+    save(path, "{\"__metadata__\":{\"format\":\"model-v1\"}}", "");
+    auto owner = tensoracle::open_weights(path);
+    const char* invalid_paths[] = {nullptr, ""};
+    for (auto request : invalid_paths) {
+        tensoracle_weights* output = reinterpret_cast<tensoracle_weights*>(1);
+        tensoracle_error* diagnostic = nullptr;
+        REQUIRE(tensoracle_weights_open(request, &output, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+        REQUIRE(output == nullptr);
+        REQUIRE(diagnostic != nullptr);
+        REQUIRE(tensoracle_error_destroy(diagnostic) == TENSORACLE_SUCCESS);
+    }
+    REQUIRE(tensoracle_weights_open(path.c_str(), nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    size_t count = 99;
+    REQUIRE(tensoracle_weights_metadata_count(nullptr, &count, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(count == 0);
+    REQUIRE(tensoracle_weights_metadata_count(owner.get(), nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    tensoracle_weights_metadata_entry entry{}; entry.struct_size = sizeof(entry);
+    REQUIRE(tensoracle_weights_metadata_at(owner.get(), 1, &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_at(nullptr, 0, &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_at(owner.get(), 0, nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_find(owner.get(), "missing", &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_find(nullptr, "format", &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_find(owner.get(), nullptr, &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_find(owner.get(), "format", nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    entry.struct_size = sizeof(size_t) - 1;
+    REQUIRE(tensoracle_weights_metadata_at(owner.get(), 0, &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_metadata_find(owner.get(), "format", &entry, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE_THROWS_AS(owner.view().metadata_at("missing"), tensoracle::error);
+    REQUIRE_THROWS_AS(owner.view().metadata_at(size_t(1)), tensoracle::error);
+}
+
+TEST_CASE("Metadata preserves embedded NUL bytes through C entries and C++ views", "[SP-TENSORACLE-061]") {
+    directory files; auto path = files.path / "nul-metadata.safetensors";
+    const std::string key("model\0kind", 10), value("type\0v1", 7);
+    save(path, json{{"__metadata__", {{key, value}, {"format", value}}}}.dump(), "");
+    auto owner = tensoracle::open_weights(path);
+    REQUIRE(owner.metadata_size() == 2);
+    REQUIRE(owner.metadata_at("format") == value);
+    tensoracle_weights_metadata_entry entry{}; entry.struct_size = sizeof(entry);
+    REQUIRE(tensoracle_weights_metadata_find(owner.get(), "format", &entry, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(std::string(entry.key, entry.key_size) == "format");
+    REQUIRE(std::string(entry.value, entry.value_size) == value);
+    REQUIRE(entry.key[entry.key_size] == '\0');
+    REQUIRE(entry.value[entry.value_size] == '\0');
+    bool found = false;
+    for (size_t i = 0; i < owner.metadata_size(); ++i) {
+        REQUIRE(tensoracle_weights_metadata_at(owner.get(), i, &entry, nullptr) == TENSORACLE_SUCCESS);
+        auto item = owner.view().metadata_at(i);
+        REQUIRE(item.first == std::string_view(entry.key, entry.key_size));
+        REQUIRE(item.second == std::string_view(entry.value, entry.value_size));
+        REQUIRE(entry.key[entry.key_size] == '\0');
+        REQUIRE(entry.value[entry.value_size] == '\0');
+        if (item.first == key) { REQUIRE(item.second == value); found = true; }
+    }
+    REQUIRE(found);
+    // This is the same loader used to supply the network-building callback.
+    auto storage = tensoracle::detail::load_safetensors({path});
+    auto borrowed = tensoracle::weights_view(storage.get());
+    REQUIRE(borrowed.metadata_size() == 2);
+    REQUIRE(borrowed.metadata_at("format") == value);
+}
+
+TEST_CASE("Metadata entries preserve fields outside the caller's structure size", "[SP-TENSORACLE-055][SP-TENSORACLE-061]") {
+    directory files; auto path = files.path / "metadata.safetensors";
+    save(path, "{\"__metadata__\":{\"format\":\"model-v1\"}}", "");
+    auto owner = tensoracle::open_weights(path);
+    struct prefix { size_t struct_size; const char* key; unsigned char trailing[8]; } entry;
+    std::memset(&entry, 0xa5, sizeof(entry)); entry.struct_size = offsetof(prefix, trailing);
+    auto* output = reinterpret_cast<tensoracle_weights_metadata_entry*>(&entry);
+    REQUIRE(tensoracle_weights_metadata_at(owner.get(), 0, output, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(std::string(entry.key) == "format");
+    for (auto byte : entry.trailing) REQUIRE(byte == 0xa5);
+    REQUIRE(tensoracle_weights_metadata_find(owner.get(), "format", output, nullptr) == TENSORACLE_SUCCESS);
+    for (auto byte : entry.trailing) REQUIRE(byte == 0xa5);
+}
+
+TEST_CASE("Borrowed build weights expose metadata from all declared files with the first value for repeated keys", "[SP-TENSORACLE-061]") {
+    directory files; auto first = files.path / "first.safetensors", second = files.path / "second.safetensors";
+    save(first, "{\"__metadata__\":{\"format\":\"first\",\"first-only\":\"one\"}}", "");
+    save(second, "{\"__metadata__\":{\"format\":\"second\",\"second-only\":\"two\"}}", "");
+    auto storage = tensoracle::detail::load_safetensors({first, second});
+    tensoracle::weights_view borrowed(storage.get());
+    REQUIRE(borrowed.metadata_size() == 3);
+    REQUIRE(std::string(borrowed.metadata_at("format")) == "first");
+    REQUIRE(std::string(borrowed.metadata_at("first-only")) == "one");
+    REQUIRE(std::string(borrowed.metadata_at("second-only")) == "two");
+    auto reversed = tensoracle::detail::load_safetensors({second, first});
+    REQUIRE(std::string(tensoracle::weights_view(reversed.get()).metadata_at("format")) == "second");
 }

@@ -17,7 +17,7 @@ target_compile_options(tensoracle_c_consumer PRIVATE
     $<$<C_COMPILER_ID:GNU,Clang>:-pedantic-errors;-Wall;-Wextra;-Werror>)
 target_link_libraries(tensoracle_c_consumer PRIVATE tensoracle::tensoracle)
 add_test(NAME "C callers use the ABI without C++ headers" COMMAND tensoracle_c_consumer)
-set_tests_properties("C callers use the ABI without C++ headers" PROPERTIES LABELS "SP-TENSORACLE-014;SP-TENSORACLE-056")
+set_tests_properties("C callers use the ABI without C++ headers" PROPERTIES LABELS "SP-TENSORACLE-014;SP-TENSORACLE-056;SP-TENSORACLE-061")
 
 add_test(NAME "Installed SDK builds a separate C++ application"
     COMMAND "${CMAKE_COMMAND}"

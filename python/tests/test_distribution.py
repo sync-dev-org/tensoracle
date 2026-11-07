@@ -28,6 +28,7 @@ from native_build import cuda_root
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
 PUBLIC_REPOSITORY = "https://github.com/sync-dev-org/tensoracle"
+DOCUMENTATION_SITE = "https://sync-dev-org.github.io/tensoracle"
 PAGES_WORKFLOW = ".github/workflows/pages.yml"
 
 
@@ -795,7 +796,7 @@ def test_readme_links_and_images_resolve_on_pypi():
         if not (target and (urlsplit(target).scheme or target.startswith("#")))
     ]
     assert {
-        f"{PUBLIC_REPOSITORY}/blob/main/docs/optimization.md",
-        f"{PUBLIC_REPOSITORY}/blob/main/docs/tensorrt-sdk.md",
-        f"{PUBLIC_REPOSITORY}/blob/main/examples/cubin_plugin/README.md#rebuild-the-cubins",
+        f"{DOCUMENTATION_SITE}/optimization/",
+        f"{DOCUMENTATION_SITE}/tensorrt-sdk/",
+        f"{DOCUMENTATION_SITE}/#build-a-cubin-plugin",
     } <= set(parser.targets)

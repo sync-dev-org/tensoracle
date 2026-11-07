@@ -42,6 +42,36 @@ target_link_libraries(my_model PRIVATE tensoracle::tensoracle)
 
 `my_model` is your existing CMake target. Add TensorRT SDK headers to the target that defines the network; CUDA headers and driver linking are needed when the caller uses CUDA. The [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer) provides the complete nanobind project, including header discovery, CUDA helpers, and relative runtime library paths. Its `bindings.cpp` keeps all TensorRT construction and execution in C++; Python receives an inference function.
 
+### Read weights without a GPU
+
+Open a safetensors file from C++ before creating a TensorRT engine. This uses the same reader and validation as engine construction and requires neither a GPU nor CUDA initialization:
+
+```cpp
+#include <tensoracle/builder.hpp>
+#include <iostream>
+
+auto weights = tensoracle::open_weights("model.safetensors");
+auto view = weights.view();
+for (size_t i = 0; i < view.size(); ++i) {
+    auto tensor = view.at(i);
+    std::cout << tensor.name << ": " << tensor.element_count << " elements\n";
+    // tensor.dtype, tensor.rank, tensor.dimensions, tensor.data and
+    // tensor.byte_size describe the typed, shaped, contiguous CPU values.
+}
+for (size_t i = 0; i < weights.metadata_size(); ++i) {
+    auto [key, value] = weights.metadata_at(i);
+    std::cout << key << "=" << value << '\n';
+}
+```
+
+Read a named tensor with `view.at("bias")` or a metadata value with `weights.metadata_at("format")`. Missing names and out-of-range indexes throw `tensoracle::error` with status `TENSORACLE_INVALID_ARGUMENT`. A file without `__metadata__` has zero metadata entries. Metadata keys and values are UTF-8 byte strings; the C++ operations return `std::string_view`, preserving embedded NUL bytes. Enumerate metadata by index to read keys containing NUL bytes; lookup by key accepts a NUL-terminated string.
+
+`weights_handle` owns the opened file storage, supports moves, and releases it on destruction or `close()`. The tensor names, dimensions, values, metadata, and views remain valid until that storage is closed. Do not close it while using a borrowed view or pointer.
+
+C callers include `tensoracle/builder.h`, call `tensoracle_weights_open`, and release the owned handle with `tensoracle_weights_destroy`. The existing `tensoracle_weights_count`, `tensoracle_weights_at`, and `tensoracle_weights_find` read its tensors. For metadata, use `tensoracle_weights_metadata_count`, `tensoracle_weights_metadata_at`, and `tensoracle_weights_metadata_find`. Initialize `tensoracle_weights_metadata_entry.struct_size` before reading an entry; its `key_size` and `value_size` are byte counts excluding the extra NUL terminators. These lengths preserve strings with embedded NUL bytes.
+
+The metadata operations also work on the borrowed weights passed to a network callback. For multiple declared files, they return the union of metadata keys; the first declared file's value wins for repeated keys. Callback weights stay borrowed and must never be passed to `tensoracle_weights_destroy`.
+
 ### Build and reopen an engine
 
 The following C++ excerpts follow `examples/wheel_consumer/bindings.cpp`. They are parts of the model package, not standalone programs; the complete example also supplies CUDA context selection, allocation, error handling, and binding code.

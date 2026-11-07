@@ -40,3 +40,11 @@ TENSORACLE_2 {
         tensoracle_weights_find;
     local: *;
 };
+TENSORACLE_2.1 {
+    global:
+        tensoracle_weights_open;
+        tensoracle_weights_destroy;
+        tensoracle_weights_metadata_count;
+        tensoracle_weights_metadata_at;
+        tensoracle_weights_metadata_find;
+} TENSORACLE_2;

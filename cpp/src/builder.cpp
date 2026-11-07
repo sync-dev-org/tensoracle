@@ -5,6 +5,7 @@
 #include "safetensors.hpp"
 #include "structure.hpp"
 #include <algorithm>
+#include <iterator>
 #include <set>
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -124,6 +125,47 @@ void write_weight(const tensoracle::detail::weight_record& value, tensoracle_wei
     FIELD(dimensions, value.shape.data()); FIELD(data, value.data()); FIELD(element_count, value.count); FIELD(byte_size, value.bytes);
 #undef FIELD
 }
+void write_metadata(const std::pair<const std::string, std::string>& entry, tensoracle_weights_metadata_entry* output) {
+    fields(output, sizeof(size_t)); auto size = structure_size(output);
+    write_field(output, size, offsetof(tensoracle_weights_metadata_entry, key), entry.first.c_str());
+    write_field(output, size, offsetof(tensoracle_weights_metadata_entry, key_size), entry.first.size());
+    write_field(output, size, offsetof(tensoracle_weights_metadata_entry, value), entry.second.c_str());
+    write_field(output, size, offsetof(tensoracle_weights_metadata_entry, value_size), entry.second.size());
+}
+}
+extern "C" tensoracle_status tensoracle_weights_open(const char* path, tensoracle_weights** output, tensoracle_error** error) noexcept {
+    return tensoracle::detail::guard(error, [&] {
+        if (output) *output = nullptr;
+        require(output, "weights output is required");
+        auto weights = tensoracle::detail::load_safetensors({text(path)});
+        *output = weights.release(); return TENSORACLE_SUCCESS;
+    });
+}
+extern "C" tensoracle_status tensoracle_weights_destroy(tensoracle_weights* weights) noexcept {
+    delete weights;
+    return TENSORACLE_SUCCESS;
+}
+extern "C" tensoracle_status tensoracle_weights_metadata_count(const tensoracle_weights* weights, size_t* count, tensoracle_error** error) noexcept {
+    return tensoracle::detail::guard(error, [&] {
+        if (count) *count = 0;
+        require(weights && count, "weights and metadata count output are required"); *count = weights->metadata.size(); return TENSORACLE_SUCCESS;
+    });
+}
+extern "C" tensoracle_status tensoracle_weights_metadata_at(const tensoracle_weights* weights, size_t index,
+    tensoracle_weights_metadata_entry* output, tensoracle_error** error) noexcept {
+    return tensoracle::detail::guard(error, [&] {
+        require(weights && index < weights->metadata.size(), "metadata index is out of range");
+        auto entry = weights->metadata.begin(); std::advance(entry, index);
+        write_metadata(*entry, output); return TENSORACLE_SUCCESS;
+    });
+}
+extern "C" tensoracle_status tensoracle_weights_metadata_find(const tensoracle_weights* weights, const char* key,
+    tensoracle_weights_metadata_entry* output, tensoracle_error** error) noexcept {
+    return tensoracle::detail::guard(error, [&] {
+        require(weights && key, "weights and metadata key are required");
+        auto entry = weights->metadata.find(key); require(entry != weights->metadata.end(), std::string("unknown weight metadata ") + key);
+        write_metadata(*entry, output); return TENSORACLE_SUCCESS;
+    });
 }
 extern "C" tensoracle_status tensoracle_weights_count(const tensoracle_weights* weights, size_t* count, tensoracle_error** error) noexcept {
     return tensoracle::detail::guard(error, [&] {

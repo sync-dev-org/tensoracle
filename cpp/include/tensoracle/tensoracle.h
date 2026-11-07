@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define TENSORACLE_VERSION_MAJOR 2
-#define TENSORACLE_VERSION_MINOR 0
+#define TENSORACLE_VERSION_MINOR 1
 #define TENSORACLE_VERSION_PATCH 0
 
 #if defined(_WIN32)

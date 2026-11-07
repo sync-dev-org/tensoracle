@@ -27,6 +27,7 @@ struct tensoracle_weights {
     std::vector<std::unique_ptr<tensoracle::detail::mapped_weights_file>> files;
     std::vector<tensoracle::detail::weight_record> tensors;
     std::map<std::string, size_t> names;
+    std::map<std::string, std::string> metadata;
 };
 namespace tensoracle::detail {
 std::unique_ptr<tensoracle_weights> load_safetensors(const std::vector<std::filesystem::path>& paths);

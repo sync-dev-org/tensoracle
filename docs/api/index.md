@@ -9,7 +9,7 @@ The installed SDK is under `tensoracle/cpp` in the wheel. Use `find_package(tens
 | C ABI header | C++ wrapper | Operations |
 | --- | --- | --- |
 | `tensoracle/tensoracle.h` | `tensoracle/tensoracle.hpp` | Version checks, status and owned diagnostics, CPU output comparison |
-| `tensoracle/builder.h` | `tensoracle/builder.hpp` | Network callback, safetensors weight views, input profiles, I/O checks, `tensoracle::open_engine` |
+| `tensoracle/builder.h` | `tensoracle/builder.hpp` | Open and own safetensors with `tensoracle::open_weights`, read tensors and file metadata, network callback, input profiles, I/O checks, `tensoracle::open_engine` |
 | `tensoracle/engine.h` | `tensoracle/engine.hpp` | Engine handles, execution units, input shapes, tensor metadata, enqueue on a caller stream |
 | `tensoracle/plugins.h` | `tensoracle/plugins.hpp` | Library inspection and process-lifetime registration with `tensoracle::register_libraries` |
 | `tensoracle/cache.h` | `tensoracle/cache.hpp` | List saved engines, plan pruning, and apply pruning |

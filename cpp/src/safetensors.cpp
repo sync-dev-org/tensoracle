@@ -76,6 +76,8 @@ std::unique_ptr<tensoracle_weights> load_safetensors(const std::vector<std::file
             if (name == "__metadata__") {
                 if (!value.is_object()) invalid(path, "metadata must be a string map");
                 for (const auto& entry : value) if (!entry.is_string()) invalid(path, "metadata values must be strings");
+                for (auto entry = value.begin(); entry != value.end(); ++entry)
+                    weights->metadata.emplace(entry.key(), entry.value().get<std::string>());
                 continue;
             }
             if (name.find('\0') != std::string::npos) invalid(path, "tensor name contains NUL");

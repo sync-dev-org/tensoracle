@@ -2,9 +2,12 @@
 #include "builder.h"
 #include "engine.hpp"
 #include <exception>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace nvinfer1 { class INetworkDefinition; }
@@ -24,9 +27,44 @@ public:
         tensoracle_weight output{}; output.struct_size = sizeof(output); tensoracle_error* error = nullptr;
         auto status = tensoracle_weights_find(value_, name, &output, &error); check(status, error); return output;
     }
+    size_t metadata_size() const {
+        size_t output = 0; tensoracle_error* error = nullptr;
+        auto status = tensoracle_weights_metadata_count(value_, &output, &error); check(status, error); return output;
+    }
+    std::pair<std::string_view, std::string_view> metadata_at(size_t index) const {
+        tensoracle_weights_metadata_entry output{}; output.struct_size = sizeof(output); tensoracle_error* error = nullptr;
+        auto status = tensoracle_weights_metadata_at(value_, index, &output, &error); check(status, error);
+        return {{output.key, output.key_size}, {output.value, output.value_size}};
+    }
+    std::string_view metadata_at(const char* key) const {
+        tensoracle_weights_metadata_entry output{}; output.struct_size = sizeof(output); tensoracle_error* error = nullptr;
+        auto status = tensoracle_weights_metadata_find(value_, key, &output, &error); check(status, error);
+        return {output.value, output.value_size};
+    }
 private:
     const tensoracle_weights* value_;
 };
+
+class weights_handle {
+public:
+    weights_handle() = default;
+    explicit weights_handle(tensoracle_weights* handle) : handle_(handle) {}
+    tensoracle_weights* get() const noexcept { return handle_.get(); }
+    tensoracle_weights* release() noexcept { return handle_.release(); }
+    void close() noexcept { handle_.reset(); }
+    weights_view view() const noexcept { return weights_view(get()); }
+    size_t metadata_size() const { return view().metadata_size(); }
+    std::pair<std::string_view, std::string_view> metadata_at(size_t index) const { return view().metadata_at(index); }
+    std::string_view metadata_at(const char* key) const { return view().metadata_at(key); }
+private:
+    unique_handle<tensoracle_weights, tensoracle_weights_destroy> handle_;
+};
+
+inline weights_handle open_weights(const std::filesystem::path& path) {
+    tensoracle_weights* result = nullptr; tensoracle_error* diagnostic = nullptr;
+    auto status = tensoracle_weights_open(path.string().c_str(), &result, &diagnostic);
+    check(status, diagnostic); return weights_handle(result);
+}
 struct input_profile { std::string name; std::vector<int64_t> minimum, optimum, maximum; };
 struct tensor_spec {
     std::string name; tensoracle_dtype dtype; std::vector<int64_t> shape; bool input;
