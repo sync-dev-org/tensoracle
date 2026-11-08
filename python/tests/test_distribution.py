@@ -1,5 +1,6 @@
 """Check the files and public metadata delivered through PyPI."""
 
+import ast
 import configparser
 import email
 import json
@@ -343,6 +344,59 @@ def test_installed_wheel_serves_python_and_cpp_without_the_source_tree(distribut
         [str(build / "consumer")],
     ):
         subprocess.run(command, cwd=tmp_path, env=environment, check=True, timeout=45)
+
+
+@pytest.mark.req("SP-TENSORACLE-062")
+def test_wheel_types_the_native_module_with_a_matching_stub(distributions, tmp_path):
+    """The wheel marks the package as typed and its stub declares exactly the native names."""
+    with zipfile.ZipFile(distributions["wheel"]) as archive:
+        assert "tensoracle/py.typed" in archive.namelist()
+        stub = ast.parse(archive.read("tensoracle/_native.pyi").decode("utf-8"))
+    declared = {}
+    for node in stub.body:
+        if isinstance(node, ast.ClassDef):
+            declared[node.name] = [ast.unparse(base) for base in node.bases] or ["object"]
+        elif isinstance(node, ast.FunctionDef):
+            declared[node.name] = None
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            declared[node.target.id] = None
+        elif isinstance(node, ast.Assign):
+            declared.update(
+                (target.id, None) for target in node.targets if isinstance(target, ast.Name)
+            )
+    runtime = tmp_path / "runtime"
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
+    python = runtime / "bin/python"
+    subprocess.run(
+        ["uv", "pip", "install", "--python", str(python), str(distributions["wheel"])],
+        check=True,
+        timeout=120,
+    )
+    result = subprocess.run(
+        [
+            str(python),
+            "-I",
+            "-c",
+            (
+                "import json; from tensoracle import _native; "
+                "values = {name: getattr(_native, name) for name in dir(_native)}; "
+                "print(json.dumps({name: [base.__name__ for base in value.__bases__] "
+                "if isinstance(value, type) else None "
+                "for name, value in values.items() if not name.startswith('__')}))"
+            ),
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    native = json.loads(result.stdout)
+    public = {name for name in native if not name.startswith("_")}
+    assert {"BundleError", "CubinArchitectureError", "compare_outputs", "cache_list"} <= public
+    assert public <= declared.keys()
+    assert declared.keys() <= native.keys()
+    classes = {name: bases for name, bases in declared.items() if bases is not None}
+    assert classes == {name: native[name] for name in classes}
 
 
 @pytest.fixture(scope="module")
@@ -697,8 +751,9 @@ def test_backend_removes_staging_files_after_metadata_failure(tmp_path):
 
 
 @pytest.mark.req("SP-TENSORACLE-021")
+@pytest.mark.req("SP-TENSORACLE-062")
 def test_sdist_rebuilds_the_complete_wheel_without_the_repository(distributions, tmp_path):
-    """An extracted sdist builds the same package, metadata, and C++ sources on its own."""
+    """An extracted sdist builds the same package, metadata, typing files, and C++ sources."""
     with tarfile.open(distributions["sdist"]) as archive:
         archive.extractall(tmp_path, filter="data")
     source = next(path for path in tmp_path.iterdir() if path.is_dir())
@@ -708,10 +763,10 @@ def test_sdist_rebuilds_the_complete_wheel_without_the_repository(distributions,
         zipfile.ZipFile(distributions["wheel"]) as original,
         zipfile.ZipFile(next(output.glob("*.whl"))) as rebuilt,
     ):
+        assert {"tensoracle/py.typed", "tensoracle/_native.pyi"} <= set(rebuilt.namelist())
         assert set(original.namelist()) == set(rebuilt.namelist())
-        assert original.read("tensoracle/cpp/src/cubin_plugin.cpp") == rebuilt.read(
-            "tensoracle/cpp/src/cubin_plugin.cpp"
-        )
+        for member in ("tensoracle/_native.pyi", "tensoracle/cpp/src/cubin_plugin.cpp"):
+            assert original.read(member) == rebuilt.read(member), member
         name = next(name for name in original.namelist() if name.endswith(".dist-info/METADATA"))
         assert original.read(name) == rebuilt.read(name)
 

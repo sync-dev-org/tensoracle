@@ -31,6 +31,14 @@ endif()
 add_subdirectory("${_cpp}" cpp)
 nanobind_add_module(_native STABLE_ABI bindings.cpp cubin_bindings.cpp)
 target_link_libraries(_native PRIVATE tensoracle::tensoracle)
+# The build tree keeps the module under tensoracle/ so the stub generator imports it by the
+# package name that its exception classes record.
 set_target_properties(_native PROPERTIES
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tensoracle"
     BUILD_RPATH_USE_ORIGIN YES INSTALL_RPATH "$ORIGIN/cpp/lib")
 install(TARGETS _native LIBRARY DESTINATION tensoracle RUNTIME DESTINATION tensoracle)
+# The build RPATH finds libtensoracle and the TensorRT wheel while the stub is generated.
+# Private names are kept because public signatures return _CacheResult.
+nanobind_add_stub(_native_stub MODULE tensoracle._native OUTPUT _native.pyi
+    PYTHON_PATH "${CMAKE_CURRENT_BINARY_DIR}" DEPENDS _native INCLUDE_PRIVATE)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_native.pyi" DESTINATION tensoracle)
