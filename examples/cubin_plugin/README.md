@@ -6,7 +6,7 @@ The dot plugin computes an fp32 32 by 16 matrix product and scales the output in
 
 ## Rebuild the cubins
 
-Install the pinned Conan CLI and prepare the native dependencies as described in [the SDK guide](../../docs/tensorrt-sdk.md). Tensoracle and this example obtain the verified TensorRT SDK through the repository recipe and lock. From the repository root:
+Install the pinned Conan CLI and prepare the native dependencies as described in [the SDK guide](../../docs/tensorrt-sdk.md). Tensoracle and this example obtain the verified TensorRT SDK through the locked Conan recipe. From the repository root:
 
 ```bash
 uv sync --project python --extra producer
@@ -47,7 +47,7 @@ uv pip install --python /tmp/tensoracle-example-runtime/bin/python \
   /tmp/tensoracle-wheels/*.whl /tmp/example-wheels/*.whl
 ```
 
-The build requires CMake 3.26 or later and a C++17 compiler. Its build dependencies supply nanobind and the PyPI CUDA 13.2 headers. `CUDAToolkit_ROOT` can select another PyPI `nvidia/cu13` directory. TensorRT headers come from the repository's Conan recipe by default (`TENSORRT_ROOT` still accepts a verified external SDK), while the plugin's CUDA Driver API link library comes from the installed driver. No OS CUDA Toolkit is required.
+The build requires CMake 3.26 or later and a C++17 compiler. Its Python build dependencies supply nanobind. The locked Conan recipes supply TensorRT and CUDA 13.2 headers and the driver link stub. `CUDAToolkit_ROOT` and `TENSORRT_ROOT` still accept existing verified SDK roots. The plugin links the CUDA Driver API stub and loads the installed driver at runtime. No OS CUDA Toolkit is required.
 
 The CMake project uses `find_package(tensoracle 2 CONFIG REQUIRED)` against the installed wheel and `tensoracle_add_cubin_plugin` to compile the plugin. Its own nanobind extension links to `tensoracle::tensoracle`. The extension's RUNPATH is `$ORIGIN/../tensoracle/cpp/lib`; the example wheel contains no copy of tensoracle, TensorRT, or the CUDA driver. Importing the example does not initialize CUDA.
 

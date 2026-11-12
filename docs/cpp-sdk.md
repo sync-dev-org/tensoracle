@@ -6,11 +6,17 @@ The archive contains the shared C ABI library, public C and C++ headers, the CMa
 package and plugin helpers, their source files, and MIT and third-party licenses.
 It does not contain TensorRT. The release asset requires no authentication.
 Python applications continue to install tensoracle through PyPI.
+The tensoracle Conan package recipe is maintained separately and is not included
+in this repository.
 
 ## Use the SDK with CMake
 
-Download the archive, check its SHA256 against the value you recorded for that
-release, and extract it with its relative layout and symlinks intact:
+Download the archive from the public release and check its SHA256 against the
+expected value for that release. For version 2.2.1, the download URL is
+`https://github.com/sync-dev-org/tensoracle/releases/download/v2.2.1/tensoracle-sdk-2.2.1-linux-x86_64.tar.gz`
+and the SHA256 is
+`f0d30002ec53262ac8eb1d2b9e57e1c8e83fad21b1c9ff2c665ae38afaa30391`.
+Extract the verified archive with its relative layout and symlinks intact:
 
 ```bash
 tar -xzf tensoracle-sdk-X.Y.Z-linux-x86_64.tar.gz -C /path/to/sdk
@@ -30,12 +36,27 @@ add_executable(application main.cpp)
 target_link_libraries(application PRIVATE tensoracle::tensoracle)
 ```
 
-The SDK supports Linux x86_64 and shared libraries only. Code that constructs
-TensorRT networks, or includes `tensoracle/cubin_plugin.hpp`, also needs the
-TensorRT 11.2 headers and link library at build time; see
+The SDK supports Linux x86_64 and shared libraries only. Every application needs
+the TensorRT 11 link library at build time. The CMake package supplies its
+link-time search path through `tensoracle::tensoracle` automatically: it uses an existing `TensorRT::nvinfer`
+target or discovers that target through `find_package(TensorRT CONFIG)`, including
+Conan's CMakeDeps files. Otherwise it searches the system library locations. For
+a TensorRT installation outside those locations, pass
+`-DTENSORRT_ROOT=/path/to/TensorRT` or
+`-DTENSORACLE_TENSORRT_LIBRARY=/path/to/libnvinfer.so.11` to CMake. Configuration
+stops with these options if the library is missing. No build-time
+`LD_LIBRARY_PATH` is needed. The SDK inside a Python wheel can also find the
+separate TensorRT wheel installed beside it.
+
+Code that constructs TensorRT networks, or includes
+`tensoracle/cubin_plugin.hpp`, additionally needs the TensorRT 11.2 headers; see
 [Prepare a TensorRT SDK](tensorrt-sdk.md). The `tensoracle_find_cuda`,
 `tensoracle_cuda_driver`, and `tensoracle_add_cubin_plugin` helpers are available
-after `find_package(tensoracle)`.
+after `find_package(tensoracle)`. Plugin builds use Conan
+`cuda-toolkit/13.2.2` (`compiler=False`) for CUDA headers and the driver link stub.
+Pass its `user.cuda:root` through `CUDAToolkit_ROOT` in the consumer toolchain,
+as shown in the SDK guide. Existing explicit CUDA SDK roots remain supported;
+the link stub is not part of the application runtime.
 
 ## Install the host runtime and relocate a prefix
 

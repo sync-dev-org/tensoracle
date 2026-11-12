@@ -5,7 +5,6 @@ import os
 import re
 import subprocess
 from functools import lru_cache
-from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 NATIVE = Path(__file__).resolve().parent / "native"
@@ -13,9 +12,25 @@ PROJECT = NATIVE.parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
 
 
+def tensorrt_recipe():
+    """Read the embedded recipe or the exact recipe exported during preparation."""
+    embedded = ROOT / "cpp/conan/recipes/tensorrt"
+    if embedded.is_dir():
+        return embedded
+    lock = json.loads((ROOT / "cpp/conan.lock").read_text())
+    reference = next(ref.split("%")[0] for ref in lock["requires"] if ref.startswith("tensorrt/"))
+    cache = os.environ.get("TENSORACLE_CONAN_CACHE")
+    cache_args = ["--core-conf", f"core.cache:storage_path={cache}"] if cache else []
+    return Path(
+        subprocess.check_output(
+            ["conan", "cache", "path", reference, *cache_args], text=True
+        ).strip()
+    )
+
+
 @lru_cache
-def tensorrt_root():
-    """Locate the SDK in the same prepared, locked Conan graph as native builds."""
+def _dependency_root(name):
+    """Locate a package in the same prepared, locked Conan graph as native builds."""
     profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc13"))
     if not profile.is_absolute():
         profile = ROOT / "cpp/conan/profiles" / profile
@@ -46,7 +61,7 @@ def tensorrt_root():
     node = next(
         node
         for node in json.loads(result.stdout)["graph"]["nodes"].values()
-        if node.get("name") == "tensorrt"
+        if node.get("name") == name
     )
     assert node["binary"] == "Cache", "Prepare dependencies: cmake -P cpp/conan/prepare-tests.cmake"
     reference = f"{node['ref']}:{node['package_id']}#{node['prev']}"
@@ -59,6 +74,12 @@ def tensorrt_root():
     )
     assert path.returncode == 0, path.stdout + path.stderr
     root = Path(path.stdout.strip())
+    return root
+
+
+def tensorrt_root():
+    """Locate the prepared TensorRT SDK without importing a runtime wheel."""
+    root = _dependency_root("tensorrt")
     assert (root / "include/NvInfer.h").is_file()
     return root
 
@@ -73,13 +94,12 @@ def sdk_version():
 
 
 def cuda_root():
-    """Use an explicit test root or the installed PyPI CUDA header directory."""
+    """Use an explicit test root or the prepared Conan CUDA SDK."""
     if root := os.environ.get("TENSORACLE_CUDA_ROOT"):
         return Path(root)
-    try:
-        return Path(distribution("nvidia-cuda-runtime").locate_file("nvidia/cu13"))
-    except PackageNotFoundError:
-        return None
+    root = _dependency_root("cuda-toolkit")
+    assert (root / "include/cuda.h").is_file()
+    return root
 
 
 def _build(work, definitions):

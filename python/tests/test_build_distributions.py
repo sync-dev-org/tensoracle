@@ -136,11 +136,14 @@ def host(script, tmp_path, monkeypatch):
     source = tmp_path / "source"
     (source / "python").mkdir(parents=True)
     (source / "python/pyproject.toml").write_text('[build-system]\nrequires = ["conan==2.34.0"]\n')
+    (source / "noren-words.txt").write_text("private-example\n")
     fake = FakeHost(source)
-    (source / "cpp/conan/miniz").mkdir(parents=True)
-    (source / "cpp/conan.lock").write_text('{"version": "0.5", "requires": ["miniz/3.0.2#123"]}')
+    (source / "cpp/conan").mkdir(parents=True)
+    (source / "cpp/conan.lock").write_text('{"version": "0.5", "requires": ["miniz/3.1.1#123"]}')
     (source / "cpp/conanfile.py").write_text("# consumer\n")
-    (source / "cpp/conan/miniz/conandata.yml").write_text("sources: {}\n")
+    (source / "cpp/conan/recipes.json").write_text(
+        json.dumps({"tag": "v0.2.0", "sha256": "a" * 64})
+    )
     subprocess_calls = SimpleNamespace(
         run=fake.run, check_output=fake.check_output, STDOUT=subprocess.STDOUT
     )
@@ -185,6 +188,23 @@ def test_docker_uses_the_logical_cpus_given_on_the_command_line(script, host, mo
         ("run", [cpus]),
         ("offline run", [cpus]),
     ]
+
+
+def test_release_stages_the_recipe_in_a_host_sdist_before_starting_containers(
+    script, host, monkeypatch
+):
+    """Containers receive a host-built sdist and no host credentials or recipe download process."""
+    monkeypatch.setattr(sys, "argv", host.arguments)
+
+    script.main()
+
+    sdist = next(command for command in host.commands if command[:2] == ["uv", "build"])
+    assert "--sdist" in sdist
+    containers = [command for command in host.commands if command[:2] == ["docker", "run"]]
+    assert host.commands.index(sdist) < host.commands.index(containers[0])
+    for command in containers:
+        assert not any("src=" + str(host.source) in value for value in command)
+        assert not any("TOKEN" in value or "source_credentials" in value for value in command)
 
 
 def test_docker_uses_logical_cpus_0_to_7_without_the_option(script, host, monkeypatch):
@@ -244,8 +264,9 @@ def test_release_containers_select_source_built_dependencies_and_record_inputs(
         assert not any("dst=/sdk" in value for value in command)
     manifest = json.loads((Path(host.arguments[-1]) / "inputs.json").read_text())
     assert manifest["conan"]["cli"] == "conan==2.34.0"
-    assert manifest["conan"]["lock"]["requires"] == ["miniz/3.0.2#123"]
-    assert "cpp/conan/miniz/conandata.yml" in manifest["conan"]["files"]
+    assert manifest["conan"]["lock"]["requires"] == ["miniz/3.1.1#123"]
+    assert "cpp/conan/recipes.json" in manifest["conan"]["files"]
+    assert manifest["conan"]["recipes"]["tag"] == "v0.2.0"
 
 
 @pytest.mark.parametrize("extension", [".so", ".cmake"])
@@ -258,21 +279,19 @@ def test_release_inspection_rejects_build_and_conan_paths(script, tmp_path, exte
         script.check_build_paths(artifact)
 
 
-def test_sdist_selection_ignores_the_sdk_and_recipe_archives(script, tmp_path):
+def test_sdist_selection_ignores_the_sdk_and_recipe_input(script, tmp_path):
     """The source build selects PKG-INFO even when release SDK archives share its directory."""
     for name, files in {
         "tensoracle-2.1.2.tar.gz": {"tensoracle-2.1.2/PKG-INFO": b"Name: tensoracle\n"},
         "tensoracle-sdk-2.1.2-linux-x86_64.tar.gz": {"tensoracle/cpp/include/header.h": b""},
-        "tensoracle-recipes-2.1.2.tar.gz": {"tensoracle/conanfile.py": b""},
+        "recipe-input.tar.gz": {"recipes/tensoracle/conanfile.py": b""},
     }.items():
         (tmp_path / name).write_bytes(tar_bytes(files))
 
     assert script.sdist_archive(tmp_path).name == "tensoracle-2.1.2.tar.gz"
 
 
-def test_sdk_and_recipe_archives_preserve_the_sdk_and_bind_its_public_download(
-    script, tmp_path, monkeypatch
-):
+def test_sdk_archive_preserves_the_sdk_and_records_the_recipe_update(script, tmp_path, monkeypatch):
     """SDK generation copies wheel content, restores relative links, and records the SDK digest."""
     wheel = tmp_path / "tensoracle-2.1.2-cp312-abi3-linux_x86_64.whl"
     files = {
@@ -292,9 +311,7 @@ def test_sdk_and_recipe_archives_preserve_the_sdk_and_bind_its_public_download(
     commands = []
     monkeypatch.setattr(script, "run", lambda *args, **kwargs: commands.append(args))
 
-    sdk, recipes = script.create_cpp_archives(
-        wheel, ROOT / "cpp/conan", tmp_path / "stage", "2.1.2"
-    )
+    sdk = script.create_cpp_sdk(wheel, tmp_path / "stage", "2.1.2")
 
     assert commands == [
         (
@@ -316,25 +333,15 @@ def test_sdk_and_recipe_archives_preserve_the_sdk_and_bind_its_public_download(
             archive.getmember("tensoracle/cpp/lib/libtensoracle.so.2").linkname
             == "libtensoracle.so.2.1.2"
         )
-    with tarfile.open(recipes) as archive:
-        data = json.load(archive.extractfile("tensoracle/conandata.yml"))
-        assert archive.extractfile("tensoracle/LICENSE").read() == b"MIT\n"
-        source = data["sources"]["2.1.2"]["Linux"]["x86_64"]
-        assert (
-            source["url"]
-            == f"https://github.com/sync-dev-org/tensoracle/releases/download/v2.1.2/{sdk.name}"
-        )
-        import hashlib
+    import hashlib
 
-        assert source["sha256"] == hashlib.sha256(sdk.read_bytes()).hexdigest()
-        assert (
-            archive.extractfile("tensoracle/conanfile.py").read()
-            == (ROOT / "cpp/conan/package/conanfile.py").read_bytes()
-        )
-        assert (
-            archive.extractfile("tensorrt/conandata.yml").read()
-            == (ROOT / "cpp/conan/tensorrt/conandata.yml").read_bytes()
-        )
+    release = json.loads((wheel.parent / "sdk-release.json").read_text())
+    assert release == {
+        "version": "2.1.2",
+        "url": f"https://github.com/sync-dev-org/tensoracle/releases/download/v2.1.2/{sdk.name}",
+        "sha256": hashlib.sha256(sdk.read_bytes()).hexdigest(),
+    }
+    assert sorted(path.name for path in wheel.parent.glob("*.tar.gz")) == [sdk.name]
 
 
 # The private words are assembled at run time so the published test source does not contain them.
@@ -381,9 +388,10 @@ def test_sdk_elf_rejects_the_wheel_tensorrt_runpath(script, tmp_path, monkeypatc
         script.inspect_elf(library, "2.1.2", sdk=True)
 
 
-def test_released_recipe_revision_is_locked_while_the_sdk_is_supplied_locally(script, tmp_path):
-    """A loopback source mirror verifies the SDK without rewriting its public URL or revision."""
+def test_shared_recipe_revision_is_locked_with_a_new_sdk_version(script, tmp_path):
+    """The SDK stays independent of TensorRT while its test consumer supplies TensorRT."""
     import hashlib
+    import runpy
     import shutil
 
     specification = importlib.util.spec_from_file_location(
@@ -395,13 +403,17 @@ def test_released_recipe_revision_is_locked_while_the_sdk_is_supplied_locally(sc
     (sdk_root / "lib").mkdir(parents=True)
     (sdk_root / "include").mkdir()
     (sdk_root / "lib/cmake/tensoracle").mkdir(parents=True)
-    (sdk_root / "lib/libtensoracle.so.2.1.2").write_bytes(b"prebuilt library\n")
-    (sdk_root / "lib/libtensoracle.so.2").symlink_to("libtensoracle.so.2.1.2")
+    (sdk_root / "lib/libtensoracle.so.2.3.0").write_bytes(b"prebuilt library\n")
+    (sdk_root / "lib/libtensoracle.so.2").symlink_to("libtensoracle.so.2.3.0")
     sdk = tmp_path / "sdk.tar.gz"
     with tarfile.open(sdk, "w:gz") as archive:
         archive.add(sdk_root.parents[1] / "tensoracle", arcname="tensoracle")
     recipes = tmp_path / "recipe-root"
-    shutil.copytree(ROOT / "cpp/conan/package", recipes / "tensoracle")
+    acquisition = runpy.run_path(str(ROOT / "cpp/conan/recipes.py"))
+    manifest = json.loads((ROOT / "cpp/conan/recipes.json").read_text())
+    (tmp_path / "shared").mkdir()
+    shared = acquisition["_download"](manifest, tmp_path / "shared", "conan")
+    shutil.copytree(shared / "tensoracle", recipes / "tensoracle")
     (recipes / "tensorrt").mkdir()
     (recipes / "tensorrt/conanfile.py").write_text(
         "from conan import ConanFile\nfrom conan.tools.files import copy\nimport os\nclass SDK(ConanFile):\n"
@@ -424,30 +436,44 @@ def test_released_recipe_revision_is_locked_while_the_sdk_is_supplied_locally(sc
         text=True,
         check=True,
     )
-    url = "https://github.com/sync-dev-org/tensoracle/releases/download/v2.1.2/sdk.tar.gz"
-    (recipes / "tensoracle/conandata.yml").write_text(
-        json.dumps(
-            {
-                "sources": {
-                    "2.1.2": {
-                        "Linux": {
-                            "x86_64": {
-                                "url": url,
-                                "sha256": hashlib.sha256(sdk.read_bytes()).hexdigest(),
-                            }
-                        }
-                    }
-                }
-            }
-        )
-    )
-    recipe_archive = tmp_path / "recipes.tar.gz"
-    with tarfile.open(recipe_archive, "w:gz") as archive:
+    url = "https://github.com/sync-dev-org/tensoracle/releases/download/v2.3.0/sdk.tar.gz"
+    release = {
+        "version": "2.3.0",
+        "url": url,
+        "sha256": hashlib.sha256(sdk.read_bytes()).hexdigest(),
+    }
+    # Only the external TensorRT package boundary is substituted. The tensoracle
+    # recipe is the unchanged implementation from the pinned shared bundle.
+    recipe_input = tmp_path / "recipe-input.tar.gz"
+    with tarfile.open(recipe_input, "w:gz") as archive:
         for directory in recipes.iterdir():
-            archive.add(directory, arcname=directory.name)
+            archive.add(directory, arcname="recipes/" + directory.name)
+    manifest["sha256"] = hashlib.sha256(recipe_input.read_bytes()).hexdigest()
     package, generators, record = checker.acquire_sdk(
-        sdk, recipe_archive, tmp_path / "verification", ROOT / "cpp/conan/profiles/linux-gcc13"
+        sdk,
+        recipe_input,
+        release,
+        manifest,
+        tmp_path / "verification",
+        ROOT / "cpp/conan/profiles/linux-gcc13",
     )
+    assert record["recipe_bundle"] == manifest
+    assert record["source_recipe_reference"].startswith("tensoracle/2.2.1#")
+    assert record["recipe_references"]["tensoracle"].startswith("tensoracle/2.3.0#")
+    assert record["source_recipe_reference"] != record["recipe_references"]["tensoracle"]
+    nodes = list(record["graph"]["nodes"].values())
+    node = next(node for node in nodes if node.get("name") == "tensoracle")
+    assert node["settings"] == {"os": "Linux", "arch": "x86_64"}
+    assert not any(
+        dependency["ref"].startswith("tensorrt/") for dependency in node["dependencies"].values()
+    )
+    root = next(node for node in nodes if node.get("name") is None)
+    dependency = next(
+        dependency
+        for dependency in root["dependencies"].values()
+        if dependency["ref"].startswith("tensorrt/")
+    )
+    assert dependency["direct"] and dependency["test"]
     assert record["sdk_url"] == url
     assert record["changed_digest_exit"] != 0
     assert (package / "tensoracle/cpp/lib/libtensoracle.so.2").read_bytes() == b"prebuilt library\n"
@@ -481,3 +507,24 @@ def test_released_recipe_revision_is_locked_while_the_sdk_is_supplied_locally(sc
     ):
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_sdk_acquisition_rejects_a_changed_shared_bundle(script, tmp_path):
+    """A changed recipe input fails its pinned digest before any recipe can be exported."""
+    specification = importlib.util.spec_from_file_location(
+        "check_cpp_sdk", ROOT / "tools/check_cpp_sdk.py"
+    )
+    checker = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(checker)
+    bundle = tmp_path / "recipe-input.tar.gz"
+    bundle.write_bytes(b"changed bundle")
+    with pytest.raises(AssertionError, match="recipe bundle SHA256"):
+        checker.acquire_sdk(
+            tmp_path / "sdk.tar.gz",
+            bundle,
+            {"version": "2.3.0", "url": "https://example.invalid/sdk", "sha256": "a" * 64},
+            {"tag": "fixture", "sha256": "0" * 64},
+            tmp_path / "verification",
+            ROOT / "cpp/conan/profiles/linux-gcc13",
+        )
+    assert not (tmp_path / "verification/conan-home").exists()

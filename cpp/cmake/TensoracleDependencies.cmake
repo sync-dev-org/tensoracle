@@ -1,6 +1,6 @@
 include_guard(GLOBAL)
 find_package(nlohmann_json 3.11.3 EXACT CONFIG REQUIRED)
-find_package(miniz 3.0.2 EXACT CONFIG REQUIRED)
+find_package(miniz 3.1.1 EXACT CONFIG REQUIRED)
 find_package(TensorRT 11.2.1.2 EXACT CONFIG REQUIRED)
 add_library(tensoracle_json ALIAS nlohmann_json::nlohmann_json)
 add_library(tensoracle_miniz ALIAS miniz::miniz)

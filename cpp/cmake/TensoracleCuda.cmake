@@ -1,7 +1,7 @@
 include_guard(GLOBAL)
 
-# Only the Driver API is needed by the C++ helpers. A PyPI CUDA root has neither
-# the unversioned cudart linker name nor all the headers of a complete toolkit.
+# Only the Driver API is needed by the C++ helpers. Runtime-only Conan SDKs
+# supply the headers and link stub without nvcc or an OS toolkit installation.
 function(_tensoracle_find_cuda)
     if(CUDAToolkit_ROOT)
         set(_roots "${CUDAToolkit_ROOT}")
@@ -57,8 +57,8 @@ function(_tensoracle_find_cuda)
     set(_root "${_selected_root}")
     if(NOT _include)
         message(FATAL_ERROR "CUDA header cuda.h was not found. Searched: ${_searched_includes}. "
-            "Install PyPI nvidia-cuda-nvcc and nvidia-cuda-runtime 13.2 and set "
-            "CUDAToolkit_ROOT to their site-packages/nvidia/cu13 directory.")
+            "Prepare cuda-toolkit/13.2.2 with Conan and set CUDAToolkit_ROOT "
+            "to its user.cuda:root, or supply an existing CUDA SDK root.")
     endif()
 
     if(WIN32)
@@ -66,23 +66,23 @@ function(_tensoracle_find_cuda)
         find_library(_tensoracle_cuda_driver_library NAMES cuda
             PATHS ${_driver_paths} NO_DEFAULT_PATH)
     else()
-        set(_driver_paths "/usr/lib/wsl/lib" "${_root}/lib64" "${_root}/lib"
+        set(_driver_paths "${_root}/lib64/stubs" "${_root}/lib/stubs"
+            "${_root}/targets/x86_64-linux/lib/stubs" "${_root}/lib64" "${_root}/lib"
             "${_root}/targets/x86_64-linux/lib")
-        find_library(_tensoracle_cuda_driver_library NAMES cuda HINTS ${_driver_paths})
+        find_library(_tensoracle_cuda_driver_library NAMES cuda PATHS ${_driver_paths} NO_DEFAULT_PATH)
         if(NOT _tensoracle_cuda_driver_library)
-            list(APPEND _driver_paths "${_root}/lib64/stubs" "${_root}/lib/stubs"
-                "${_root}/targets/x86_64-linux/lib/stubs")
+            list(APPEND _driver_paths "/usr/lib/wsl/lib")
             find_library(_tensoracle_cuda_driver_library NAMES cuda
-                PATHS ${_driver_paths} NO_DEFAULT_PATH)
+                HINTS "/usr/lib/wsl/lib")
         endif()
     endif()
     set(_driver "${_tensoracle_cuda_driver_library}")
     unset(_tensoracle_cuda_driver_library CACHE)
     if(NOT _driver)
         message(FATAL_ERROR "CUDA driver link library was not found. Searched: ${_driver_paths} "
-            "and system library directories. Install the NVIDIA driver on Linux; on Windows "
-            "install PyPI nvidia-cuda-runtime 13.2 and set CUDAToolkit_ROOT to its "
-            "site-packages/nvidia/cu13 directory (lib/x64/cuda.lib).")
+            "and system library directories. Prepare cuda-toolkit/13.2.2 with Conan "
+            "and set CUDAToolkit_ROOT to its user.cuda:root. Existing CUDA SDK roots "
+            "and the installed NVIDIA driver on Linux remain supported.")
     endif()
     message(STATUS "tensoracle CUDA headers: ${_include}")
     message(STATUS "tensoracle CUDA driver: ${_driver}")

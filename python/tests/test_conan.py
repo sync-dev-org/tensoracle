@@ -12,7 +12,7 @@ import pytest
 from native_build import PROJECT, ROOT
 
 
-def configure(tmp_path, *options, environment=None):
+def configure(tmp_path, *options, environment=None, cuda=False):
     source = tmp_path / "source"
     source.mkdir()
     (source / "CMakeLists.txt").write_text(
@@ -30,6 +30,17 @@ def configure(tmp_path, *options, environment=None):
         "find_package(TensorRT 11.2.1.2 EXACT CONFIG REQUIRED)\n"
         'file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/sdk-includes.txt"\n'
         '  CONTENT "$<TARGET_PROPERTY:TensorRT::nvinfer,INTERFACE_INCLUDE_DIRECTORIES>")\n'
+        + (
+            f'include("{ROOT / "cpp/cmake/TensoracleCuda.cmake"}")\n'
+            "tensoracle_find_cuda(OUT_INCLUDE_DIR headers OUT_DRIVER_LIBRARY driver)\n"
+            'file(WRITE "${CMAKE_BINARY_DIR}/cuda.txt" "${CUDAToolkit_ROOT}\\n${headers}\\n${driver}")\n'
+            'file(WRITE "${CMAKE_BINARY_DIR}/probe.cpp" "#include <cuda_runtime_api.h>\\n'
+            'int main() { return CUDART_VERSION < 13020; }\\n")\n'
+            'add_executable(cuda_probe "${CMAKE_BINARY_DIR}/probe.cpp")\n'
+            "target_link_libraries(cuda_probe PRIVATE tensoracle_cuda_driver)\n"
+            if cuda
+            else ""
+        )
     )
     return subprocess.run(
         ["cmake", "-S", str(source), "-B", str(tmp_path / "build"), "-G", "Ninja", *options],
@@ -92,6 +103,29 @@ def test_prepared_native_tests_configure_without_remotes_or_exports(tmp_path):
     includes = (tmp_path / "build/sdk-includes.txt").read_text()
     assert includes
     assert any((Path(path) / "NvInferVersion.h").is_file() for path in includes.split(";"))
+
+
+@pytest.mark.req("SP-TENSORACLE-070")
+@pytest.mark.req("SP-TENSORACLE-040")
+def test_prepared_cuda_build_uses_conan_headers_and_driver_without_pypi(tmp_path):
+    """A prepared Conan toolchain supplies CUDA headers and a driver stub to C++ consumers."""
+    result = configure(tmp_path, "-DTENSORACLE_CONAN_OFFLINE=ON", cuda=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    root, headers, driver = (tmp_path / "build/cuda.txt").read_text().splitlines()
+    assert root and "site-packages" not in root
+    assert Path(headers) == Path(root) / "include"
+    assert (Path(headers) / "cuda_runtime_api.h").is_file()
+    assert (Path(headers) / "crt/host_config.h").is_file()
+    assert not (Path(root) / "bin/nvcc").exists()
+    assert Path(driver) == Path(root) / "lib64/stubs/libcuda.so"
+    compiled = subprocess.run(
+        ["cmake", "--build", str(tmp_path / "build"), "--parallel", "2"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=45,
+    )
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
 
 
 def test_native_tests_accept_a_different_system_cmake_without_changing_the_lock(tmp_path):

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-if(NOT TENSORRT_ROOT)
+if(NOT TENSORRT_ROOT OR NOT CUDAToolkit_ROOT)
     include("${CMAKE_CURRENT_LIST_DIR}/../../cpp/conan/bootstrap.cmake")
 endif()
 project(tensoracle_wheel_consumer LANGUAGES CXX)
@@ -22,12 +22,6 @@ if(NOT TENSORRT_ROOT)
     get_filename_component(TENSORRT_ROOT "${_tensorrt_include}" DIRECTORY)
 endif()
 find_path(_tensorrt_include NvInfer.h HINTS "${TENSORRT_ROOT}/include" REQUIRED)
-if(NOT CUDAToolkit_ROOT)
-    execute_process(COMMAND "${Python_EXECUTABLE}" -c
-        "from importlib.metadata import distribution; print(distribution('nvidia-cuda-runtime').locate_file('nvidia/cu13'))"
-        OUTPUT_VARIABLE CUDAToolkit_ROOT OUTPUT_STRIP_TRAILING_WHITESPACE
-        COMMAND_ERROR_IS_FATAL ANY)
-endif()
 tensoracle_find_cuda(OUT_INCLUDE_DIR _cuda_include OUT_DRIVER_LIBRARY _cuda_driver)
 
 nanobind_add_module(_native STABLE_ABI bindings.cpp)

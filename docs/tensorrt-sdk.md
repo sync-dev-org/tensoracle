@@ -1,12 +1,16 @@
 # Prepare a TensorRT SDK
 
-Tensoracle provides a Conan recipe for the Linux x86_64 TensorRT **11.2.1.2** SDK. It supplies 13 headers, the link library `lib/libnvinfer.so.11`, a relative `lib/libnvinfer.so` symlink, and the TensorRT OSS and NVIDIA license texts. WSL2 uses this Linux SDK. Tensoracle v2 currently supplies Linux wheels; [Windows x86_64 users](#windows-x86_64) stay on tensoracle 1.x until a later v2 minor release adds Windows wheels.
+Tensoracle uses a locked Conan recipe for the Linux x86_64 TensorRT **11.2.1.2** SDK. It supplies 13 headers, the link library `lib/libnvinfer.so.11`, a relative `lib/libnvinfer.so` symlink, and the TensorRT OSS and NVIDIA license texts. WSL2 uses this Linux SDK. Tensoracle v2 currently supplies Linux wheels; [Windows x86_64 users](#windows-x86_64) stay on tensoracle 1.x until a later v2 minor release adds Windows wheels.
 
-The SDK is a build input. Tensoracle's standalone C++ build, Python wheel build, native test preparation, and source distribution build all use `cpp/conanfile.py` and `cpp/conan.lock`. They do not require `TENSORACLE_SDK_ROOT` or a manually assembled TensorRT installation. CUDA headers and tools remain separate PyPI dependencies; an OS-installed CUDA Toolkit is not required.
+Native applications can obtain tensoracle itself from its [public prebuilt SDK archive](cpp-sdk.md),
+verify that release's SHA256, and configure CMake with `CMAKE_PREFIX_PATH`.
+The tensoracle Conan package recipe is maintained separately and is not included in this repository.
+
+The TensorRT SDK is a build input. Tensoracle's standalone C++ build, Python wheel build, native test preparation, and source distribution build all use `cpp/conanfile.py` and `cpp/conan.lock`. They do not require `TENSORACLE_SDK_ROOT` or a manually assembled TensorRT installation. CUDA build headers and the driver link stub come from Conan `cuda-toolkit/13.2.2` with `compiler=False`; an OS-installed CUDA Toolkit is not required. The cubin producer continues to obtain its runtime compiler, ptxas, and cuobjdump from PyPI.
 
 ## Fixed and verified inputs
 
-The single input manifest is [`cpp/conan/tensorrt/conandata.yml`](https://github.com/sync-dev-org/tensoracle/blob/main/cpp/conan/tensorrt/conandata.yml). It records:
+Source distributions include the exact locked recipe and its input manifest at `cpp/conan/recipes/tensorrt/conandata.yml`. The manifest records:
 
 - The 13 header filenames and individual SHA256 values from TensorRT OSS commit `1dade062a4e796c14ab6b3f32461ad694ec58951`.
 - The exact NVIDIA package-index wheel `tensorrt_cu13_libs-11.2.1.2-py3-none-manylinux_2_28_x86_64.whl` and its SHA256.
@@ -24,7 +28,7 @@ uv tool install "$(python3 -c 'import tomllib; from pathlib import Path; print(n
 cmake -P cpp/conan/prepare-tests.cmake
 ```
 
-Preparation exports the local miniz and TensorRT recipes, checks their revisions against the lock, and obtains the native dependencies. The SDK wheel is a large download; Conan keeps the assembled SDK for subsequent builds. See [Building the C++ library](https://github.com/sync-dev-org/tensoracle/blob/main/cpp/README.md) for the standalone build and CUDA header paths.
+Preparation obtains the locked TensorRT and CUDA recipes and checks their revisions before resolving native dependencies. Miniz 3.1.1, nlohmann/json, and Catch2 come from ConanCenter. For a build without an existing recipe cache, use a source distribution, which includes both recipes, the CUDA redist manifest, and the TensorRT license texts. The SDK wheel is a large download; Conan keeps the assembled SDK for subsequent builds. See [Building the C++ library](https://github.com/sync-dev-org/tensoracle/blob/main/cpp/README.md) for the standalone build.
 
 For Python development, run from `python/`:
 
@@ -37,7 +41,9 @@ Isolated wheel builds install their Python build requirements and use the same C
 
 ## Use the recipe in a C++ consumer
 
-Export `cpp/conan/tensorrt/` once before resolving a consumer graph. A consumer requires the SDK and links the CMakeDeps target:
+For consumers that need TensorRT headers and a link library in addition to the
+[prebuilt tensoracle SDK](cpp-sdk.md), export `cpp/conan/recipes/tensorrt/` from an
+extracted tensoracle source distribution once before resolving a consumer graph. The recipe revision is recorded in `cpp/conan.lock`. A consumer requires the SDK and links the CMakeDeps target:
 
 ```python
 self.requires("tensorrt/11.2.1.2")
@@ -65,7 +71,33 @@ tensoracle_add_cubin_plugin(
     SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/plugin.cpp")
 ```
 
-The CUDA helper reads `cuda.h` from the selected CUDA root and links the installed NVIDIA driver's `libcuda.so`; on WSL it searches `/usr/lib/wsl/lib`. It reports the selected headers and driver library during configuration. Existing explicitly supplied SDK roots remain supported by the public helper.
+The CUDA helper reads `cuda.h` and the driver link stub from the selected Conan CUDA root. On Linux it prefers `lib64/stubs/libcuda.so`, then the other SDK library locations, and falls back to the installed driver (including `/usr/lib/wsl/lib` on WSL). The stub is only a link input; execution uses the host driver's `libcuda.so.1`. Do not package the stub or add its directory to the installed RUNPATH. It reports the selected headers and driver library during configuration. Existing explicitly supplied SDK roots remain supported by the public helper.
+
+## CUDA build inputs
+
+The same lock selects `cuda-toolkit/13.2.2` as a Conan `tool_requires` dependency, with `compiler=False`. A source distribution includes this recipe and its verified NVIDIA input manifest at `cpp/conan/recipes/cuda-toolkit/`. Native preparation downloads and checks the CUDA runtime headers, CRT headers, and driver link stub. The generated Conan toolchain sets `CUDAToolkit_ROOT` to the recipe's `user.cuda:root`; the CMake helpers use this root without importing a CUDA Python package.
+
+From an extracted source distribution, export the CUDA recipe once before resolving a consumer graph:
+
+```bash
+conan export cpp/conan/recipes/cuda-toolkit --version=13.2.2
+```
+
+A consumer that prepares its own Conan toolchain can use the same recipe:
+
+```python
+from conan.tools.cmake import CMakeToolchain
+
+# In build_requirements():
+self.tool_requires("cuda-toolkit/13.2.2", options={"compiler": False})
+
+# In generate():
+toolchain = CMakeToolchain(self)
+toolchain.variables["CUDAToolkit_ROOT"] = self.dependencies.build["cuda-toolkit"].conf_info.get("user.cuda:root")
+toolchain.generate()
+```
+
+Configure the consumer with that generated toolchain. `tensoracle_find_cuda` and `tensoracle_add_cubin_plugin` then select the same headers and driver link library. Explicit `CUDAToolkit_ROOT` CMake variables, environment roots, and existing SDK layouts remain supported. The build dependencies do not change the PyPI tools used at runtime by `tensoracle[producer]`.
 
 ## Check the SDK
 

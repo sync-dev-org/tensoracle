@@ -19,7 +19,7 @@ get_requires_for_build_wheel = native_build.get_requires_for_build_wheel
 
 
 @contextmanager
-def _source_tree(*, editable=False):
+def _source_tree(*, editable=False, include_recipes=False):
     project = Path(__file__).resolve().parent
     source_archive = (project / "PKG-INFO").is_file()
     repository = project if source_archive else project.parent
@@ -70,6 +70,15 @@ def _source_tree(*, editable=False):
                         )
                     else:
                         shutil.copyfile(source, destination)
+            if include_recipes:
+                recipe_tools = runpy.run_path(str(repository / "cpp/conan/recipes.py"))
+                cache = os.environ.get("TENSORACLE_CONAN_CACHE")
+                cache_args = ["--core-conf", f"core.cache:storage_path={cache}"] if cache else []
+                recipe_tools["copy_recipes"](
+                    repository / "cpp/conan",
+                    staged / "cpp/conan/recipes",
+                    cache_args=cache_args,
+                )
             if editable:
                 # Source redirects must survive deletion of the staging directory.
                 settings = staged / "pyproject.toml"
@@ -101,7 +110,11 @@ def _source_tree(*, editable=False):
 def _call(hook, directory, config_settings=None, metadata_directory=None, *, editable=False):
     output = str(Path(directory).resolve())
     metadata = str(Path(metadata_directory).resolve()) if metadata_directory else None
-    with _source_tree(editable=editable):
+    with _source_tree(
+        editable=editable,
+        include_recipes=hook
+        in (native_build.build_sdist, native_build.build_wheel, native_build.build_editable),
+    ):
         if hook in (native_build.build_wheel, native_build.build_editable):
             return hook(output, config_settings, metadata)
         return hook(output, config_settings)

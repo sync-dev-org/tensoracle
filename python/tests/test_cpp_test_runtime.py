@@ -20,7 +20,7 @@ def runtime(directory, *, resources=True):
     return directory
 
 
-def configure(tmp_path, *, explicit=None, inherited=None):
+def configure(tmp_path, *, explicit=None, inherited=None, cuda=None):
     source = tmp_path / "repository/cpp/tests"
     source.mkdir(parents=True)
     shutil.copyfile(RUNTIME_SETUP, source / "runtime.cmake")
@@ -29,6 +29,7 @@ def configure(tmp_path, *, explicit=None, inherited=None):
         "project(test_runtime LANGUAGES NONE)\n"
         "enable_testing()\n"
         'include("${CMAKE_CURRENT_SOURCE_DIR}/runtime.cmake")\n'
+        'file(WRITE "${CMAKE_BINARY_DIR}/producer-root.txt" "${_tensoracle_test_producer_cuda_root}")\n'
         'add_test(NAME runtime COMMAND "${CMAKE_COMMAND}" -P\n'
         '  "${CMAKE_CURRENT_SOURCE_DIR}/parent.cmake")\n'
         "set_tests_properties(runtime PROPERTIES\n"
@@ -51,6 +52,8 @@ def configure(tmp_path, *, explicit=None, inherited=None):
     command = ["cmake", "-S", str(source), "-B", str(tmp_path / "build")]
     if explicit is not None:
         command.append(f"-DTENSORACLE_TEST_TENSORRT_RUNTIME={explicit}")
+    if cuda is not None:
+        command.append(f"-DCUDAToolkit_ROOT={cuda}")
     return subprocess.run(
         command, env=environment, capture_output=True, text=True, check=False, timeout=10
     )
@@ -103,3 +106,25 @@ def test_missing_full_runtime_explains_how_to_supply_it(tmp_path, supplied):
     assert "builder" in message
     if sdk is not None:
         assert str(sdk) in message
+
+
+@pytest.mark.parametrize("selection", ["producer-venv", "explicit-toolkit"])
+def test_ctest_producer_uses_runtime_tools_without_changing_the_build_sdk(tmp_path, selection):
+    """C++ producer tests use PyPI runtime tools while compilation keeps its Conan CUDA SDK."""
+    sdk = tmp_path / "Conan CUDA SDK"
+    producer = (
+        tmp_path / "repository/python/.venv/lib/python3.13/site-packages/nvidia/cu13"
+        if selection == "producer-venv"
+        else sdk
+    )
+    (producer / "bin").mkdir(parents=True)
+    (producer / "lib").mkdir()
+    (producer / "bin/ptxas").touch()
+    (producer / "lib/libnvrtc.so.13").touch()
+
+    result = configure(tmp_path, explicit=runtime(tmp_path / "TensorRT runtime"), cuda=sdk)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / "build/producer-root.txt").read_text() == str(producer)
+    cache = (tmp_path / "build/CMakeCache.txt").read_text()
+    assert f"CUDAToolkit_ROOT:UNINITIALIZED={sdk}" in cache

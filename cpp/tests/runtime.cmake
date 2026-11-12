@@ -26,3 +26,15 @@ set(_tensoracle_test_environment "LD_LIBRARY_PATH=${_tensoracle_test_runtime}")
 if(NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
     string(APPEND _tensoracle_test_environment ":$ENV{LD_LIBRARY_PATH}")
 endif()
+
+# Cubin production executes the Python producer extra's tools. The Conan CUDA
+# SDK remains the compilation input and need not contain a compiler or NVRTC.
+set(_tensoracle_test_producer_cuda_root "${CUDAToolkit_ROOT}")
+file(GLOB _tensoracle_producer_candidates LIST_DIRECTORIES TRUE
+    "${CMAKE_CURRENT_LIST_DIR}/../../python/.venv/lib/python*/site-packages/nvidia/cu13")
+foreach(_candidate IN LISTS _tensoracle_producer_candidates)
+    if(EXISTS "${_candidate}/bin/ptxas" AND EXISTS "${_candidate}/lib/libnvrtc.so.13")
+        get_filename_component(_tensoracle_test_producer_cuda_root "${_candidate}" ABSOLUTE)
+        break()
+    endif()
+endforeach()

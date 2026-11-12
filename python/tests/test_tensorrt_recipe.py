@@ -11,13 +11,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from native_build import ROOT
+from native_build import tensorrt_recipe
 
 
 @pytest.fixture
 def recipe_inputs(tmp_path):
     recipe = tmp_path / "recipe"
-    shutil.copytree(ROOT / "cpp/conan/tensorrt", recipe)
+    shutil.copytree(tensorrt_recipe(), recipe)
     data = yaml.safe_load((recipe / "conandata.yml").read_text())
     source = data["sources"]["11.2.1.2"]
     downloads = tmp_path / "downloads"

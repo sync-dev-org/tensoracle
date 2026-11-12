@@ -8,9 +8,10 @@ and receives a NumPy output. Importing the example does not initialize CUDA.
 
 The build needs the tensoracle v2 wheel, the pinned Conan CLI, CMake 3.26 or
 later, and a C++17 compiler. It obtains TensorRT SDK 11.2.1.2 from the repository's
-recipe and lock; an explicit `TENSORRT_ROOT` remains supported. The isolated build installs nanobind, scikit-build-core,
-and CUDA 13.2 headers from wheels. It uses the installed NVIDIA driver for the
-CUDA Driver API. No OS CUDA Toolkit is required.
+recipe and lock; an explicit `TENSORRT_ROOT` remains supported. The isolated build installs nanobind and scikit-build-core from wheels.
+Conan `cuda-toolkit/13.2.2` (`compiler=False`) supplies CUDA headers and the
+driver link stub; `CUDAToolkit_ROOT` still accepts an existing SDK root.
+Execution uses the installed NVIDIA driver for the CUDA Driver API. No OS CUDA Toolkit is required.
 
 Build tensoracle's wheel first. For an unpublished v2 build, constrain the build
 dependency to that wheel so that the build does not pick a published v1 package:

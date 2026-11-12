@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.26)
-if(NOT TENSORRT_ROOT)
+if(NOT TENSORRT_ROOT OR NOT CUDAToolkit_ROOT)
     include("${CMAKE_CURRENT_LIST_DIR}/../../cpp/conan/bootstrap.cmake")
 endif()
 project(tensoracle_cubin_example LANGUAGES CXX)
@@ -19,11 +19,6 @@ if(NOT TENSORRT_ROOT)
 endif()
 if(NOT DEFINED TENSORACLE_BUNDLE_ROOT)
     set(TENSORACLE_BUNDLE_ROOT "${CMAKE_CURRENT_LIST_DIR}/bundle")
-endif()
-if(NOT CUDAToolkit_ROOT)
-    execute_process(COMMAND "${Python_EXECUTABLE}" -c
-        "from importlib.metadata import distribution; print(distribution('nvidia-cuda-runtime').locate_file('nvidia/cu13'))"
-        OUTPUT_VARIABLE CUDAToolkit_ROOT OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 endif()
 
 tensoracle_add_cubin_plugin(

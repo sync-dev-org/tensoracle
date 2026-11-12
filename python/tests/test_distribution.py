@@ -14,6 +14,7 @@ import tomllib
 import unicodedata
 import zipfile
 from html.parser import HTMLParser
+from importlib.metadata import distribution
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -24,7 +25,7 @@ import yaml
 from packaging.requirements import Requirement
 from safetensors.numpy import save_file
 
-from native_build import cuda_root, sdk_version, tensorrt_root
+from native_build import cuda_root, sdk_version, tensorrt_recipe, tensorrt_root
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
@@ -113,7 +114,7 @@ def test_stub_generation_loads_the_digest_verified_conan_tensorrt(distributions)
     """The stub generator imports the binding with the recipe's exact TensorRT library."""
     proofs = re.findall(r"TensorRT for stub generation: (\{.*\})", distributions["build_log"])
     assert proofs, distributions["build_log"]
-    data = yaml.safe_load((ROOT / "cpp/conan/tensorrt/conandata.yml").read_text())
+    data = yaml.safe_load((tensorrt_recipe() / "conandata.yml").read_text())
     expected = data["sources"]["11.2.1.2"]["library_sha256"]
     for value in proofs:
         proof = json.loads(value)
@@ -122,6 +123,7 @@ def test_stub_generation_loads_the_digest_verified_conan_tensorrt(distributions)
 
 
 @pytest.mark.req("SP-TENSORACLE-017")
+@pytest.mark.req("SP-TENSORACLE-063")
 def test_sdist_contains_public_sources_without_development_files(distributions):
     """The source distribution includes code, tests, docs, and examples without private files."""
     with tarfile.open(distributions["sdist"]) as archive:
@@ -135,6 +137,17 @@ def test_sdist_contains_public_sources_without_development_files(distributions):
     assert not [str(path) for path in paths if path.parts[0] in private]
     assert {"src", "tests", "docs", "examples", "cpp"} <= {path.parts[0] for path in paths}
     assert {"README.md", "LICENSE", "pyproject.toml"} <= {str(path) for path in paths}
+    assert not any(
+        str(path).startswith(("cpp/conan/miniz/", "cpp/conan/tensorrt/")) for path in paths
+    )
+    assert {
+        "cpp/conan/recipes/tensorrt/conanfile.py",
+        "cpp/conan/recipes/tensorrt/conandata.yml",
+        "cpp/conan/recipes/tensorrt/LICENSE.NVIDIA",
+        "cpp/conan/recipes/tensorrt/LICENSE.OSS",
+        "cpp/conan/recipes/cuda-toolkit/conanfile.py",
+        "cpp/conan/recipes/cuda-toolkit/redist.json",
+    } <= {str(path) for path in paths}
 
 
 def test_sdist_exclusions_match_the_public_snapshot(publication_config, tmp_path):
@@ -379,6 +392,129 @@ def test_installed_wheel_serves_python_and_cpp_without_the_source_tree(distribut
         subprocess.run(command, cwd=tmp_path, env=environment, check=True, timeout=45)
 
 
+@pytest.fixture(scope="module")
+def extracted_sdk(distributions, tmp_path_factory):
+    """Use the installed package files without the wheel's TensorRT dependency nearby."""
+    prefix = tmp_path_factory.mktemp("native-sdk")
+    with zipfile.ZipFile(distributions["wheel"]) as archive:
+        for name in archive.namelist():
+            if name.startswith("tensoracle/cpp/"):
+                archive.extract(name, prefix)
+    return prefix / "tensoracle/cpp"
+
+
+@pytest.mark.req("SP-TENSORACLE-065")
+@pytest.mark.req("SP-TENSORACLE-072")
+@pytest.mark.parametrize("discovery", ["conan", "prefix", "library"])
+def test_sdk_target_links_tensorrt_without_consumer_link_settings(
+    extracted_sdk, tmp_path, discovery
+):
+    """The SDK target supplies TensorRT for Conan, a native prefix, or a supplied library."""
+    environment = dict(os.environ)
+    for name in ("LD_LIBRARY_PATH", "LD_PRELOAD", "TENSORRT_ROOT", "CMAKE_PREFIX_PATH"):
+        environment.pop(name, None)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "main.cpp").write_text(
+        "#include <tensoracle/tensoracle.hpp>\n"
+        "int main() { tensoracle::check_version(); "
+        "return tensoracle::tensorrt_version().major == 11 ? 0 : 1; }\n"
+    )
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.26)\nproject(sdk_link LANGUAGES CXX)\n"
+        "find_package(tensoracle 2 CONFIG REQUIRED)\n"
+        "find_package(tensoracle 2 CONFIG REQUIRED)\n"
+        "add_executable(consumer main.cpp)\n"
+        "target_link_libraries(consumer PRIVATE tensoracle::tensoracle)\n"
+    )
+    options = [f"-DCMAKE_PREFIX_PATH={extracted_sdk}", "-DCMAKE_BUILD_TYPE=Release"]
+    if discovery == "conan":
+        (source / "conanfile.txt").write_text(
+            "[requires]\ntensorrt/11.2.1.2\n[generators]\nCMakeDeps\nCMakeToolchain\n"
+        )
+        profile = ROOT / "cpp/conan/profiles/linux-gcc13"
+        generators = tmp_path / "generators"
+        subprocess.run(
+            [
+                "conan",
+                "install",
+                str(source),
+                "--no-remote",
+                "--build=never",
+                "--lockfile",
+                str(ROOT / "cpp/conan.lock"),
+                "-pr:h",
+                str(profile),
+                "-pr:b",
+                str(profile),
+                "--output-folder",
+                str(generators),
+            ],
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        options.append(f"-DCMAKE_TOOLCHAIN_FILE={generators / 'conan_toolchain.cmake'}")
+    elif discovery == "prefix":
+        options.append(f"-DTENSORRT_ROOT={tensorrt_root()}")
+    else:
+        options.append(f"-DTENSORACLE_TENSORRT_LIBRARY={tensorrt_root() / 'lib/libnvinfer.so.11'}")
+    build = tmp_path / "build"
+    for command in (
+        ["cmake", "-S", str(source), "-B", str(build), *options],
+        ["cmake", "--build", str(build), "--parallel", "2"],
+    ):
+        result = subprocess.run(
+            command, env=environment, capture_output=True, text=True, check=False, timeout=60
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    runtime = distribution("tensorrt-cu13-libs").locate_file("tensorrt_libs")
+    result = subprocess.run(
+        [str(build / "consumer")],
+        env={**environment, "LD_LIBRARY_PATH": str(runtime)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.req("SP-TENSORACLE-065")
+def test_sdk_without_tensorrt_reports_how_to_supply_the_library(extracted_sdk, tmp_path):
+    """Missing TensorRT stops configuration and names the library and root settings."""
+    (tmp_path / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.26)\nproject(missing_sdk LANGUAGES CXX)\n"
+        "set(CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH FALSE)\n"
+        "set(CMAKE_FIND_USE_CMAKE_SYSTEM_PATH FALSE)\n"
+        "set(CMAKE_FIND_USE_CMAKE_ENVIRONMENT_PATH FALSE)\n"
+        "set(CMAKE_FIND_USE_PACKAGE_ROOT_PATH FALSE)\n"
+        "find_package(tensoracle 2 CONFIG REQUIRED)\n"
+    )
+    result = subprocess.run(
+        [
+            "cmake",
+            "-S",
+            str(tmp_path),
+            "-B",
+            str(tmp_path / "build"),
+            f"-DCMAKE_PREFIX_PATH={extracted_sdk}",
+            "-DCMAKE_DISABLE_FIND_PACKAGE_TensorRT=TRUE",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    diagnostic = result.stdout + result.stderr
+    assert "TensorRT" in diagnostic
+    assert "TENSORRT_ROOT" in diagnostic
+    assert "TENSORACLE_TENSORRT_LIBRARY" in diagnostic
+
+
 @pytest.mark.req("SP-TENSORACLE-062")
 def test_wheel_types_the_native_module_with_a_matching_stub(distributions, tmp_path):
     """The wheel marks the package as typed and its stub declares exactly the native names."""
@@ -441,9 +577,9 @@ def consumer_wheel(distributions, tmp_path_factory):
     constraint = work / "build-constraints.txt"
     constraint.write_text(f"tensoracle @ {distributions['wheel'].as_uri()}\n", encoding="utf-8")
     output = work / "dist"
-    settings = [f"--config-setting=cmake.define.TENSORRT_ROOT={tensorrt_root().as_posix()}"]
+    cmake_defines = [f"TENSORRT_ROOT={tensorrt_root().as_posix()}"]
     if cuda := cuda_root():
-        settings.append(f"--config-setting=cmake.define.CUDAToolkit_ROOT={cuda.as_posix()}")
+        cmake_defines.append(f"CUDAToolkit_ROOT={cuda.as_posix()}")
     result = subprocess.run(
         [
             "uv",
@@ -456,9 +592,10 @@ def consumer_wheel(distributions, tmp_path_factory):
             str(output),
             "--build-constraints",
             str(constraint),
-            *settings,
         ],
         cwd=work,
+        # Pass SDK paths to scikit-build-core without changing dependency cache keys.
+        env={**os.environ, "SKBUILD_CMAKE_DEFINE": ";".join(cmake_defines)},
         capture_output=True,
         text=True,
         check=False,

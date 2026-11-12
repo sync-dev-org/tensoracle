@@ -22,10 +22,9 @@ if(TENSORACLE_BUILD_CUBIN_HELPER)
     _tensoracle_find_cuda()
     get_target_property(TENSORACLE_CUDA_INCLUDE tensoracle_cuda_driver INTERFACE_INCLUDE_DIRECTORIES)
 else()
-    # The shared core only needs headers; wheel builds need no driver link stub.
+    # The Conan toolchain supplies the same headers without linking the driver.
     find_path(TENSORACLE_CUDA_INCLUDE cuda_runtime_api.h
-        HINTS "${CUDAToolkit_ROOT}/include" "$ENV{CUDAToolkit_ROOT}/include"
-              /usr/local/cuda/include REQUIRED)
+        PATHS "${CUDAToolkit_ROOT}/include" NO_DEFAULT_PATH REQUIRED NO_CACHE)
 endif()
 
 include(cmake/TensoracleDependencies.cmake)

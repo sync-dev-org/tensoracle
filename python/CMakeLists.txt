@@ -16,11 +16,6 @@ get_filename_component(_tensorrt_root "${TensorRT_INCLUDE_DIR}" DIRECTORY)
 find_library(_stub_nvinfer NAMES nvinfer PATHS "${_tensorrt_root}/lib"
     NO_DEFAULT_PATH REQUIRED NO_CACHE)
 
-# CUDA headers come from the build environment; TensorRT comes from Conan.
-execute_process(COMMAND "${Python_EXECUTABLE}" -c
-    "from importlib.metadata import distribution; print(distribution('nvidia-cuda-runtime').locate_file('nvidia/cu13'))"
-    OUTPUT_VARIABLE _cuda_root OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-set(CUDAToolkit_ROOT "${_cuda_root}" CACHE PATH "CUDA headers from the build wheel" FORCE)
 set(TENSORACLE_INSTALL_ROOT "tensoracle/cpp" CACHE STRING "Wheel SDK prefix" FORCE)
 set(TENSORACLE_INSTALL_RPATH "$ORIGIN/../../../tensorrt_libs" CACHE STRING "TensorRT wheel lookup" FORCE)
 set(CMAKE_INSTALL_LIBDIR lib CACHE STRING "Wheel library directory" FORCE)

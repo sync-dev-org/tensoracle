@@ -187,7 +187,7 @@ def test_plugin_helper_finds_standard_tensorrt_library(tmp_path, windows, root_i
 
 @pytest.mark.req("SP-TENSORACLE-038")
 def test_plugin_build_reports_missing_cuda_inputs(tmp_path):
-    """Missing CUDA headers identify the searched root and the PyPI root configuration."""
+    """Missing CUDA headers identify the searched root and the Conan root configuration."""
     project = Path(__file__).resolve().parents[1]
     root = project.parent if project.name == "python" else project
     sdk = tmp_path / "sdk"
@@ -214,5 +214,5 @@ def test_plugin_build_reports_missing_cuda_inputs(tmp_path):
     message = result.stdout + result.stderr
     assert str(missing / "include") in message
     assert "cuda.h" in message
-    assert "nvidia/cu13" in message
+    assert "cuda-toolkit/13.2.2" in message
     assert "CUDAToolkit_ROOT" in message

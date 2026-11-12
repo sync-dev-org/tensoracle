@@ -18,7 +18,7 @@ If your model package uses tensoracle 1.x, start with [Migrate from 1.x](migrati
 | --- | --- | --- |
 | Inference application | Call the model package's inference binding. | Install the model package and tensoracle; provide an NVIDIA GPU and driver. The model package owns buffers and streams. |
 | Model package developer | [Build and reopen an engine](#build-and-reopen-an-engine) in C++, then [execute it](#execute-an-engine). | tensoracle's C++ SDK, TensorRT 11.2 or later (below 12) headers, CMake 3.26 or later, and a C++17 compiler. Add a binding framework when exposing inference to Python. |
-| Cubin plugin developer | [Produce cubins and build a plugin](#build-a-cubin-plugin). | `tensoracle[producer]` for generation, TensorRT SDK headers and libraries, PyPI CUDA headers and tools, and the plugin's C++ build. |
+| Cubin plugin developer | [Produce cubins and build a plugin](#build-a-cubin-plugin). | `tensoracle[producer]` for generation, Conan TensorRT and CUDA SDKs, PyPI producer tools, and the plugin's C++ build. |
 | Output validation | Compare CPU NumPy outputs with [the comparison API](api/index.md#output-comparison). | The application runs the engines and chooses the quality limits. |
 
 v2 supplies a Linux x86_64 `manylinux_2_28` wheel, including WSL2, with the `cp312-abi3` tag. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and GPU generations sm86, sm89, and sm120 are the targets; fp8 requires sm89 or sm120. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release supplies a Windows wheel. A Linux wheel runs under WSL2, not directly in Windows Python.

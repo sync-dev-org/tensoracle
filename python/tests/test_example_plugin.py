@@ -37,13 +37,9 @@ def installed_example(tmp_path_factory):
     environment = dict(os.environ)
     constraint = work / "build-constraints.txt"
     constraint.write_text(f"tensoracle @ {main_wheel.as_uri()}\n", encoding="utf-8")
-    cmake_settings = [
-        f"--config-setting=cmake.define.TENSORRT_ROOT={Path(sdk).as_posix()}",
-    ]
+    cmake_defines = [f"TENSORRT_ROOT={Path(sdk).as_posix()}"]
     if cuda := cuda_root():
-        cmake_settings.append(
-            f"--config-setting=cmake.define.CUDAToolkit_ROOT={Path(cuda).as_posix()}"
-        )
+        cmake_defines.append(f"CUDAToolkit_ROOT={Path(cuda).as_posix()}")
     subprocess.run(
         [
             "uv",
@@ -56,10 +52,10 @@ def installed_example(tmp_path_factory):
             sys.executable,
             "--build-constraints",
             str(constraint),
-            *cmake_settings,
         ],
         cwd=root,
-        env=environment,
+        # Pass SDK paths to scikit-build-core without changing dependency cache keys.
+        env={**environment, "SKBUILD_CMAKE_DEFINE": ";".join(cmake_defines)},
         check=True,
         capture_output=True,
         text=True,

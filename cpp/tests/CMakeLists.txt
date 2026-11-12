@@ -23,10 +23,11 @@ add_test(NAME "Installed SDK builds a separate C++ application"
         "-DCONSUMER_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/consumer"
         "-DCONFIG=$<CONFIG>"
         "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DTENSORRT_LIBRARY=${TENSORACLE_TENSORRT_LIBRARY}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/installed.cmake")
 set_tests_properties("Installed SDK builds a separate C++ application" PROPERTIES
     ENVIRONMENT "${_tensoracle_test_environment}"
-    LABELS "SP-TENSORACLE-014;SP-TENSORACLE-021;SP-TENSORACLE-055;SP-TENSORACLE-057" TIMEOUT 60)
+    LABELS "SP-TENSORACLE-014;SP-TENSORACLE-021;SP-TENSORACLE-055;SP-TENSORACLE-057;SP-TENSORACLE-065" TIMEOUT 60)
 
 add_executable(tensoracle_execution_test execution.cpp)
 target_link_options(tensoracle_execution_test PRIVATE "LINKER:--export-dynamic-symbol=utimensat")
@@ -68,7 +69,8 @@ add_executable(tensoracle_cubin_test cubin.cpp)
 target_link_libraries(tensoracle_cubin_test PRIVATE tensoracle::tensoracle Catch2::Catch2WithMain)
 catch_discover_tests(tensoracle_cubin_test ADD_TAGS_AS_LABELS PROPERTIES
     ENVIRONMENT "${_tensoracle_test_environment}" TIMEOUT 60)
-target_compile_definitions(tensoracle_cubin_test PRIVATE TENSORACLE_TEST_CUDA_ROOT="${CUDAToolkit_ROOT}")
+target_compile_definitions(tensoracle_cubin_test PRIVATE
+    TENSORACLE_TEST_CUDA_ROOT="${_tensoracle_test_producer_cuda_root}")
 
 add_library(tensoracle_exports_fixture SHARED native_exports_fixture.cpp)
 set_target_properties(tensoracle_exports_fixture PROPERTIES CXX_VISIBILITY_PRESET hidden)

@@ -16,7 +16,7 @@ Read the [v2 user guide](https://sync-dev-org.github.io/tensoracle/) and [Migrat
 | --- | --- | --- |
 | Inference application | Call the model package's inference binding. | NVIDIA GPU and driver; the model package manages CUDA buffers and streams. |
 | Model package developer | Open and execute engines through tensoracle's C++ SDK, exposing inference through your own binding. | TensorRT 11.2 or later (below 12) headers, CMake 3.26 or later, C++17 compiler, and a binding framework when needed. |
-| Cubin plugin developer | Compile CUDA C++ kernels and package a native plugin with the model. | `tensoracle[producer]`, PyPI CUDA headers and tools, TensorRT SDK, CMake, and a C++17 compiler. |
+| Cubin plugin developer | Compile CUDA C++ kernels and package a native plugin with the model. | `tensoracle[producer]`, Conan CUDA headers and TensorRT SDK, PyPI producer tools, CMake, and a C++17 compiler. |
 
 v2 supplies a Linux x86_64 `manylinux_2_28`, `cp312-abi3` wheel, including WSL2. The package currently declares Python 3.12 and 3.13 support. Target GPUs are sm86, sm89, and sm120 with TensorRT 11.2 or later (below 12); fp8 requires sm89 or sm120. Windows x86_64 users must keep using tensoracle 1.x until a later v2 minor release adds a Windows wheel.
 

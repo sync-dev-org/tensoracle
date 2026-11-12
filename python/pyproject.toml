@@ -47,8 +47,6 @@ requires = [
     "scikit-build-core>=0.11,<2",
     "nanobind>=2.4,<3",
     "setuptools-scm>=8",
-    "nvidia-cuda-runtime==13.2.*",
-    "nvidia-cuda-crt==13.2.*",
 ]
 build-backend = "build_backend"
 backend-path = ["."]
