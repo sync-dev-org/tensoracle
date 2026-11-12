@@ -48,3 +48,8 @@ TENSORACLE_2.1 {
         tensoracle_weights_metadata_at;
         tensoracle_weights_metadata_find;
 } TENSORACLE_2;
+TENSORACLE_2.2 {
+    global:
+        tensoracle_engine_scratch_size;
+        tensoracle_execution_create_with_scratch;
+} TENSORACLE_2.1;

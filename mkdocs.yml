@@ -36,6 +36,7 @@ nav:
   - Optimization workflow: optimization.md
   - bf16, int8, and fp8 engines: precision.md
   - TensorRT SDK setup: tensorrt-sdk.md
+  - Prebuilt C and C++ SDK: cpp-sdk.md
   - C++ SDK and plugin builds: cpp-python-repositories.md
   - API reference:
       - C++ interfaces and comparison: api/index.md

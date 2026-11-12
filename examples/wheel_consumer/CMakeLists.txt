@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.26)
+if(NOT TENSORRT_ROOT)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cpp/conan/bootstrap.cmake")
+endif()
 project(tensoracle_wheel_consumer LANGUAGES CXX)
 
 find_package(Python 3.12 REQUIRED COMPONENTS
@@ -13,7 +16,11 @@ execute_process(COMMAND "${Python_EXECUTABLE}" -c
 list(PREPEND CMAKE_PREFIX_PATH "${_site}/tensoracle/cpp")
 find_package(tensoracle 2 CONFIG REQUIRED)
 
-set(TENSORRT_ROOT "$ENV{TENSORACLE_SDK_ROOT}" CACHE PATH "TensorRT 11 SDK headers")
+if(NOT TENSORRT_ROOT)
+    find_package(TensorRT 11.2.1.2 EXACT CONFIG REQUIRED)
+    list(GET TensorRT_INCLUDE_DIRS 0 _tensorrt_include)
+    get_filename_component(TENSORRT_ROOT "${_tensorrt_include}" DIRECTORY)
+endif()
 find_path(_tensorrt_include NvInfer.h HINTS "${TENSORRT_ROOT}/include" REQUIRED)
 if(NOT CUDAToolkit_ROOT)
     execute_process(COMMAND "${Python_EXECUTABLE}" -c

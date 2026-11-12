@@ -3,9 +3,7 @@
 #include <tensoracle/plugins.hpp>
 #include <cuda.h>
 #include <dlfcn.h>
-#include <fcntl.h>
 #include <sys/utsname.h>
-#include <unistd.h>
 #include <cerrno>
 #include <map>
 #include <set>
@@ -147,25 +145,16 @@ cached_engine open_cached_engine(const cache_request& request, const std::functi
     auto conditions = make_conditions(request, plugins, gpu_identity(), version_text, system.sysname, system.machine);
     auto path = cache_path(conditions);
     fs::create_directories(path.parent_path());
-    int flags = O_WRONLY | O_CREAT | (request.force_rebuild ? O_TRUNC : O_EXCL);
-    int placeholder = ::open(path.c_str(), flags, 0600);
-    if (placeholder < 0) {
-        if (request.force_rebuild || errno != EEXIST) throw std::system_error(errno, std::generic_category(), path.string());
+    engine_file_lock lock(path);
+    if (!request.force_rebuild && !lock.empty()) {
         auto saved = read_engine_file(path, conditions);
         auto engine = open_plan(saved.plan, path, request);
         touch_engine(path);
         return {std::move(engine), path};
     }
-    ::close(placeholder);
-    try {
-        auto result = build();
-        auto engine = open_plan(result.plan, path, request);
-        write_engine_file(path, conditions, result.plan, request.workspace_limit, result.shape_tensor_outputs);
-        return {std::move(engine), path};
-    } catch (...) {
-        std::error_code ignored;
-        fs::remove(path, ignored);
-        throw;
-    }
+    auto result = build();
+    auto engine = open_plan(result.plan, path, request);
+    write_engine_file(path, conditions, result.plan, request.workspace_limit, result.shape_tensor_outputs);
+    return {std::move(engine), path};
 }
 }

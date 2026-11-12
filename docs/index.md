@@ -17,15 +17,19 @@ If your model package uses tensoracle 1.x, start with [Migrate from 1.x](migrati
 | Role | What to do | Build inputs and runtime responsibilities |
 | --- | --- | --- |
 | Inference application | Call the model package's inference binding. | Install the model package and tensoracle; provide an NVIDIA GPU and driver. The model package owns buffers and streams. |
-| Model package developer | [Build and reopen an engine](#build-and-reopen-an-engine) in C++, then [execute it](#execute-an-engine). | tensoracle's C++ SDK, TensorRT 11 headers, CMake 3.26 or later, and a C++17 compiler. Add a binding framework when exposing inference to Python. |
+| Model package developer | [Build and reopen an engine](#build-and-reopen-an-engine) in C++, then [execute it](#execute-an-engine). | tensoracle's C++ SDK, TensorRT 11.2 or later (below 12) headers, CMake 3.26 or later, and a C++17 compiler. Add a binding framework when exposing inference to Python. |
 | Cubin plugin developer | [Produce cubins and build a plugin](#build-a-cubin-plugin). | `tensoracle[producer]` for generation, TensorRT SDK headers and libraries, PyPI CUDA headers and tools, and the plugin's C++ build. |
 | Output validation | Compare CPU NumPy outputs with [the comparison API](api/index.md#output-comparison). | The application runs the engines and chooses the quality limits. |
 
-v2 supplies a Linux x86_64 `manylinux_2_28` wheel, including WSL2, with the `cp312-abi3` tag. The package currently declares Python 3.12 and 3.13 support. TensorRT 11 and GPU generations sm86, sm89, and sm120 are the targets; fp8 requires sm89 or sm120. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release supplies a Windows wheel. A Linux wheel runs under WSL2, not directly in Windows Python.
+v2 supplies a Linux x86_64 `manylinux_2_28` wheel, including WSL2, with the `cp312-abi3` tag. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and GPU generations sm86, sm89, and sm120 are the targets; fp8 requires sm89 or sm120. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release supplies a Windows wheel. A Linux wheel runs under WSL2, not directly in Windows Python.
 
 The wheel includes the shared C++ library, public headers, CMake package configuration, and source-based cubin plugin helpers. It resolves TensorRT through its wheel dependency rather than bundling TensorRT or the NVIDIA driver. The C ABI uses opaque handles and structures with `struct_size`; the C++ headers add exceptions and automatic resource release. Public C++ interfaces and saved engine files remain compatible within the same major version.
 
 ### Connect a C++ model package
+
+Native applications can use the [prebuilt C and C++ SDK](cpp-sdk.md) attached to each release,
+then run against the host's TensorRT installation. The SDK retains the wheel's
+`tensoracle/cpp/` layout when copied into an application prefix.
 
 Locate the installed SDK without importing tensoracle:
 
@@ -137,9 +141,15 @@ Tensor types in the network determine precision. The builder has no precision or
 
 `tensoracle::open_engine` builds and saves a missing engine and skips the network callback on a valid cache hit, including in another process. The caller still supplies the same options and callback on each open. A cache miss can build, so a runtime that must avoid building needs a matching saved engine already available.
 
+When threads or processes open the same missing engine concurrently, one builds it and the others wait, then load its saved engine without calling their network callbacks. If that builder fails, one waiting caller takes over construction. If its process exits, including after `SIGKILL`, the operating system releases the lock so another caller can recover the empty placeholder and build. Different engine identities do not wait for one another.
+
+This coordination uses operating-system file locks on the engine file itself. Keep the cache on a filesystem that supports these locks; exclusion does not hold on filesystems where they are ineffective, such as some NFS configurations. A missing engine has an empty `.engine` placeholder during construction, with no separate lock file. Atomic replacement publishes only a complete engine; waiting callers reopen the current file after a replacement.
+
 Saved files live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when the variable is unset. The identity includes the engine name, graph version, weight and plugin contents, input profiles, optimization level, disabled TF32 setting, GPU compatibility properties, OS, CPU architecture, and TensorRT version. Update `graph_version` when network code or another value outside these conditions changes the engine contents. Use separate names or versions for different precisions or model roles.
 
 Changing only `workspace_limit` reuses a matching engine. To rebuild with a new limit, set `options.force_rebuild = true` before opening. The saved header records the build's workspace limit as reference information; cache hits do not change that value.
+
+Forced rebuilds for the same identity also run one at a time. Each forced caller builds even if another caller has just saved that engine. When an engine already exists, rebuilding preserves its bytes until a successful atomic replacement, so a failed rebuild leaves the previous engine available. Other opens for that identity wait for the rebuild to finish, then read the saved engine. Cache listing continues to recognize the previous complete engine during its rebuild.
 
 Weight SHA-256 records are reused across processes when the absolute path, size, modification time, and inode still match. An in-place weight edit that preserves those values can leave an old digest in use. `force_rebuild` reads weights again, refreshes their digests, and saves under the current identity. Plugin bytes are hashed on each open.
 
@@ -169,11 +179,17 @@ Each execution unit owns an independent TensorRT execution context and retains i
 
 Invalid shape arguments leave the last valid shapes intact. A partial TensorRT setting failure blocks concrete shape queries and enqueue until a complete setting succeeds. HOST tensors, external shape inputs, and data-dependent output sizes are unsupported. Shape inference outputs marked with `markOutputForShapes` are rejected before serialization or execution-context creation; ordinary shape-layer outputs remain supported.
 
+#### Share execution scratch memory
+
+`engine.scratch_size()` returns the maximum number of scratch device-memory bytes needed by one execution across the engine's input profiles. Allocate CUDA-aligned device memory, for example with `cuMemAlloc`, then call `engine.create_execution(address, size)` to borrow that allocation. The C ABI exposes `tensoracle_engine_scratch_size` and `tensoracle_execution_create_with_scratch`, whose `tensoracle_scratch_memory` argument contains `struct_size`, `address`, and the allocation's byte `size`. A null address or a size below the queried requirement returns `TENSORACLE_INVALID_ARGUMENT` without creating an execution. If the requirement is zero, pass a non-null allocation of at least one byte.
+
+Several executions from the same engine can borrow one allocation. Never execute those units concurrently, including CUDA Graph replays: enqueue them in order on one stream, or establish completion before another stream uses the scratch memory. Keep the allocation alive longer than every execution borrowing it and until all outstanding work and graphs using it have finished. Closing an execution does not free caller-owned scratch memory. The existing `engine.create_execution()` continues to let TensorRT allocate scratch separately for each execution.
+
 #### Capture and replay with CUDA Graphs
 
 One `tensoracle::engine_execution::enqueue` call can be captured and replayed. The caller owns graph creation, recreation, and destruction. `cpp/tests/execution.cpp` demonstrates capture with the CUDA Driver API.
 
-Use a dedicated execution unit for each graph. After setting or changing input shapes, enqueue once and wait for completion before capture. Capture on a nondefault stream, keeping synchronous CUDA operations and legacy default-stream work outside capture. The graph fixes the input shapes, tensor addresses, and execution unit. Keep that unit, buffers, and plugin preparation resources alive until outstanding work finishes and the graph is destroyed. Recapture when shapes or addresses change; input contents may change at the same addresses between completed replays.
+Use a dedicated execution unit for each graph. After setting or changing input shapes, enqueue once and wait for completion before capture. Capture on a nondefault stream, keeping synchronous CUDA operations and legacy default-stream work outside capture. The graph fixes the input shapes, tensor addresses, caller-provided scratch address, and execution unit. Keep that unit, buffers, caller-provided scratch memory, and plugin preparation resources alive until outstanding work finishes and the graph is destroyed. Recapture when shapes or addresses change; input contents may change at the same addresses between completed replays.
 
 Engines with loops or conditionals, or layers or plugins that synchronize with the host during inference, cannot be captured. End an attempted capture and release graph resources before falling back to ordinary enqueue.
 

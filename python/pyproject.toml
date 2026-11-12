@@ -20,7 +20,7 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "numpy>=2.0",
     "safetensors>=0.4",
-    "tensorrt-cu13>=11.0,<12",
+    "tensorrt-cu13>=11.2,<12",
 ]
 
 [project.scripts]
@@ -43,10 +43,10 @@ producer = [
 
 [build-system]
 requires = [
+    "conan==2.34.0",
     "scikit-build-core>=0.11,<2",
     "nanobind>=2.4,<3",
     "setuptools-scm>=8",
-    "tensorrt-cu13-libs>=11,<12",
     "nvidia-cuda-runtime==13.2.*",
     "nvidia-cuda-crt==13.2.*",
 ]
@@ -63,7 +63,7 @@ version_file = "src/tensoracle/_version.py"
 minimum-version = "0.11"
 wheel.packages = ["src/tensoracle"]
 wheel.py-api = "cp312"
-build.tool-args = ["-j4"]
+build.tool-args = ["-j8"]
 sdist.include = ["src/tensoracle/_version.py"]
 
 sdist.exclude = [

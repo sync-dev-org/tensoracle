@@ -30,7 +30,7 @@ Locate `tensoracle/cpp` with the metadata command below and add it to `CMAKE_PRE
 
 ## Prepare the build inputs
 
-Use CMake 3.26 or later for the model package SDK integration and a C++17 compiler. The source-based cubin plugin helper alone requires CMake 3.20 or later. Follow [Prepare a TensorRT SDK](tensorrt-sdk.md) to obtain and verify the TensorRT 11 headers and library and prepare the PyPI CUDA headers and driver link library on Linux, including WSL2; no OS-installed CUDA Toolkit is required.
+Use CMake 3.26 or later for the model package SDK integration and a C++17 compiler. The source-based cubin plugin helper alone requires CMake 3.20 or later. Follow [Prepare a TensorRT SDK](tensorrt-sdk.md) to obtain and verify the TensorRT 11.2 or later (below 12) headers and library and prepare the PyPI CUDA headers and driver link library on Linux, including WSL2; no OS-installed CUDA Toolkit is required.
 
 Generate a cubin bundle from CUDA C++ source with the [cubin producer](api/producer.md). The bundle directory must contain `bundle.cpp`, `bundle.json`, and the cubin files. Follow [Build a cubin plugin](index.md#build-a-cubin-plugin) for the model-specific plugin interface and tensor declarations.
 

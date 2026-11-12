@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.26)
+if(NOT TENSORRT_ROOT)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cpp/conan/bootstrap.cmake")
+endif()
 project(tensoracle_cubin_example LANGUAGES CXX)
 
 find_package(Python 3.12 REQUIRED COMPONENTS
@@ -9,8 +12,10 @@ execute_process(COMMAND "${Python_EXECUTABLE}" -c
     OUTPUT_VARIABLE _site OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 list(PREPEND CMAKE_PREFIX_PATH "${_site}/tensoracle/cpp")
 find_package(tensoracle 2 CONFIG REQUIRED)
-if(NOT DEFINED TENSORRT_ROOT)
-    message(FATAL_ERROR "Set TENSORRT_ROOT to the checked TensorRT 11 SDK")
+if(NOT TENSORRT_ROOT)
+    find_package(TensorRT 11.2.1.2 EXACT CONFIG REQUIRED)
+    list(GET TensorRT_INCLUDE_DIRS 0 _tensorrt_include)
+    get_filename_component(TENSORRT_ROOT "${_tensorrt_include}" DIRECTORY)
 endif()
 if(NOT DEFINED TENSORACLE_BUNDLE_ROOT)
     set(TENSORACLE_BUNDLE_ROOT "${CMAKE_CURRENT_LIST_DIR}/bundle")

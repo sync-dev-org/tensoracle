@@ -1,9 +1,11 @@
 #include "builder_fixture.hpp"
 #include "cache.hpp"
+#include <tensoracle/cache.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <dlfcn.h>
 #include <cstring>
+#include <future>
 
 namespace {
 bool no_context = false, fail_memory = false;
@@ -81,4 +83,31 @@ TEST_CASE("Unavailable GPU attributes prevent cached reuse and never invoke the 
     REQUIRE_THROWS_WITH(tensoracle::detail::open_cached_engine(request, build), "CUDA device total memory lookup failed");
     REQUIRE(calls == 0); REQUIRE(std::filesystem::last_write_time(path) == old);
     REQUIRE(tensoracle::detail::read_engine_file(path, conditions).plan == std::vector<uint8_t>{'p', 'l', 'a', 'n'});
+}
+
+TEST_CASE("A failed callback passes construction to the waiting thread without a corrupt file error", "[SP-TENSORACLE-067]") {
+    builder_fixture::temporary_directory files;
+    auto weight = files.path / "weights"; std::ofstream(weight) << "weights";
+    tensoracle::detail::cache_request request;
+    request.name = "failed-callbacks"; request.graph_version = "1"; request.weights = {weight};
+    std::promise<void> entered, release;
+    auto released = release.get_future().share();
+    auto open = [&](bool first) {
+        try {
+            auto engine = tensoracle::detail::open_cached_engine(request, [&]() -> tensoracle::detail::built_plan {
+                if (first) { entered.set_value(); released.wait(); }
+                throw std::runtime_error(first ? "first callback failed" : "waiting callback failed");
+            });
+            return std::string("unexpected success");
+        } catch (const std::exception& failure) { return std::string(failure.what()); }
+    };
+    auto first = std::async(std::launch::async, [&] { return open(true); });
+    entered.get_future().wait();
+    auto second = std::async(std::launch::async, [&] { return open(false); });
+    auto waiting = second.wait_for(std::chrono::milliseconds(300));
+    release.set_value();
+    CHECK(waiting == std::future_status::timeout);
+    REQUIRE(first.get() == "first callback failed");
+    REQUIRE(second.get() == "waiting callback failed");
+    REQUIRE(tensoracle::list_cache().entries().empty());
 }

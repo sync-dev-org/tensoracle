@@ -831,7 +831,7 @@ requires-dist = [
     { name = "nvidia-cuda-nvrtc", marker = "extra == 'producer'", specifier = "==13.2.*" },
     { name = "nvidia-nvvm", marker = "extra == 'producer'", specifier = "==13.2.*" },
     { name = "safetensors", specifier = ">=0.4" },
-    { name = "tensorrt-cu13", specifier = ">=11.0,<12" },
+    { name = "tensorrt-cu13", specifier = ">=11.2,<12" },
     { name = "torch", marker = "extra == 'convert'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cpu" },
 ]
 provides-extras = ["convert", "producer"]

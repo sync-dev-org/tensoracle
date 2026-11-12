@@ -1,12 +1,11 @@
 """Native cubin plugins declare tensor types, formats, and their output shape source."""
 
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from native_build import build_native, cuda_root
+from native_build import build_native, cuda_root, tensorrt_root
 
 PROJECT = Path(__file__).resolve().parents[1]
 FIXTURES = PROJECT / "tests/cubin_io"
@@ -14,10 +13,10 @@ FIXTURES = PROJECT / "tests/cubin_io"
 
 @pytest.fixture(scope="module")
 def native_tools():
-    sdk = os.environ.get("TENSORACLE_SDK_ROOT")
+    sdk = tensorrt_root()
     cuda = cuda_root()
-    if not sdk or not cuda:
-        pytest.skip("TensorRT SDK and PyPI CUDA headers were not supplied")
+    if not cuda:
+        pytest.skip("PyPI CUDA headers were not supplied")
     return Path(sdk), Path(cuda)
 
 

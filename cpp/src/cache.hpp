@@ -53,6 +53,21 @@ struct cached_engine {
     std::filesystem::path path;
 };
 
+// Locks the current inode, retrying when a publisher replaces it while waiting.
+// An empty file with no remaining lock owner can be taken over after a failure.
+class engine_file_lock {
+public:
+    explicit engine_file_lock(const std::filesystem::path& path);
+    ~engine_file_lock();
+    engine_file_lock(const engine_file_lock&) = delete;
+    engine_file_lock& operator=(const engine_file_lock&) = delete;
+    bool empty() const noexcept { return empty_; }
+private:
+    std::filesystem::path path_;
+    int descriptor_ = -1;
+    bool empty_ = false;
+};
+
 std::filesystem::path cache_directory();
 std::string weight_sha256(const std::filesystem::path& path, bool force_rebuild);
 std::optional<nlohmann::json> read_weight_record(const std::filesystem::path& path);

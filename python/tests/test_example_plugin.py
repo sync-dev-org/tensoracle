@@ -11,15 +11,15 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 
-from native_build import cuda_root
+from native_build import cuda_root, tensorrt_root
 from tensoracle.bundle import PluginBundleMismatchError, inspect_bundle, inspect_wheel
 
 
 @pytest.fixture(scope="module")
 def installed_example(tmp_path_factory):
-    sdk = os.environ.get("TENSORACLE_SDK_ROOT")
-    if not sdk or shutil.which("uv") is None:
-        pytest.skip("TensorRT SDK and uv were not supplied for the example wheel")
+    sdk = tensorrt_root()
+    if shutil.which("uv") is None:
+        pytest.skip("uv was not supplied for the example wheel")
     project = Path(__file__).resolve().parents[1]
     root = project.parent if project.name == "python" else project
     work = tmp_path_factory.mktemp("example-wheel")

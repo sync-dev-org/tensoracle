@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <cstdio>
 #include <memory>
@@ -129,6 +130,83 @@ struct buffers {
         for (int i = 0; i < rows * 2; ++i) REQUIRE(result[i] == i / 4.0f + offset - 0.25f);
     }
 };
+
+// Two matrix products separated by sin require intermediate device storage;
+// an elementwise-only engine may need no scratch at all.
+constexpr int matrix_width = 512;
+std::vector<uint8_t> scratch_plan() {
+    trt_ptr<nvinfer1::IBuilder> builder(nvinfer1::createInferBuilder(log_sink));
+    REQUIRE(builder);
+    trt_ptr<nvinfer1::INetworkDefinition> network(builder->createNetworkV2(0));
+    trt_ptr<nvinfer1::IBuilderConfig> config(builder->createBuilderConfig());
+    config->setBuilderOptimizationLevel(0);
+    config->clearFlag(nvinfer1::BuilderFlag::kTF32);
+    config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, 64 * 1024 * 1024);
+    auto* left = network->addInput("left", nvinfer1::DataType::kFLOAT, nvinfer1::Dims2(-1, matrix_width));
+    auto* right = network->addInput("right", nvinfer1::DataType::kFLOAT,
+                                  nvinfer1::Dims2(matrix_width, matrix_width));
+    auto* product = network->addMatrixMultiply(*left, nvinfer1::MatrixOperation::kNONE,
+                                             *right, nvinfer1::MatrixOperation::kNONE);
+    auto* sine = network->addUnary(*product->getOutput(0), nvinfer1::UnaryOperation::kSIN);
+    auto* output = network->addMatrixMultiply(*sine->getOutput(0), nvinfer1::MatrixOperation::kNONE,
+                                            *right, nvinfer1::MatrixOperation::kNONE)->getOutput(0);
+    output->setName("result");
+    network->markOutput(*output);
+    auto* profile = builder->createOptimizationProfile();
+    REQUIRE(profile->setDimensions("left", nvinfer1::OptProfileSelector::kMIN, nvinfer1::Dims2(1, matrix_width)));
+    REQUIRE(profile->setDimensions("left", nvinfer1::OptProfileSelector::kOPT, nvinfer1::Dims2(16, matrix_width)));
+    REQUIRE(profile->setDimensions("left", nvinfer1::OptProfileSelector::kMAX, nvinfer1::Dims2(matrix_width, matrix_width)));
+    REQUIRE(config->addOptimizationProfile(profile) >= 0);
+    trt_ptr<nvinfer1::IHostMemory> plan(builder->buildSerializedNetwork(*network, *config));
+    REQUIRE(plan);
+    const auto* bytes = static_cast<const uint8_t*>(plan->data());
+    return {bytes, bytes + plan->size()};
+}
+
+struct device_memory {
+    CUdeviceptr pointer{};
+    explicit device_memory(size_t size) { cuda_check(cuMemAlloc(&pointer, size ? size : 1)); }
+    ~device_memory() { cuMemFree(pointer); }
+    void* address() const { return reinterpret_cast<void*>(pointer); }
+};
+
+struct matrix_buffers {
+    CUstream stream{};
+    device_memory left{matrix_width * matrix_width * sizeof(float)};
+    device_memory right{matrix_width * matrix_width * sizeof(float)};
+    device_memory result{matrix_width * matrix_width * sizeof(float)};
+    matrix_buffers() {
+        cuda_check(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
+        std::vector<float> identity(matrix_width * matrix_width, 0);
+        for (int i = 0; i < matrix_width; ++i) identity[i * matrix_width + i] = 1;
+        cuda_check(cuMemcpyHtoD(right.pointer, identity.data(), identity.size() * sizeof(float)));
+        cuda_check(cuCtxSynchronize());
+    }
+    ~matrix_buffers() { cuStreamSynchronize(stream); cuStreamDestroy(stream); }
+    std::vector<tensoracle::tensor_address> addresses() const {
+        return {{"left", left.address()}, {"right", right.address()}, {"result", result.address()}};
+    }
+    void inputs(int rows, float offset) {
+        std::vector<float> values(rows * matrix_width);
+        for (size_t i = 0; i < values.size(); ++i) values[i] = float(i % 31) / 32 + offset - 0.5f;
+        cuda_check(cuMemcpyHtoD(left.pointer, values.data(), values.size() * sizeof(float)));
+        cuda_check(cuCtxSynchronize());
+    }
+    std::vector<float> read(int rows, float offset) {
+        cuda_check(cuStreamSynchronize(stream));
+        std::vector<float> values(rows * matrix_width);
+        cuda_check(cuMemcpyDtoH(values.data(), result.pointer, values.size() * sizeof(float)));
+        for (size_t i = 0; i < values.size(); ++i) {
+            auto expected = std::sin(float(i % 31) / 32 + offset - 0.5f);
+            if (!(std::abs(values[i] - expected) < 1e-5f)) {
+                INFO("rows=" << rows << " offset=" << offset << " index=" << i
+                     << " observed=" << values[i] << " expected=" << expected);
+                FAIL("matrix output differs from sin(left) with identity right input");
+            }
+        }
+        return values;
+    }
+};
 }
 
 TEST_CASE("Null execution arguments fail without initializing CUDA", "[SP-TENSORACLE-012][SP-TENSORACLE-056]") {
@@ -142,6 +220,166 @@ TEST_CASE("Null execution arguments fail without initializing CUDA", "[SP-TENSOR
     REQUIRE(tensoracle_engine_destroy(nullptr) == TENSORACLE_SUCCESS);
     REQUIRE_THROWS_AS(tensoracle::detail::deserialize_engine({}), std::invalid_argument);
     REQUIRE(tensoracle_execution_enqueue(nullptr, nullptr, 0, nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+}
+
+TEST_CASE("Scratch operations reject missing handles and clear outputs without CUDA", "[SP-TENSORACLE-068][SP-TENSORACLE-056]") {
+    size_t size = 123;
+    tensoracle_error* diagnostic = nullptr;
+    REQUIRE(tensoracle_engine_scratch_size(nullptr, &size, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+    tensoracle::error_handle error(diagnostic);
+    REQUIRE(error);
+    REQUIRE(size == 0);
+    REQUIRE(tensoracle_engine_scratch_size(nullptr, nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    tensoracle_execution* execution = reinterpret_cast<tensoracle_execution*>(1);
+    REQUIRE(tensoracle_execution_create_with_scratch(nullptr, nullptr, &execution, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(execution == nullptr);
+    tensoracle::engine_handle empty;
+    REQUIRE_THROWS_AS(empty.scratch_size(), tensoracle::error);
+    REQUIRE_THROWS_AS(empty.create_execution(nullptr, 0), tensoracle::error);
+}
+
+TEST_CASE("Engine scratch size is positive and stable across queries and executions", "[SP-TENSORACLE-068][gpu]") {
+    device_context context;
+    auto engine = tensoracle::detail::deserialize_engine(scratch_plan());
+    auto size = engine.scratch_size();
+    REQUIRE(size > 0);
+    size_t queried = 0;
+    REQUIRE(tensoracle_engine_scratch_size(engine.get(), &queried, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(queried == size);
+    REQUIRE(tensoracle_engine_scratch_size(engine.get(), nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    auto execution = engine.create_execution();
+    execution.set_input_shapes({{"left", {matrix_width, matrix_width}}});
+    REQUIRE(engine.scratch_size() == size);
+    REQUIRE(engine.scratch_size() == size);
+}
+
+TEST_CASE("Executions reject missing or undersized caller scratch without returning a handle", "[SP-TENSORACLE-068][SP-TENSORACLE-056][gpu]") {
+    device_context context;
+    auto engine = tensoracle::detail::deserialize_engine(scratch_plan());
+    auto size = engine.scratch_size();
+    REQUIRE(size > 0);
+    device_memory memory(size);
+    tensoracle_scratch_memory scratch{sizeof(scratch), memory.address(), size};
+    for (int invalid = 0; invalid < 4; ++invalid) {
+        auto value = scratch;
+        if (invalid == 0) value.address = nullptr;
+        if (invalid == 1) value.size = size - 1;
+        if (invalid == 2) value.struct_size = offsetof(tensoracle_scratch_memory, size);
+        tensoracle_execution* execution = reinterpret_cast<tensoracle_execution*>(1);
+        tensoracle_error* diagnostic = nullptr;
+        auto status = tensoracle_execution_create_with_scratch(engine.get(), invalid == 3 ? nullptr : &value,
+                                                               &execution, &diagnostic);
+        tensoracle::error_handle error(diagnostic);
+        INFO("invalid scratch case " << invalid);
+        REQUIRE(status == TENSORACLE_INVALID_ARGUMENT);
+        REQUIRE(execution == nullptr);
+        REQUIRE(error);
+    }
+    REQUIRE(tensoracle_execution_create_with_scratch(engine.get(), &scratch, nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE_THROWS_AS(engine.create_execution(memory.address(), size - 1), tensoracle::error);
+    REQUIRE_THROWS_AS(engine.create_execution(nullptr, size), tensoracle::error);
+    // Unknown trailing input fields are ignored, as on the other C ABI inputs.
+    struct extended_scratch { tensoracle_scratch_memory value; uint64_t future; } extended{scratch, UINT64_MAX};
+    extended.value.struct_size = sizeof(extended);
+    tensoracle_execution* execution = nullptr;
+    REQUIRE(tensoracle_execution_create_with_scratch(engine.get(), &extended.value, &execution, nullptr) == TENSORACLE_SUCCESS);
+    tensoracle::engine_execution owned(execution);
+    REQUIRE(owned.get());
+}
+
+TEST_CASE("Two executions sharing caller scratch match ordinary execution on one stream", "[SP-TENSORACLE-068][SP-TENSORACLE-012][gpu]") {
+    device_context context;
+    auto engine = tensoracle::detail::deserialize_engine(scratch_plan());
+    auto size = engine.scratch_size();
+    REQUIRE(size > 0);
+    device_memory memory(size);
+    auto ordinary = engine.create_execution();
+    auto first = engine.create_execution(memory.address(), size);
+    auto second = engine.create_execution(memory.address(), size);
+    matrix_buffers values;
+    for (auto* execution : {&first, &second}) {
+        for (int rows : {16, 128, matrix_width}) {
+            INFO("rows=" << rows << " execution=" << (execution == &first ? "first" : "second"));
+            ordinary.set_input_shapes({{"left", {rows, matrix_width}}});
+            execution->set_input_shapes({{"left", {rows, matrix_width}}});
+            values.inputs(rows, execution == &first ? 0.0f : 0.25f);
+            ordinary.enqueue(values.addresses(), values.stream);
+            auto reference = values.read(rows, execution == &first ? 0.0f : 0.25f);
+            INFO("caller-owned scratch execution");
+            cuda_check(cuMemsetD8Async(values.result.pointer, 0xff, reference.size() * sizeof(float), values.stream));
+            execution->enqueue(values.addresses(), values.stream);
+            REQUIRE(values.read(rows, execution == &first ? 0.0f : 0.25f) == reference);
+        }
+    }
+    // Both contexts retain the engine, and destroying one must not free scratch.
+    engine = {};
+    first.close();
+    values.inputs(matrix_width, 0.5f);
+    second.enqueue(values.addresses(), values.stream);
+    values.read(matrix_width, 0.5f);
+}
+
+TEST_CASE("Sharing one scratch allocation uses less device memory than ordinary executions", "[SP-TENSORACLE-068][gpu]") {
+    device_context context;
+    auto engine = tensoracle::detail::deserialize_engine(scratch_plan());
+    auto size = engine.scratch_size();
+    REQUIRE(size > 0);
+    { auto warm = engine.create_execution(); }
+    size_t ordinary_before{}, ordinary_after{}, shared_before{}, shared_after{}, total{};
+    std::unique_ptr<device_memory> memory;
+    cuda_check(cuCtxSynchronize());
+    cuda_check(cuMemGetInfo(&ordinary_before, &total));
+    std::vector<tensoracle::engine_execution> executions;
+    constexpr size_t count = 8;
+    for (size_t i = 0; i < count; ++i) executions.push_back(engine.create_execution());
+    cuda_check(cuCtxSynchronize());
+    cuda_check(cuMemGetInfo(&ordinary_after, &total));
+    executions.clear();
+    cuda_check(cuCtxSynchronize());
+    cuda_check(cuMemGetInfo(&shared_before, &total));
+    memory = std::make_unique<device_memory>(size);
+    for (size_t i = 0; i < count; ++i) executions.push_back(engine.create_execution(memory->address(), size));
+    cuda_check(cuCtxSynchronize());
+    cuda_check(cuMemGetInfo(&shared_after, &total));
+    auto ordinary_used = int64_t(ordinary_before) - int64_t(ordinary_after);
+    auto shared_used = int64_t(shared_before) - int64_t(shared_after);
+    std::fprintf(stderr, "scratch memory: count=%zu scratch_bytes=%zu ordinary_before=%zu ordinary_after=%zu "
+                         "shared_before=%zu shared_after=%zu ordinary_used=%lld shared_used=%lld saved=%lld\n",
+                 count, size, ordinary_before, ordinary_after, shared_before, shared_after,
+                 static_cast<long long>(ordinary_used), static_cast<long long>(shared_used),
+                 static_cast<long long>(ordinary_used - shared_used));
+    REQUIRE(ordinary_used > 0);
+    REQUIRE(shared_used < ordinary_used);
+}
+
+TEST_CASE("Enqueue with caller scratch captures and replays on a caller CUDA Graph", "[SP-TENSORACLE-068][SP-TENSORACLE-028][gpu]") {
+    device_context context;
+    auto engine = tensoracle::detail::deserialize_engine(scratch_plan());
+    auto size = engine.scratch_size();
+    REQUIRE(size > 0);
+    device_memory memory(size);
+    auto execution = engine.create_execution(memory.address(), size);
+    constexpr int rows = 16;
+    execution.set_input_shapes({{"left", {rows, matrix_width}}});
+    matrix_buffers values;
+    values.inputs(rows, 0);
+    execution.enqueue(values.addresses(), values.stream);
+    auto reference = values.read(rows, 0);
+    CUgraph graph{};
+    CUgraphExec instance{};
+    cuda_check(cuStreamBeginCapture(values.stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL));
+    execution.enqueue(values.addresses(), values.stream);
+    cuda_check(cuStreamEndCapture(values.stream, &graph));
+    cuda_check(cuGraphInstantiate(&instance, graph, 0));
+    for (float offset : {0.0f, 0.25f, 0.0f}) {
+        values.inputs(rows, offset);
+        cuda_check(cuMemsetD8Async(values.result.pointer, 0xff, rows * matrix_width * sizeof(float), values.stream));
+        cuda_check(cuGraphLaunch(instance, values.stream));
+        auto result = values.read(rows, offset);
+        if (offset == 0) REQUIRE(result == reference);
+    }
+    cuda_check(cuGraphExecDestroy(instance));
+    cuda_check(cuGraphDestroy(graph));
 }
 
 TEST_CASE("TensorRT-only dtypes stay outside CPU output comparison", "[SP-TENSORACLE-054][SP-TENSORACLE-056]") {

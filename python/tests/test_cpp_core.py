@@ -1,12 +1,11 @@
 """The source-distributed C++ helpers preserve fields and verify cubin bytes."""
 
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from native_build import build_native, cuda_root
+from native_build import build_native, cuda_root, tensorrt_root
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
@@ -14,10 +13,9 @@ from native_build import build_native, cuda_root
 @pytest.mark.req("SP-TENSORACLE-038")
 def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
     """The native helper retains typed fields and computes a real SHA-256 digest."""
-    sdk = os.environ.get("TENSORACLE_SDK_ROOT")
     cuda = cuda_root()
-    if not sdk or not cuda:
-        pytest.skip("TensorRT SDK and PyPI CUDA headers were not supplied")
+    if not cuda:
+        pytest.skip("PyPI CUDA headers were not supplied")
     project = Path(__file__).resolve().parents[1]
     root = project.parent if project.name == "python" else project
     build = tmp_path / "build"
@@ -28,7 +26,6 @@ def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
             str(root / "cpp"),
             "-B",
             str(build),
-            f"-DTENSORRT_ROOT={sdk}",
             f"-DCUDAToolkit_ROOT={cuda}",
         ],
         check=True,
@@ -44,7 +41,7 @@ def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
             "--target",
             "tensoracle_core_test",
             "--parallel",
-            "4",
+            "8",
         ],
         check=True,
         timeout=45,
@@ -68,10 +65,10 @@ def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
 @pytest.mark.req("SP-TENSORACLE-004")
 def test_cubin_launcher_rejects_launches_outside_generated_contract(tmp_path):
     """Wrong argument counts and unmet specialization rules fail before CUDA work."""
-    sdk = os.environ.get("TENSORACLE_SDK_ROOT")
+    sdk = tensorrt_root()
     cuda = cuda_root()
-    if not sdk or not cuda:
-        pytest.skip("TensorRT SDK and PyPI CUDA headers were not supplied")
+    if not cuda:
+        pytest.skip("PyPI CUDA headers were not supplied")
     project = Path(__file__).resolve().parents[1]
     root = project.parent if project.name == "python" else project
     source = tmp_path / "wrong-count.cpp"

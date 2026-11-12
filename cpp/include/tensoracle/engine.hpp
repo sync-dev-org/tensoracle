@@ -74,6 +74,21 @@ public:
         check(status, diagnostic);
         return engine_execution(result);
     }
+    size_t scratch_size() const {
+        size_t size = 0;
+        tensoracle_error* diagnostic = nullptr;
+        auto status = tensoracle_engine_scratch_size(get(), &size, &diagnostic);
+        check(status, diagnostic);
+        return size;
+    }
+    engine_execution create_execution(void* scratch, size_t size) const {
+        tensoracle_scratch_memory memory{sizeof(memory), scratch, size};
+        tensoracle_execution* result = nullptr;
+        tensoracle_error* diagnostic = nullptr;
+        auto status = tensoracle_execution_create_with_scratch(get(), &memory, &result, &diagnostic);
+        check(status, diagnostic);
+        return engine_execution(result);
+    }
     size_t tensor_count() const {
         size_t count = 0;
         tensoracle_error* diagnostic = nullptr;

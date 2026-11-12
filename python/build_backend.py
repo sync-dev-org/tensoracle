@@ -1,8 +1,11 @@
 """Supply shared repository sources to scikit-build-core from the Python project."""
 
+import ctypes
 import json
 import os
+import runpy
 import shutil
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -130,3 +133,42 @@ def prepare_metadata_for_build_editable(metadata_directory, config_settings=None
     return _call(
         native_build.prepare_metadata_for_build_editable, metadata_directory, config_settings
     )
+
+
+def _generate_stubs(library, module_path, destination):
+    """Keep stub generation on the same TensorRT binary used by the native build."""
+    import hashlib
+    import importlib
+
+    expected = Path(library).resolve()
+    # Load this SONAME before importing the extension, including when the caller
+    # has a different TensorRT on its ordinary library search path.
+    ctypes.CDLL(str(expected))
+    os.environ["NB_STUBGEN"] = "1"
+    sys.path.insert(0, module_path)
+    importlib.import_module("tensoracle._native")
+    loaded = {
+        Path(line.split()[-1]).resolve()
+        for line in Path("/proc/self/maps").read_text().splitlines()
+        if "/libnvinfer.so" in line
+    }
+    if loaded != {expected}:
+        raise RuntimeError(f"Stub generator expected TensorRT {expected}; loaded {loaded}")
+    with expected.open("rb") as file:
+        digest = hashlib.file_digest(file, "sha256").hexdigest()
+    print(
+        "TensorRT for stub generation: "
+        + json.dumps(
+            {
+                "library": str(expected),
+                "sha256": digest,
+            }
+        ),
+        flush=True,
+    )
+    sys.argv = ["nanobind.stubgen", "-m", "tensoracle._native", "-o", destination, "-P"]
+    runpy.run_module("nanobind.stubgen", run_name="__main__")
+
+
+if __name__ == "__main__":
+    _generate_stubs(*sys.argv[1:])

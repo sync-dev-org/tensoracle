@@ -1,0 +1,14 @@
+{
+    "version": "0.5",
+    "requires": [
+        "nlohmann_json/3.11.3#45828be26eb619a2e04ca517bb7b828d%1701220705.259",
+        "miniz/3.0.2#2010055bd59ba253cf280e9024557f67%1794340267.165704",
+        "catch2/3.16.1#0dc3f5041f5a681061a45f17e7be0fed%1793091288.859",
+        "tensorrt/11.2.1.2#f589b62570542fd7c621458a7a7b454d"
+    ],
+    "build_requires": [
+        "cmake/system#platform"
+    ],
+    "python_requires": [],
+    "config_requires": []
+}

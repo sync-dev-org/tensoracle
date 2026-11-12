@@ -24,13 +24,29 @@ import yaml
 from packaging.requirements import Requirement
 from safetensors.numpy import save_file
 
-from native_build import cuda_root, sdk_version
+from native_build import cuda_root, sdk_version, tensorrt_root
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
 PUBLIC_REPOSITORY = "https://github.com/sync-dev-org/tensoracle"
 DOCUMENTATION_SITE = "https://sync-dev-org.github.io/tensoracle"
 PAGES_WORKFLOW = ".github/workflows/pages.yml"
+
+
+@pytest.mark.req("SP-TENSORACLE-015")
+def test_runtime_dependency_accepts_tensorrt_11_2_through_11_x():
+    """Package metadata accepts TensorRT 11.2 and later 11.x releases, excluding 11.1 and 12."""
+    config = tomllib.loads((PROJECT / "pyproject.toml").read_text())
+    dependency = next(
+        Requirement(value)
+        for value in config["project"]["dependencies"]
+        if Requirement(value).name == "tensorrt-cu13"
+    )
+    assert "11.1" not in dependency.specifier
+    assert "11.2" in dependency.specifier
+    assert "11.2.1.2" in dependency.specifier
+    assert "11.4" in dependency.specifier
+    assert "12" not in dependency.specifier
 
 
 @pytest.fixture(scope="module")
@@ -85,7 +101,24 @@ def distributions(tmp_path_factory):
         timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    return {"sdist": next(output.glob("*.tar.gz")), "wheel": next(output.glob("*.whl"))}
+    return {
+        "sdist": next(output.glob("*.tar.gz")),
+        "wheel": next(output.glob("*.whl")),
+        "build_log": result.stdout + result.stderr,
+    }
+
+
+@pytest.mark.req("SP-TENSORACLE-065")
+def test_stub_generation_loads_the_digest_verified_conan_tensorrt(distributions):
+    """The stub generator imports the binding with the recipe's exact TensorRT library."""
+    proofs = re.findall(r"TensorRT for stub generation: (\{.*\})", distributions["build_log"])
+    assert proofs, distributions["build_log"]
+    data = yaml.safe_load((ROOT / "cpp/conan/tensorrt/conandata.yml").read_text())
+    expected = data["sources"]["11.2.1.2"]["library_sha256"]
+    for value in proofs:
+        proof = json.loads(value)
+        assert proof["sha256"] == expected
+        assert Path(proof["library"]).name == "libnvinfer.so.11"
 
 
 @pytest.mark.req("SP-TENSORACLE-017")
@@ -408,7 +441,7 @@ def consumer_wheel(distributions, tmp_path_factory):
     constraint = work / "build-constraints.txt"
     constraint.write_text(f"tensoracle @ {distributions['wheel'].as_uri()}\n", encoding="utf-8")
     output = work / "dist"
-    settings = []
+    settings = [f"--config-setting=cmake.define.TENSORRT_ROOT={tensorrt_root().as_posix()}"]
     if cuda := cuda_root():
         settings.append(f"--config-setting=cmake.define.CUDAToolkit_ROOT={cuda.as_posix()}")
     result = subprocess.run(
@@ -577,10 +610,11 @@ print(json.dumps(result))
 
 
 @pytest.mark.req("SP-TENSORACLE-047")
+@pytest.mark.req("SP-TENSORACLE-015")
 def test_wheel_installs_the_cache_console_script_without_extra_dependencies(
     distributions, tmp_path
 ):
-    """The wheel supplies a runnable cache command and retains the original required dependencies."""
+    """The wheel supplies a runnable cache command and declares the supported TensorRT runtime."""
     with zipfile.ZipFile(distributions["wheel"]) as archive:
         name = next(
             name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
@@ -596,7 +630,7 @@ def test_wheel_installs_the_cache_console_script_without_extra_dependencies(
         str(Requirement(value))
         for value in metadata.get_all("Requires-Dist")
         if not Requirement(value).marker
-    } == {"numpy>=2.0", "safetensors>=0.4", "tensorrt-cu13<12,>=11.0"}
+    } == {"numpy>=2.0", "safetensors>=0.4", "tensorrt-cu13<12,>=11.2"}
     runtime = tmp_path / "runtime"
     subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
     executable = runtime / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")

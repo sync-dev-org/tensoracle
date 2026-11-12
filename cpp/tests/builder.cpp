@@ -1,4 +1,7 @@
 #include "builder_fixture.hpp"
+#include "concurrent_builder.hpp"
+#include <future>
+#include <csignal>
 #include "builder_internal.hpp"
 #include <tensoracle/cache.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -11,6 +14,204 @@
 #endif
 
 using namespace builder_fixture;
+namespace {
+struct builder_process {
+    pid_t pid = -1;
+    int channel = -1;
+    builder_process(const fs::path& weights, const std::string& label, bool force = false,
+                    const std::string& name = "linear-fp32") {
+        int pair[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) throw std::runtime_error("socketpair failed");
+        auto number = std::to_string(pair[1]);
+        pid = fork();
+        if (pid == 0) {
+            close(pair[0]); fcntl(pair[1], F_SETFD, 0);
+            execl(TENSORACLE_BUILDER_PROBE, TENSORACLE_BUILDER_PROBE, "--concurrent",
+                weights.c_str(), number.c_str(), force ? "force" : "reuse", name.c_str(), label.c_str(), nullptr);
+            _exit(127);
+        }
+        close(pair[1]); channel = pair[0];
+        if (pid < 0) { close(channel); throw std::runtime_error("fork failed"); }
+    }
+    ~builder_process() {
+        if (pid > 0) { kill(pid, SIGKILL); waitpid(pid, nullptr, 0); }
+        close(channel);
+    }
+    char next() { return concurrent_builder::receive(channel); }
+    void command(char value) { concurrent_builder::send(channel, value); }
+    bool quiet() { return concurrent_builder::quiet(channel); }
+    int finish() {
+        int status{};
+        if (waitpid(pid, &status, 0) != pid) throw std::runtime_error("waitpid failed");
+        pid = -1; return status;
+    }
+};
+struct builder_thread {
+    int channel = -1;
+    std::future<int> task;
+    builder_thread(const fs::path& weights, const std::string& label) {
+        int pair[2];
+        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) throw std::runtime_error("socketpair failed");
+        channel = pair[0];
+        task = std::async(std::launch::async, [weights, label, endpoint = pair[1]] {
+            struct cleanup { int fd; ~cleanup() { close(fd); } } release{endpoint};
+            return concurrent_builder::open(weights, endpoint, false, "linear-fp32", label);
+        });
+    }
+    ~builder_thread() { shutdown(channel, SHUT_RDWR); if (task.valid()) task.wait(); close(channel); }
+    char next() { return concurrent_builder::receive(channel); }
+    void command(char value) { concurrent_builder::send(channel, value); }
+    bool quiet() { return concurrent_builder::quiet(channel); }
+};
+nlohmann::json outcome(const fs::path& weights, const std::string& label) {
+    std::ifstream input(weights.parent_path() / (label + ".json"));
+    return nlohmann::json::parse(input);
+}
+std::vector<std::string> calls(const fs::path& weights) {
+    std::ifstream input(weights.parent_path() / "calls");
+    std::vector<std::string> result;
+    for (std::string line; std::getline(input, line);) result.push_back(line);
+    return result;
+}
+void successful(builder_process& process) {
+    REQUIRE(process.next() == 's');
+    auto status = process.finish(); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 0);
+}
+void failed(builder_process& process, const fs::path& weights, const std::string& label) {
+    REQUIRE(process.next() == 'e');
+    auto status = process.finish(); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 1);
+    REQUIRE(outcome(weights, label).at("status") == TENSORACLE_INTERNAL_ERROR);
+    REQUIRE(outcome(weights, label).at("error") == "controlled callback failure");
+}
+void reusable(const fs::path& weights, const std::string& label, const std::string& name = "linear-fp32") {
+    context gpu;
+    auto request = options(weights); request.name = name;
+    auto engine = tensoracle::open_engine(request,
+        [](nvinfer1::INetworkDefinition&, const tensoracle::weights_view&) { throw std::runtime_error("saved engine was lost"); });
+    auto result = outcome(weights, label);
+    REQUIRE(engine.path() == result.at("path"));
+    REQUIRE(run(engine) == result.at("values").get<std::vector<float>>());
+}
+}
+
+TEST_CASE("Concurrent first opens in separate processes build once and all reuse the published engine", "[SP-TENSORACLE-009][SP-TENSORACLE-067][SP-TENSORACLE-046][SP-TENSORACLE-049][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_process first(weights, "first");
+    REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_process second(weights, "second"), third(weights, "third");
+    REQUIRE(second.next() == 'o'); REQUIRE(third.next() == 'o');
+    CHECK(second.quiet()); CHECK(third.quiet());
+    REQUIRE(calls(weights) == std::vector<std::string>{"first"});
+    auto listing = tensoracle::list_cache(); auto entries = listing.entries();
+    REQUIRE(entries.size() == 1);
+    REQUIRE(entries[0].status == TENSORACLE_CACHE_BUILDING_OR_LEFTOVER);
+    REQUIRE(entries[0].size_bytes == 0);
+    for (const auto& entry : fs::directory_iterator(files.path / "tensoracle")) {
+        auto name = entry.path().filename().string();
+        REQUIRE((entry.path().extension() == ".engine" || (name.rfind("weight-", 0) == 0 && entry.path().extension() == ".json")));
+    }
+    first.command('g'); successful(first); successful(second); successful(third);
+    REQUIRE(calls(weights) == std::vector<std::string>{"first"});
+    REQUIRE(outcome(weights, "first") == outcome(weights, "second"));
+    REQUIRE(outcome(weights, "first") == outcome(weights, "third"));
+    reusable(weights, "first");
+}
+
+TEST_CASE("Concurrent first opens in separate threads build once and return independent usable engines", "[SP-TENSORACLE-067][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_thread first(weights, "first");
+    REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_thread second(weights, "second"); REQUIRE(second.next() == 'o');
+    CHECK(second.quiet());
+    first.command('g'); REQUIRE(first.next() == 's'); REQUIRE(second.next() == 's');
+    REQUIRE(first.task.get() == 0); REQUIRE(second.task.get() == 0);
+    REQUIRE(calls(weights) == std::vector<std::string>{"first"});
+    REQUIRE(outcome(weights, "first") == outcome(weights, "second"));
+    reusable(weights, "second");
+}
+
+TEST_CASE("A waiting process rebuilds after the first network callback fails", "[SP-TENSORACLE-011][SP-TENSORACLE-067][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_process first(weights, "first"); REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_process second(weights, "second"); REQUIRE(second.next() == 'o'); CHECK(second.quiet());
+    first.command('f'); failed(first, weights, "first");
+    REQUIRE(second.next() == 'b'); second.command('g'); successful(second);
+    REQUIRE(calls(weights) == std::vector<std::string>{"first", "second"});
+    reusable(weights, "second");
+}
+
+TEST_CASE("A waiting process rebuilds after SIGKILL releases the first builder lock", "[SP-TENSORACLE-067][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_process first(weights, "first"); REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_process second(weights, "second"); REQUIRE(second.next() == 'o'); CHECK(second.quiet());
+    REQUIRE(kill(first.pid, SIGKILL) == 0);
+    auto status = first.finish(); REQUIRE(WIFSIGNALED(status)); REQUIRE(WTERMSIG(status) == SIGKILL);
+    REQUIRE(second.next() == 'b'); second.command('g'); successful(second);
+    REQUIRE(calls(weights) == std::vector<std::string>{"first", "second"});
+    reusable(weights, "second");
+}
+
+TEST_CASE("Forced rebuilds wait for the same engine and survive an earlier callback failure", "[SP-TENSORACLE-009][SP-TENSORACLE-011][SP-TENSORACLE-067][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    for (bool first_forced : {false, true}) {
+        INFO("first builder forced=" << first_forced);
+        fs::remove_all(files.path / "tensoracle"); fs::remove(files.path / "calls");
+        builder_process first(weights, "first", first_forced);
+        REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+        builder_process second(weights, "second", !first_forced); REQUIRE(second.next() == 'o');
+        CHECK(second.quiet());
+        first.command('f'); failed(first, weights, "first");
+        REQUIRE(second.next() == 'b'); second.command('g'); successful(second);
+        REQUIRE(calls(weights) == std::vector<std::string>{"first", "second"});
+        reusable(weights, "second");
+    }
+}
+
+TEST_CASE("Different engine conditions can enter their network callbacks together", "[SP-TENSORACLE-009][SP-TENSORACLE-067][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_process first(weights, "first", false, "first-engine");
+    REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_process second(weights, "second", false, "second-engine");
+    REQUIRE(second.next() == 'o'); REQUIRE(second.next() == 'b');
+    REQUIRE(calls(weights) == std::vector<std::string>{"first", "second"});
+    first.command('g'); second.command('g'); successful(first); successful(second);
+    REQUIRE(outcome(weights, "first").at("path") != outcome(weights, "second").at("path"));
+    REQUIRE(outcome(weights, "first").at("values") == outcome(weights, "second").at("values"));
+    reusable(weights, "first", "first-engine"); reusable(weights, "second", "second-engine");
+}
+
+TEST_CASE("Overlapping forced rebuilds each build serially after the previous engine is published", "[SP-TENSORACLE-011][SP-TENSORACLE-067][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_process first(weights, "first", true); REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_process second(weights, "second", true); REQUIRE(second.next() == 'o'); CHECK(second.quiet());
+    first.command('g'); successful(first);
+    REQUIRE(second.next() == 'b'); second.command('g'); successful(second);
+    REQUIRE(calls(weights) == std::vector<std::string>{"first", "second"});
+    REQUIRE(outcome(weights, "first").at("path") == outcome(weights, "second").at("path"));
+    REQUIRE(outcome(weights, "first").at("values") == outcome(weights, "second").at("values"));
+    reusable(weights, "second");
+}
+
+TEST_CASE("A failed forced rebuild retains the earlier complete engine for waiting readers", "[SP-TENSORACLE-009][SP-TENSORACLE-011][SP-TENSORACLE-067][SP-TENSORACLE-049][gpu]") {
+    temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
+    builder_process first(weights, "first"); REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
+    builder_process forced(weights, "forced", true); REQUIRE(forced.next() == 'o'); CHECK(forced.quiet());
+    first.command('g'); successful(first);
+    REQUIRE(forced.next() == 'b');
+    auto listing = tensoracle::list_cache(); auto entries = listing.entries();
+    REQUIRE(entries.size() == 1); REQUIRE(entries[0].status == TENSORACLE_CACHE_RECOGNIZED);
+    std::ifstream original(outcome(weights, "first").at("path").get<std::string>(), std::ios::binary);
+    const std::string bytes{std::istreambuf_iterator<char>(original), {}};
+    builder_process reader(weights, "reader"); REQUIRE(reader.next() == 'o'); CHECK(reader.quiet());
+    forced.command('f'); failed(forced, weights, "forced"); successful(reader);
+    REQUIRE(calls(weights) == std::vector<std::string>{"first", "forced"});
+    REQUIRE(outcome(weights, "reader") == outcome(weights, "first"));
+    std::ifstream retained(outcome(weights, "first").at("path").get<std::string>(), std::ios::binary);
+    const bool unchanged = std::string(std::istreambuf_iterator<char>(retained), {}) == bytes;
+    REQUIRE(unchanged);
+    reusable(weights, "reader");
+}
+
 TEST_CASE("Saved LeakyReLU engines stay small and reuse correct half precision outputs", "[SP-TENSORACLE-009][gpu]") {
     context gpu; temporary_directory files; auto path = files.path / "weights"; write_weights(path);
     auto request = options(path); request.name = "leaky-relu";
@@ -130,34 +331,6 @@ TEST_CASE("FP8 explicitly quantized networks reuse identical outputs after exec 
     REQUIRE(saved.good()); REQUIRE(restarted == actual);
 }
 
-TEST_CASE("An empty engine being built in another process is rejected and can be force rebuilt", "[SP-TENSORACLE-009][SP-TENSORACLE-011][gpu]") {
-    context gpu; temporary_directory files; auto path = files.path / "weights"; write_weights(path);
-    int ready[2], release[2]; REQUIRE(pipe(ready) == 0); REQUIRE(pipe(release) == 0);
-    auto pid = fork(); REQUIRE(pid >= 0);
-    if (!pid) {
-        close(ready[0]); close(release[1]);
-        auto ready_fd = std::to_string(ready[1]), release_fd = std::to_string(release[0]);
-        execl(TENSORACLE_BUILDER_PROBE, TENSORACLE_BUILDER_PROBE, "--placeholder", path.c_str(), ready_fd.c_str(), release_fd.c_str(), nullptr);
-        _exit(127);
-    }
-    close(ready[1]); close(release[0]); char token;
-    REQUIRE(read(ready[0], &token, 1) == 1);
-    auto request = options(path); int calls = 0;
-    auto define = [&](nvinfer1::INetworkDefinition& network, const tensoracle::weights_view& weights) { ++calls; graph(network, weights, "fp32"); };
-    try { auto engine = tensoracle::open_engine(request, define); FAIL("empty in-progress file accepted"); }
-    catch (const tensoracle::error& failure) { REQUIRE(failure.status() == TENSORACLE_CORRUPT_ENGINE); }
-    REQUIRE(calls == 0);
-    REQUIRE(write(release[1], "x", 1) == 1); close(ready[0]); close(release[1]);
-    int status{}; REQUIRE(waitpid(pid, &status, 0) == pid); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 0);
-    fs::path placeholder;
-    for (const auto& entry : fs::directory_iterator(files.path / "tensoracle"))
-        if (entry.path().extension() == ".engine") placeholder = entry.path();
-    REQUIRE_FALSE(placeholder.empty()); REQUIRE(fs::file_size(placeholder) == 0);
-    request.force_rebuild = true;
-    auto recovered = tensoracle::open_engine(request, define);
-    REQUIRE(calls == 1); REQUIRE(recovered.path() == placeholder); REQUIRE(fs::file_size(placeholder) > 0);
-    REQUIRE(run(recovered).size() == 16 * 16);
-}
 TEST_CASE("Builder settings disable TF32 and preserve the default or explicit workspace", "[SP-TENSORACLE-013][SP-TENSORACLE-052][gpu]") {
     context gpu;
     struct logger : nvinfer1::ILogger { void log(Severity, const char*) noexcept override {} } log;

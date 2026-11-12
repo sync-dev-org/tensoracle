@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.26)
+option(BUILD_TESTING "Build tensoracle tests" ON)
+if(BUILD_TESTING)
+    set(TENSORACLE_CONAN_OFFLINE ON CACHE BOOL "Use prepared test dependencies")
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/conan/bootstrap.cmake")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/tensoracle/tensoracle.h")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/tensoracle/tensoracle.h" _tensoracle_header)
@@ -23,21 +28,13 @@ else()
               /usr/local/cuda/include REQUIRED)
 endif()
 
-set(TENSORRT_ROOT "$ENV{TENSORACLE_SDK_ROOT}" CACHE PATH "TensorRT 11 SDK root")
-set(TENSORACLE_TENSORRT_LIBRARY "$ENV{TENSORACLE_TENSORRT_LIBRARY}" CACHE FILEPATH
-    "TensorRT 11 libnvinfer (may be supplied by the tensorrt_libs wheel)")
-find_path(TENSORACLE_TENSORRT_INCLUDE NvInfer.h
-    HINTS "${TENSORRT_ROOT}/include" REQUIRED)
-if(NOT TENSORACLE_TENSORRT_LIBRARY)
-    find_library(_tensoracle_nvinfer NAMES nvinfer nvinfer_11 libnvinfer.so.11
-        HINTS "${TENSORRT_ROOT}/lib" "${TENSORRT_ROOT}/lib64" REQUIRED)
-    set(TENSORACLE_TENSORRT_LIBRARY "${_tensoracle_nvinfer}" CACHE FILEPATH "TensorRT 11 libnvinfer" FORCE)
-endif()
-if(NOT EXISTS "${TENSORACLE_TENSORRT_LIBRARY}")
-    message(FATAL_ERROR "TensorRT libnvinfer is missing: ${TENSORACLE_TENSORRT_LIBRARY}")
-endif()
-
 include(cmake/TensoracleDependencies.cmake)
+find_path(TENSORACLE_TENSORRT_INCLUDE NvInfer.h
+    PATHS ${TensorRT_INCLUDE_DIRS} NO_DEFAULT_PATH REQUIRED NO_CACHE)
+get_filename_component(_tensoracle_tensorrt_root "${TENSORACLE_TENSORRT_INCLUDE}" DIRECTORY)
+set(TENSORACLE_TENSORRT_LIBRARY "${_tensoracle_tensorrt_root}/lib/libnvinfer.so.11")
+message(STATUS "TensorRT SDK from Conan: ${TENSORACLE_TENSORRT_INCLUDE}; ${TENSORACLE_TENSORRT_LIBRARY}")
+
 add_library(tensoracle SHARED src/abi.cpp src/error.cpp src/bundle.cpp src/producer.cpp src/comparison.cpp)
 target_sources(tensoracle PRIVATE src/engine.cpp src/cache.cpp src/plugins.cpp src/cache_open.cpp)
 target_sources(tensoracle PRIVATE src/cache_management.cpp src/cache_management_internal.cpp)
@@ -95,9 +92,10 @@ install(TARGETS tensoracle EXPORT tensoracleTargets
     RUNTIME DESTINATION "${_tensoracle_root}${CMAKE_INSTALL_BINDIR}"
     ARCHIVE DESTINATION "${TENSORACLE_LIBRARY_DIR}")
 install(DIRECTORY include/ DESTINATION "${TENSORACLE_INCLUDE_DIR}")
-install(FILES "${tensoracle_json_SOURCE_DIR}/LICENSE.MIT"
+include("${CMAKE_BINARY_DIR}/conan/tensoracle_licenses.cmake")
+install(FILES "${TENSORACLE_NLOHMANN_JSON_LICENSE}"
     DESTINATION "${_tensoracle_root}licenses/nlohmann-json")
-install(FILES "${tensoracle_miniz_SOURCE_DIR}/LICENSE"
+install(FILES "${TENSORACLE_MINIZ_LICENSE}"
     DESTINATION "${_tensoracle_root}licenses/miniz")
 install(FILES src/cubin_plugin.cpp src/sha256.hpp DESTINATION "${_tensoracle_root}src")
 install(FILES cmake/TensoracleCuda.cmake cmake/TensoracleCubinPlugin.cmake

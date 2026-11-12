@@ -50,9 +50,26 @@ def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
         "add_executable(check_threads plugin.cpp)\n"
         "target_link_libraries(check_threads PRIVATE tensoracle_cubin)\n"
     )
+    # The source library uses the parent's toolchain. Prepare it before project(),
+    # and resolve the Linux packages before simulating WIN32 for the thread check.
+    bootstrap = (
+        'set(TENSORACLE_CONAN_OFFLINE ON CACHE BOOL "" FORCE)\n'
+        f'include("{root.as_posix()}/cpp/conan/bootstrap.cmake")\n'
+        if target_kind == "static-library"
+        else ""
+    )
+    dependencies = (
+        f'include("{root.as_posix()}/cpp/cmake/TensoracleDependencies.cmake")\n'
+        if target_kind == "static-library"
+        else ""
+    )
     (tmp_path / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.20)\n"
-        "project(check_threads LANGUAGES CXX)\n" + platform + target,
+        + bootstrap
+        + "project(check_threads LANGUAGES CXX)\n"
+        + dependencies
+        + platform
+        + target,
         encoding="utf-8",
     )
     build = tmp_path / "build"

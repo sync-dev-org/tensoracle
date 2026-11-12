@@ -6,7 +6,7 @@ The dot plugin computes an fp32 32 by 16 matrix product and scales the output in
 
 ## Rebuild the cubins
 
-Prepare the TensorRT headers as described in [the SDK guide](../../docs/tensorrt-sdk.md), and set `TENSORACLE_SDK_ROOT` to that SDK when building tensoracle. From the repository root:
+Install the pinned Conan CLI and prepare the native dependencies as described in [the SDK guide](../../docs/tensorrt-sdk.md). Tensoracle and this example obtain the verified TensorRT SDK through the repository recipe and lock. From the repository root:
 
 ```bash
 uv sync --project python --extra producer
@@ -25,7 +25,7 @@ uv run --project python --extra producer pytest -m 'not gpu' python/tests/test_p
 
 The example owns `bindings.cpp`, which uses tensoracle's C++ interface to open an engine, construct its network from safetensors, register the two plugins, and run inference. Python only supplies arrays and selects paths. It uses no TensorRT Python API or tensoracle Python engine API.
 
-Build tensoracle's v2 wheel first, with `TENSORACLE_SDK_ROOT` set to the checked TensorRT 11 SDK:
+Build tensoracle's v2 wheel first. Its build obtains TensorRT SDK 11.2.1.2 from Conan:
 
 ```bash
 uv build python --wheel --out-dir /tmp/tensoracle-wheels
@@ -41,14 +41,13 @@ Build and install the example and tensoracle into a new environment:
 
 ```bash
 uv build examples/cubin_plugin --wheel --out-dir /tmp/example-wheels \
-  --build-constraints /tmp/tensoracle-build-constraints.txt \
-  "--config-setting=cmake.define.TENSORRT_ROOT=$TENSORACLE_SDK_ROOT"
+  --build-constraints /tmp/tensoracle-build-constraints.txt
 uv venv --python 3.13 /tmp/tensoracle-example-runtime
 uv pip install --python /tmp/tensoracle-example-runtime/bin/python \
   /tmp/tensoracle-wheels/*.whl /tmp/example-wheels/*.whl
 ```
 
-The build requires CMake 3.26 or later and a C++17 compiler. Its build dependencies supply nanobind and the PyPI CUDA 13.2 headers. `CUDAToolkit_ROOT` can select another PyPI `nvidia/cu13` directory. TensorRT headers come from `TENSORRT_ROOT`, while the plugin's CUDA Driver API link library comes from the installed driver. No OS CUDA Toolkit is required.
+The build requires CMake 3.26 or later and a C++17 compiler. Its build dependencies supply nanobind and the PyPI CUDA 13.2 headers. `CUDAToolkit_ROOT` can select another PyPI `nvidia/cu13` directory. TensorRT headers come from the repository's Conan recipe by default (`TENSORRT_ROOT` still accepts a verified external SDK), while the plugin's CUDA Driver API link library comes from the installed driver. No OS CUDA Toolkit is required.
 
 The CMake project uses `find_package(tensoracle 2 CONFIG REQUIRED)` against the installed wheel and `tensoracle_add_cubin_plugin` to compile the plugin. Its own nanobind extension links to `tensoracle::tensoracle`. The extension's RUNPATH is `$ORIGIN/../tensoracle/cpp/lib`; the example wheel contains no copy of tensoracle, TensorRT, or the CUDA driver. Importing the example does not initialize CUDA.
 
@@ -88,8 +87,7 @@ Each model retains two independent TensorRT execution contexts. `model.infer(x, 
 Bundle production, plugin compilation, import, and bundle inspection do not establish that a kernel runs correctly on a GPU. After reserving the host's GPU, run from the repository root:
 
 ```bash
-TENSORACLE_SDK_ROOT="$TENSORACLE_SDK_ROOT" TENSORACLE_CUDA_ROOT="$CUDAToolkit_ROOT" \
-  uv run --project python pytest -q python/tests/test_example_plugin.py -m gpu
+TENSORACLE_CONAN_OFFLINE=ON uv run --project python pytest -q python/tests/test_example_plugin.py -m gpu
 ```
 
 The test installs both wheels, checks dot and bias inference, preserves each execution context's shape, captures and replays plugin enqueue, reuses an engine in a new process, and rebuilds when plugin bytes change. Record sm86, sm89, and sm120 results separately. CPU checks use `-m 'not gpu'`.

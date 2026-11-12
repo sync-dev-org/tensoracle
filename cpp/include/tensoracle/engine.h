@@ -28,6 +28,14 @@ typedef struct tensoracle_tensor_address {
     void* address;
 } tensoracle_tensor_address;
 
+/* All fields are required. Unknown trailing fields are ignored. The caller
+ * retains ownership of this CUDA-aligned device allocation. */
+typedef struct tensoracle_scratch_memory {
+    size_t struct_size;
+    void* address;
+    size_t size;
+} tensoracle_scratch_memory;
+
 /* Output uses the same prefix/trailing-byte rules as tensoracle_version.
  * dimensions has TensorRT's maximum rank of eight. */
 typedef struct tensoracle_tensor_info {
@@ -48,6 +56,9 @@ TENSORACLE_API tensoracle_status tensoracle_engine_tensor_count(
 TENSORACLE_API tensoracle_status tensoracle_engine_tensor_name(
     const tensoracle_engine* engine, size_t index, const char** name,
     tensoracle_error** error) TENSORACLE_NOEXCEPT;
+/* Maximum scratch bytes needed by one execution, across all input profiles. */
+TENSORACLE_API tensoracle_status tensoracle_engine_scratch_size(
+    const tensoracle_engine* engine, size_t* size, tensoracle_error** error) TENSORACLE_NOEXCEPT;
 
 /* DEVICE tensors with dimensions inferable from shapes are supported. External
  * shape inputs, shape inference outputs, HOST tensors and data-dependent
@@ -55,6 +66,14 @@ TENSORACLE_API tensoracle_status tensoracle_engine_tensor_name(
 TENSORACLE_API tensoracle_status tensoracle_execution_create(
     const tensoracle_engine* engine, tensoracle_execution** execution,
     tensoracle_error** error) TENSORACLE_NOEXCEPT;
+/* Borrow caller-owned scratch instead of allocating it in TensorRT. address
+ * must be non-null and size must be at least tensoracle_engine_scratch_size.
+ * Keep the allocation alive longer than every execution borrowing it. Never
+ * run executions sharing it concurrently, including through CUDA graphs.
+ * Destroying an execution does not free the caller's allocation. */
+TENSORACLE_API tensoracle_status tensoracle_execution_create_with_scratch(
+    const tensoracle_engine* engine, const tensoracle_scratch_memory* scratch,
+    tensoracle_execution** execution, tensoracle_error** error) TENSORACLE_NOEXCEPT;
 TENSORACLE_API tensoracle_status tensoracle_execution_destroy(tensoracle_execution* execution) TENSORACLE_NOEXCEPT;
 /* Supply every ranged input exactly once; omit fixed and single-point inputs.
  * Arrays contain pointers so appending fields never changes their ABI stride.
@@ -76,9 +95,10 @@ TENSORACLE_API tensoracle_status tensoracle_execution_tensor_dtype(
  * before mutating shapes, closing, or using this execution from another thread.
  *
  * For CUDA graph capture: use a non-default stream and enqueue once after each
- * shape change before capture. Shapes, addresses and this execution are fixed
- * in that graph. Loops, conditionals and layers/plugins synchronizing with the
- * host may not be captured. The caller creates, recreates and destroys graphs. */
+ * shape change before capture. Shapes, tensor addresses, caller-provided
+ * scratch address and this execution are fixed in that graph. Loops,
+ * conditionals and layers/plugins synchronizing with the host may not be
+ * captured. The caller creates, recreates and destroys graphs. */
 TENSORACLE_API tensoracle_status tensoracle_execution_enqueue(
     tensoracle_execution* execution, const tensoracle_tensor_address* const* addresses,
     size_t count, tensoracle_cuda_stream stream, tensoracle_error** error) TENSORACLE_NOEXCEPT;

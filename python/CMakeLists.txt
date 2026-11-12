@@ -1,20 +1,25 @@
 cmake_minimum_required(VERSION 3.26)
+# A staged sdist has cpp next to CMakeLists.txt; the checkout has ../cpp.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cpp/CMakeLists.txt")
+    set(_cpp "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
+else()
+    set(_cpp "${CMAKE_CURRENT_SOURCE_DIR}/../cpp")
+endif()
+set(BUILD_TESTING OFF CACHE BOOL "Tests are built separately" FORCE)
+include("${_cpp}/conan/bootstrap.cmake")
 project(tensoracle_python LANGUAGES CXX)
 
 find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module Development.SABIModule)
 find_package(nanobind CONFIG REQUIRED)
+find_package(TensorRT 11.2.1.2 EXACT CONFIG REQUIRED)
+get_filename_component(_tensorrt_root "${TensorRT_INCLUDE_DIR}" DIRECTORY)
+find_library(_stub_nvinfer NAMES nvinfer PATHS "${_tensorrt_root}/lib"
+    NO_DEFAULT_PATH REQUIRED NO_CACHE)
 
-# The build environment supplies headers and the link library from wheels.
-# The standalone C++ project receives paths and never discovers Python itself.
+# CUDA headers come from the build environment; TensorRT comes from Conan.
 execute_process(COMMAND "${Python_EXECUTABLE}" -c
-    "from importlib.metadata import distribution; print(distribution('tensorrt-cu13-libs').locate_file('tensorrt_libs')); print(distribution('nvidia-cuda-runtime').locate_file('nvidia/cu13'))"
-    OUTPUT_VARIABLE _dependencies OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-string(REPLACE "\n" ";" _dependencies "${_dependencies}")
-list(GET _dependencies 0 _tensorrt_libs)
-list(GET _dependencies 1 _cuda_root)
-find_library(_nvinfer NAMES nvinfer nvinfer_11 libnvinfer.so.11
-    PATHS "${_tensorrt_libs}" NO_DEFAULT_PATH REQUIRED)
-set(TENSORACLE_TENSORRT_LIBRARY "${_nvinfer}" CACHE FILEPATH "TensorRT from the build wheel" FORCE)
+    "from importlib.metadata import distribution; print(distribution('nvidia-cuda-runtime').locate_file('nvidia/cu13'))"
+    OUTPUT_VARIABLE _cuda_root OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 set(CUDAToolkit_ROOT "${_cuda_root}" CACHE PATH "CUDA headers from the build wheel" FORCE)
 set(TENSORACLE_INSTALL_ROOT "tensoracle/cpp" CACHE STRING "Wheel SDK prefix" FORCE)
 set(TENSORACLE_INSTALL_RPATH "$ORIGIN/../../../tensorrt_libs" CACHE STRING "TensorRT wheel lookup" FORCE)
@@ -22,12 +27,6 @@ set(CMAKE_INSTALL_LIBDIR lib CACHE STRING "Wheel library directory" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "Tests are built separately" FORCE)
 set(TENSORACLE_BUILD_CUBIN_HELPER OFF CACHE BOOL "Ship the source-based helper" FORCE)
 
-# A staged sdist has cpp next to CMakeLists.txt; the normal checkout has ../cpp.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cpp/CMakeLists.txt")
-    set(_cpp "${CMAKE_CURRENT_SOURCE_DIR}/cpp")
-else()
-    set(_cpp "${CMAKE_CURRENT_SOURCE_DIR}/../cpp")
-endif()
 add_subdirectory("${_cpp}" cpp)
 nanobind_add_module(_native STABLE_ABI bindings.cpp cubin_bindings.cpp)
 target_link_libraries(_native PRIVATE tensoracle::tensoracle)
@@ -37,8 +36,11 @@ set_target_properties(_native PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tensoracle"
     BUILD_RPATH_USE_ORIGIN YES INSTALL_RPATH "$ORIGIN/cpp/lib")
 install(TARGETS _native LIBRARY DESTINATION tensoracle RUNTIME DESTINATION tensoracle)
-# The build RPATH finds libtensoracle and the TensorRT wheel while the stub is generated.
+# The build RPATH finds libtensoracle and the Conan TensorRT SDK during stub generation.
 # Private names are kept because public signatures return _CacheResult.
-nanobind_add_stub(_native_stub MODULE tensoracle._native OUTPUT _native.pyi
-    PYTHON_PATH "${CMAKE_CURRENT_BINARY_DIR}" DEPENDS _native INCLUDE_PRIVATE)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/_native.pyi"
+    COMMAND "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/build_backend.py"
+        "${_stub_nvinfer}" "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/_native.pyi"
+    DEPENDS _native "${CMAKE_CURRENT_SOURCE_DIR}/build_backend.py" VERBATIM)
+add_custom_target(_native_stub ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/_native.pyi")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_native.pyi" DESTINATION tensoracle)

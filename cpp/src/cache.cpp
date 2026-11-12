@@ -8,6 +8,7 @@
 #include <fstream>
 #include <system_error>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -64,6 +65,9 @@ int64_t mtime_ns(const struct stat& value) {
 bool unchanged(const struct stat& a, const struct stat& b) {
     return a.st_size == b.st_size && mtime_ns(a) == mtime_ns(b) && a.st_ino == b.st_ino;
 }
+bool same_file(const struct stat& a, const struct stat& b) {
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
 bool hex_digest(const json& value) {
     if (!value.is_string()) return false;
     const auto& text = value.get_ref<const std::string&>();
@@ -81,6 +85,51 @@ std::string file_sha256(const fs::path& path) {
     if (!stream.eof()) throw std::runtime_error("could not read weight file: " + path.string());
     return hash.finish();
 }
+}
+
+engine_file_lock::engine_file_lock(const fs::path& path) : path_(path) {
+    for (;;) {
+        // Existing engines can be reused from a read-only cache. flock does not
+        // require a writable descriptor; rebuilding publishes by rename too.
+        descriptor file{::open(path.c_str(), O_RDONLY | O_CLOEXEC)};
+        if (file.value < 0) {
+            if (errno != ENOENT) system_failure(path);
+            file.value = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            if (file.value < 0) {
+                if (errno == EEXIST) continue;
+                system_failure(path);
+            }
+        }
+        while (flock(file.value, LOCK_EX)) {
+            if (errno != EINTR) system_failure(path);
+        }
+        struct stat locked{}, current{};
+        if (fstat(file.value, &locked)) system_failure(path);
+        if (::stat(path.c_str(), &current)) {
+            if (errno == ENOENT) continue;
+            system_failure(path);
+        }
+        // A previous owner may have published a new inode or removed its failed
+        // placeholder. Waiting on that obsolete descriptor grants no ownership
+        // of the current pathname. Close it and lock the current file instead.
+        if (!same_file(locked, current)) continue;
+        empty_ = locked.st_size == 0;
+        descriptor_ = file.value;
+        file.value = -1;
+        return;
+    }
+}
+engine_file_lock::~engine_file_lock() {
+    if (descriptor_ < 0) return;
+    if (empty_) {
+        struct stat locked{}, current{};
+        // Keep the lock through removal. A waiting descriptor will retry after
+        // unlink, and a successful atomic publication has a different inode.
+        if (!fstat(descriptor_, &locked) && !locked.st_size
+            && !::stat(path_.c_str(), &current) && same_file(locked, current))
+            ::unlink(path_.c_str());
+    }
+    ::close(descriptor_);
 }
 
 fs::path cache_directory() {
