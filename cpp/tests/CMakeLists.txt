@@ -23,11 +23,16 @@ add_test(NAME "Installed SDK builds a separate C++ application"
         "-DCONSUMER_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}/consumer"
         "-DCONFIG=$<CONFIG>"
         "-DCXX=${CMAKE_CXX_COMPILER}"
+        "-DSHARED=${BUILD_SHARED_LIBS}"
         "-DTENSORRT_LIBRARY=${TENSORACLE_TENSORRT_LIBRARY}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/installed.cmake")
 set_tests_properties("Installed SDK builds a separate C++ application" PROPERTIES
     ENVIRONMENT "${_tensoracle_test_environment}"
     LABELS "SP-TENSORACLE-014;SP-TENSORACLE-021;SP-TENSORACLE-055;SP-TENSORACLE-057;SP-TENSORACLE-065" TIMEOUT 60)
+if(NOT BUILD_SHARED_LIBS)
+    set_tests_properties("Installed SDK builds a separate C++ application" PROPERTIES
+        LABELS "SP-TENSORACLE-014;SP-TENSORACLE-021;SP-TENSORACLE-055;SP-TENSORACLE-073;SP-TENSORACLE-074")
+endif()
 
 add_executable(tensoracle_execution_test execution.cpp)
 target_link_options(tensoracle_execution_test PRIVATE "LINKER:--export-dynamic-symbol=utimensat")

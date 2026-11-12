@@ -16,8 +16,9 @@ project(tensoracle VERSION ${_tensoracle_MAJOR}.${_tensoracle_MINOR}.${_tensorac
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(cmake/TensoracleCuda.cmake)
+option(BUILD_SHARED_LIBS "Build the shared tensoracle library" ON)
 option(TENSORACLE_BUILD_CUBIN_HELPER "Build the standalone cubin helper archive" ON)
-if(TENSORACLE_BUILD_CUBIN_HELPER)
+if(TENSORACLE_BUILD_CUBIN_HELPER OR NOT BUILD_SHARED_LIBS)
     # Preserve the existing helper's discovery and diagnostics for native builds.
     _tensoracle_find_cuda()
     get_target_property(TENSORACLE_CUDA_INCLUDE tensoracle_cuda_driver INTERFACE_INCLUDE_DIRECTORIES)
@@ -34,7 +35,7 @@ get_filename_component(_tensoracle_tensorrt_root "${TENSORACLE_TENSORRT_INCLUDE}
 set(TENSORACLE_TENSORRT_LIBRARY "${_tensoracle_tensorrt_root}/lib/libnvinfer.so.11")
 message(STATUS "TensorRT SDK from Conan: ${TENSORACLE_TENSORRT_INCLUDE}; ${TENSORACLE_TENSORRT_LIBRARY}")
 
-add_library(tensoracle SHARED src/abi.cpp src/error.cpp src/bundle.cpp src/producer.cpp src/comparison.cpp)
+add_library(tensoracle src/abi.cpp src/error.cpp src/bundle.cpp src/producer.cpp src/comparison.cpp)
 target_sources(tensoracle PRIVATE src/engine.cpp src/cache.cpp src/plugins.cpp src/cache_open.cpp)
 target_sources(tensoracle PRIVATE src/cache_management.cpp src/cache_management_internal.cpp)
 target_sources(tensoracle PRIVATE src/builder.cpp src/safetensors.cpp)
@@ -44,18 +45,33 @@ if(NOT WIN32)
 endif()
 add_library(tensoracle::tensoracle ALIAS tensoracle)
 target_compile_features(tensoracle PUBLIC cxx_std_17)
-target_compile_definitions(tensoracle PRIVATE TENSORACLE_BUILDING_LIBRARY)
+if(BUILD_SHARED_LIBS)
+    target_compile_definitions(tensoracle PRIVATE TENSORACLE_BUILDING_LIBRARY)
+else()
+    target_compile_definitions(tensoracle PUBLIC TENSORACLE_STATIC_LIBRARY)
+    set_target_properties(tensoracle PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
 target_include_directories(tensoracle PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     PRIVATE "${TENSORACLE_TENSORRT_INCLUDE}" "${TENSORACLE_CUDA_INCLUDE}")
-target_link_libraries(tensoracle PRIVATE "${TENSORACLE_TENSORRT_LIBRARY}" tensoracle_json tensoracle_miniz ${CMAKE_DL_LIBS})
+if(BUILD_SHARED_LIBS)
+    target_link_libraries(tensoracle PRIVATE "${TENSORACLE_TENSORRT_LIBRARY}" tensoracle_json tensoracle_miniz ${CMAKE_DL_LIBS})
+else()
+    # Keep third-party objects out of the archive and resolve their targets in
+    # the consumer's toolchain, without exporting this build's Conan paths.
+    target_link_libraries(tensoracle PRIVATE
+        "$<BUILD_INTERFACE:${TENSORACLE_TENSORRT_LIBRARY}>"
+        "$<BUILD_INTERFACE:tensoracle_json>" miniz::miniz
+        "$<BUILD_INTERFACE:tensoracle_internal_cuda_driver>"
+        "$<INSTALL_INTERFACE:tensoracle_cuda_driver>" ${CMAKE_DL_LIBS})
+endif()
 set(TENSORACLE_INSTALL_RPATH "$ORIGIN" CACHE STRING "Relative runtime lookup paths for the installed library")
 set_target_properties(tensoracle PROPERTIES
     VERSION ${PROJECT_VERSION} SOVERSION ${PROJECT_VERSION_MAJOR}
     CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES
     BUILD_RPATH_USE_ORIGIN YES
     INSTALL_RPATH "${TENSORACLE_INSTALL_RPATH}")
-if(UNIX AND NOT APPLE)
+if(BUILD_SHARED_LIBS AND UNIX AND NOT APPLE)
     target_link_options(tensoracle PRIVATE "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/tensoracle.map")
     set_property(TARGET tensoracle APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/tensoracle.map")
 endif()
@@ -99,6 +115,16 @@ install(FILES "${TENSORACLE_MINIZ_LICENSE}"
 install(FILES src/cubin_plugin.cpp src/sha256.hpp DESTINATION "${_tensoracle_root}src")
 install(FILES cmake/TensoracleCuda.cmake cmake/TensoracleCubinPlugin.cmake
     DESTINATION "${TENSORACLE_HELPER_DIR}")
+set(TENSORACLE_STATIC_DEPENDENCIES "")
+if(NOT BUILD_SHARED_LIBS)
+    set(TENSORACLE_STATIC_DEPENDENCIES [=[    include(CMakeFindDependencyMacro)
+    find_dependency(miniz 3.1.1 EXACT CONFIG)
+    if(NOT WIN32)
+        find_dependency(Threads)
+    endif()
+    _tensoracle_find_cuda()
+]=])
+endif()
 configure_package_config_file(cmake/tensoracleConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/tensoracleConfig.cmake"
     INSTALL_DESTINATION "${TENSORACLE_PACKAGE_DIR}" PATH_VARS TENSORACLE_HELPER_DIR)

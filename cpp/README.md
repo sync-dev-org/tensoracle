@@ -6,6 +6,38 @@ GitHub Release: verify the archive's SHA256, extract it, and configure CMake wit
 recipe is maintained separately and is not included in this repository.
 The following commands build tensoracle from source.
 
+The default is a shared library (`BUILD_SHARED_LIBS=ON`). To embed tensoracle
+statically, build from source with `-DBUILD_SHARED_LIBS=OFF` and install the result:
+
+```bash
+cmake -S cpp -B build/static -G Ninja -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
+cmake --build build/static --parallel 8
+cmake --install build/static --prefix /path/to/prefix
+```
+
+Both forms provide the same headers and CMake target, `tensoracle::tensoracle`.
+The static archive contains only tensoracle's objects. Its installed CMake
+package resolves miniz, the CUDA driver link stub, TensorRT, and the platform
+thread and dynamic-loader libraries in the consumer's build environment. Use
+the prepared Conan toolchain for those dependencies, as described in the
+[SDK guide](../docs/cpp-sdk.md#embed-tensoracle-from-source). The static target
+supplies `TENSORACLE_STATIC_LIBRARY` so public declarations do not import or
+export a DLL. The standalone `tensoracle_cubin` archive and source-based cubin
+plugin helpers remain available in source builds.
+
+Release SDK archives and Python wheels contain the shared library only; static
+libraries are not distributed. A source-building Conan recipe selects static
+embedding with `from_source=True` and `shared=False`. TensorRT stays a shared
+library supplied by the execution host. The current library uses the CUDA
+Driver API and does not require the CUDA runtime.
+
+A process must contain one tensoracle implementation shared by all its code.
+If an application or library embeds tensoracle, that artifact must be the only
+owner in the process: do not load another artifact embedding tensoracle or a
+tensoracle shared library there. Python processes use the wheel's shared
+library. Relink an artifact that embeds tensoracle whenever its embedded
+tensoracle version is updated.
+
 C++ builds require CMake 3.26 or later, Ninja, GCC 13 on Linux x86_64, the pinned
 Conan dependencies. CUDA headers and the driver link stub come from the locked
 `cuda-toolkit/13.2.2` recipe (`compiler=False`), as described in the

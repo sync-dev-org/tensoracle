@@ -6,6 +6,9 @@ The archive contains the shared C ABI library, public C and C++ headers, the CMa
 package and plugin helpers, their source files, and MIT and third-party licenses.
 It does not contain TensorRT. The release asset requires no authentication.
 Python applications continue to install tensoracle through PyPI.
+Release SDK archives and Python wheels contain the shared library only. To
+embed tensoracle statically, build it from source; static libraries are not
+distributed.
 The tensoracle Conan package recipe is maintained separately and is not included
 in this repository.
 
@@ -57,6 +60,53 @@ after `find_package(tensoracle)`. Plugin builds use Conan
 Pass its `user.cuda:root` through `CUDAToolkit_ROOT` in the consumer toolchain,
 as shown in the SDK guide. Existing explicit CUDA SDK roots remain supported;
 the link stub is not part of the application runtime.
+
+## Embed tensoracle from source
+
+Source builds select a shared library by default (`BUILD_SHARED_LIBS=ON`). After
+[preparing the build dependencies](../cpp/README.md), select a static library
+with `BUILD_SHARED_LIBS=OFF`:
+
+```bash
+cmake -S cpp -B build/static -G Ninja -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
+cmake --build build/static --parallel 8
+cmake --install build/static --prefix /path/to/prefix
+```
+
+The installed package keeps the same public headers and
+`tensoracle::tensoracle` target. The archive contains only tensoracle's objects;
+miniz and the CUDA driver remain separate link dependencies. The CMake package
+finds these dependencies, TensorRT's shared library, and the platform thread
+and dynamic-loader libraries for the final link. The current library uses the
+CUDA Driver API and does not use the CUDA runtime. If a future version uses
+the CUDA runtime, its static parts must also be supplied to the final link.
+TensorRT remains a host-supplied shared runtime.
+
+Configure a consumer with the prepared Conan toolchain so it can resolve the
+same miniz and CUDA build inputs. For example, from the tensoracle source root:
+
+```bash
+cmake -S /path/to/application -B build/application \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/build/static/conan/conan_toolchain.cmake" \
+  -DCMAKE_PREFIX_PATH=/path/to/prefix
+cmake --build build/application --parallel 8
+```
+
+The consumer uses the same `find_package(tensoracle)` and
+`target_link_libraries(... tensoracle::tensoracle)` calls shown above. The
+static target supplies `TENSORACLE_STATIC_LIBRARY`, which disables DLL import
+and export attributes in the public headers. Source-based cubin plugin helpers
+remain available after `find_package(tensoracle)`. A source-building Conan
+recipe selects this form with `from_source=True` and `shared=False`; the
+prebuilt SDK route supports shared libraries only.
+
+A process must contain exactly one tensoracle implementation, used by all its
+code. An artifact that embeds tensoracle must be its only owner in that
+process. Do not load another artifact embedding tensoracle or a tensoracle
+shared library into the same process. Python processes use the wheel's shared
+library. Relink an artifact that embeds tensoracle when updating the embedded
+tensoracle version.
 
 ## Install the host runtime and relocate a prefix
 

@@ -1,7 +1,7 @@
 @PACKAGE_INIT@
 include("@PACKAGE_TENSORACLE_HELPER_DIR@/TensoracleCubinPlugin.cmake")
 if(NOT TARGET tensoracle::tensoracle)
-    if(NOT TARGET TensorRT::nvinfer)
+@TENSORACLE_STATIC_DEPENDENCIES@    if(NOT TARGET TensorRT::nvinfer)
         find_package(TensorRT QUIET CONFIG)
     endif()
     if(TARGET TensorRT::nvinfer)
@@ -31,7 +31,7 @@ if(NOT TARGET tensoracle::tensoracle)
         get_filename_component(_tensoracle_nvinfer_dirs "${TENSORACLE_TENSORRT_LIBRARY}" DIRECTORY)
     endif()
     include("${CMAKE_CURRENT_LIST_DIR}/tensoracleTargets.cmake")
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND @BUILD_SHARED_LIBS@)
         # Resolve libtensoracle's DT_NEEDED at link time without adding a direct
         # TensorRT dependency to consumers that already rely on its RUNPATH.
         set_property(TARGET tensoracle::tensoracle APPEND PROPERTY

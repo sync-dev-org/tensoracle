@@ -5,10 +5,12 @@
 #include <stdint.h>
 
 #define TENSORACLE_VERSION_MAJOR 2
-#define TENSORACLE_VERSION_MINOR 2
-#define TENSORACLE_VERSION_PATCH 3
+#define TENSORACLE_VERSION_MINOR 3
+#define TENSORACLE_VERSION_PATCH 0
 
-#if defined(_WIN32)
+#if defined(TENSORACLE_STATIC_LIBRARY)
+#  define TENSORACLE_API
+#elif defined(_WIN32)
 #  if defined(TENSORACLE_BUILDING_LIBRARY)
 #    define TENSORACLE_API __declspec(dllexport)
 #  else

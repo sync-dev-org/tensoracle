@@ -21,6 +21,7 @@ set(TENSORACLE_INSTALL_RPATH "$ORIGIN/../../../tensorrt_libs" CACHE STRING "Tens
 set(CMAKE_INSTALL_LIBDIR lib CACHE STRING "Wheel library directory" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "Tests are built separately" FORCE)
 set(TENSORACLE_BUILD_CUBIN_HELPER OFF CACHE BOOL "Ship the source-based helper" FORCE)
+set(BUILD_SHARED_LIBS ON CACHE BOOL "Wheels ship the shared library" FORCE)
 
 add_subdirectory("${_cpp}" cpp)
 nanobind_add_module(_native STABLE_ABI bindings.cpp cubin_bindings.cpp)
