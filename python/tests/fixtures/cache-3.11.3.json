@@ -1,0 +1,64 @@
+[
+  {
+    "input": {
+      "name": "encoder",
+      "graph_version": "1",
+      "optimization_level": 3,
+      "gpu": {
+        "name": "GPU A",
+        "compute_capability_major": 8,
+        "compute_capability_minor": 9,
+        "total_memory": 25769803776,
+        "multiprocessor_count": 128,
+        "ecc_enabled": 0
+      },
+      "workspace_limit": null,
+      "shape_tensor_outputs": []
+    },
+    "filename": "d2febd5f32a2353f067270a4476302293a6c0a47832cb9bc71dc72d8467b3358.engine",
+    "engine": "TENSORACLE\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u00a5{\"conditions\":{\"architecture\":\"x86_64\",\"builder_settings\":{\"optimization_level\":3,\"tf32\":false},\"gpu\":{\"compute_capability_major\":8,\"compute_capability_minor\":9,\"ecc_enabled\":0,\"multiprocessor_count\":128,\"name\":\"GPU A\",\"total_memory\":25769803776},\"graph_version\":\"1\",\"inputs\":{\"image\":{\"maximum\":[4,3,64,64],\"minimum\":[1,3,16,16],\"optimum\":[2,3,32,32]}},\"name\":\"encoder\",\"os\":\"Linux\",\"plugins\":[\"9d1107dfd30c229b15fb8796ee2b74782f1e5e1ce9ab72756209257a000cf0a6\"],\"tensorrt_version\":\"11.2.1.2\",\"weights\":[\"6b9c304209dca572b06cc6d356ce64fc98b8137eb6ac3f6f9e5bedd2bf6e7f70\"]},\"plan_sha256\":\"64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525\",\"workspace_limit\":null}plan"
+  },
+  {
+    "input": {
+      "name": "encoder-\u65e5\u672c\u8a9e-\ud83e\uddea-\"\\\n",
+      "graph_version": "v2-\u00e9",
+      "optimization_level": 0,
+      "gpu": {
+        "name": "GPU-\u00e9-\ud83e\uddea",
+        "compute_capability_major": 8,
+        "compute_capability_minor": 9,
+        "total_memory": 25769803776,
+        "multiprocessor_count": 128,
+        "ecc_enabled": 0
+      },
+      "workspace_limit": 1099511627776,
+      "shape_tensor_outputs": [
+        "shape-\u5f62\u72b6",
+        "quote\"\\\n"
+      ]
+    },
+    "filename": "63128b76201a348c93be98f0b8197597eb9af35fa941fcc21207f73a7da7edf8.engine",
+    "engine": "TENSORACLE\u0000\u0000\u0000\u0000\u0000\u0000\u0003+{\"conditions\":{\"architecture\":\"x86_64\",\"builder_settings\":{\"optimization_level\":0,\"tf32\":false},\"gpu\":{\"compute_capability_major\":8,\"compute_capability_minor\":9,\"ecc_enabled\":0,\"multiprocessor_count\":128,\"name\":\"GPU-\\u00e9-\\ud83e\\uddea\",\"total_memory\":25769803776},\"graph_version\":\"v2-\\u00e9\",\"inputs\":{\"image\":{\"maximum\":[4,3,64,64],\"minimum\":[1,3,16,16],\"optimum\":[2,3,32,32]}},\"name\":\"encoder-\\u65e5\\u672c\\u8a9e-\\ud83e\\uddea-\\\"\\\\\\n\",\"os\":\"Linux\",\"plugins\":[\"9d1107dfd30c229b15fb8796ee2b74782f1e5e1ce9ab72756209257a000cf0a6\"],\"tensorrt_version\":\"11.2.1.2\",\"weights\":[\"6b9c304209dca572b06cc6d356ce64fc98b8137eb6ac3f6f9e5bedd2bf6e7f70\"]},\"plan_sha256\":\"64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525\",\"shape_tensor_outputs\":[\"shape-\\u5f62\\u72b6\",\"quote\\\"\\\\\\n\"],\"workspace_limit\":1099511627776}plan"
+  },
+  {
+    "input": {
+      "name": "boundary",
+      "graph_version": "18446744073709551615",
+      "optimization_level": 5,
+      "gpu": {
+        "name": "GPU A",
+        "compute_capability_major": 8,
+        "compute_capability_minor": 9,
+        "total_memory": 18446744073709551615,
+        "multiprocessor_count": 128,
+        "ecc_enabled": 0
+      },
+      "workspace_limit": 18446744073709551615,
+      "shape_tensor_outputs": [
+        "shape"
+      ]
+    },
+    "filename": "99722948190600ce48f1c2e6dcc9610003a667524206850a8d7f5e626a33e5f8.engine",
+    "engine": "TENSORACLE\u0000\u0000\u0000\u0000\u0000\u0000\u0002\u00f3{\"conditions\":{\"architecture\":\"x86_64\",\"builder_settings\":{\"optimization_level\":5,\"tf32\":false},\"gpu\":{\"compute_capability_major\":8,\"compute_capability_minor\":9,\"ecc_enabled\":0,\"multiprocessor_count\":128,\"name\":\"GPU A\",\"total_memory\":18446744073709551615},\"graph_version\":\"18446744073709551615\",\"inputs\":{\"image\":{\"maximum\":[4,3,64,64],\"minimum\":[1,3,16,16],\"optimum\":[2,3,32,32]}},\"name\":\"boundary\",\"os\":\"Linux\",\"plugins\":[\"9d1107dfd30c229b15fb8796ee2b74782f1e5e1ce9ab72756209257a000cf0a6\"],\"tensorrt_version\":\"11.2.1.2\",\"weights\":[\"6b9c304209dca572b06cc6d356ce64fc98b8137eb6ac3f6f9e5bedd2bf6e7f70\"]},\"plan_sha256\":\"64879f7d6b960a01909762d911a32d4582c20010c5641ee90278b644a9e3b525\",\"shape_tensor_outputs\":[\"shape\"],\"workspace_limit\":18446744073709551615}plan"
+  }
+]

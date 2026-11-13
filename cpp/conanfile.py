@@ -12,7 +12,7 @@ class TensoracleDependencies(ConanFile):
     default_build_options: ClassVar[dict] = {"cuda-toolkit/*:compiler": False}
 
     def requirements(self):
-        self.requires("nlohmann_json/3.11.3")
+        self.requires("nlohmann_json/[>=3.11.3 <4]")
         self.requires("miniz/3.1.1")
         self.requires("catch2/3.16.1")
         self.requires("tensorrt/11.2.1.2")

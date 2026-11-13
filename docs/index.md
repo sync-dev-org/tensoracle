@@ -203,6 +203,8 @@ One `tensoracle::engine_execution::enqueue` call can be captured and replayed. T
 
 Use a dedicated execution unit for each graph. After setting or changing input shapes, enqueue once and wait for completion before capture. Capture on a nondefault stream, keeping synchronous CUDA operations and legacy default-stream work outside capture. The graph fixes the input shapes, tensor addresses, caller-provided scratch address, and execution unit. Keep that unit, buffers, caller-provided scratch memory, and plugin preparation resources alive until outstanding work finishes and the graph is destroyed. Recapture when shapes or addresses change; input contents may change at the same addresses between completed replays.
 
+A capture also depends on other threads that use the same CUDA context. While any thread captures in that context, do not open or close engines and do not create or destroy execution units on another thread. Destroying an execution unit, and opening an engine that has to be built because no saved engine matches, synchronize the whole CUDA context, which invalidates the capture even in `CU_STREAM_CAPTURE_MODE_THREAD_LOCAL` mode; the capturing thread's enqueue or end-capture call then fails, and the build itself fails too. tensoracle does not order these calls for you: a process that captures on one thread while loading or releasing models on others must serialize capture with those operations itself.
+
 Engines with loops or conditionals, or layers or plugins that synchronize with the host during inference, cannot be captured. End an attempted capture and release graph resources before falling back to ordinary enqueue.
 
 ### Register plugin libraries
