@@ -4,6 +4,8 @@
 #include <fstream>
 #include <string>
 #include <tensoracle/cubin.hpp>
+#include <nlohmann/json.hpp>
+#include <vector>
 
 namespace fs = std::filesystem;
 namespace {
@@ -71,6 +73,56 @@ TEST_CASE("C ABI clears bundle result handles on invalid arguments", "[SP-TENSOR
     REQUIRE(diagnostic != nullptr);
     REQUIRE(tensoracle_error_destroy(diagnostic) == TENSORACLE_SUCCESS);
     REQUIRE(tensoracle_bundle_result_destroy(nullptr) == TENSORACLE_SUCCESS);
+}
+
+TEST_CASE("Embedded bundle inspection matches directory inspection and rejects damaged bytes",
+          "[SP-TENSORACLE-077][SP-TENSORACLE-055]") {
+    Directory directory;
+    fs::copy(TENSORACLE_TEST_BUNDLE_ROOT, directory.path,
+             fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    std::ifstream manifest_file(directory.path / "bundle.json");
+    std::string manifest((std::istreambuf_iterator<char>(manifest_file)), {});
+    auto parsed = nlohmann::json::parse(manifest);
+    std::vector<std::string> names, payloads;
+    for (const auto& entry : parsed["entries"]) {
+        names.push_back(entry["file"]);
+        std::ifstream input(directory.path / names.back(), std::ios::binary);
+        payloads.emplace_back(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    }
+    std::vector<tensoracle_bundle_file> files;
+    for (size_t i = 0; i < names.size(); ++i)
+        files.push_back({sizeof(tensoracle_bundle_file), names[i].c_str(), payloads[i].data(), payloads[i].size()});
+    std::vector<const tensoracle_bundle_file*> pointers;
+    for (const auto& file : files) pointers.push_back(&file);
+    auto expected = tensoracle::inspect_bundle(directory.path.c_str());
+    fs::remove_all(directory.path);
+    auto actual = tensoracle::inspect_embedded_bundle(manifest, pointers.data(), pointers.size());
+    REQUIRE(actual.sha256() == expected.sha256());
+    REQUIRE(actual.manifest_json() == expected.manifest_json());
+    payloads[0][63] ^= 1;
+    try {
+        tensoracle::inspect_embedded_bundle(manifest, pointers.data(), pointers.size());
+        FAIL("damaged embedded cubin was accepted");
+    } catch (const tensoracle::error& failure) {
+        REQUIRE(failure.status() == TENSORACLE_CORRUPT_CUBIN);
+    }
+    payloads[0][63] ^= 1;
+    try {
+        tensoracle::inspect_embedded_bundle(manifest, pointers.data() + 1, pointers.size() - 1);
+        FAIL("missing embedded cubin was accepted");
+    } catch (const tensoracle::error& failure) {
+        REQUIRE(failure.status() == TENSORACLE_MISSING_CUBIN);
+    }
+    auto* result = reinterpret_cast<tensoracle_bundle_result*>(1);
+    REQUIRE(tensoracle_inspect_embedded_bundle(manifest.data(), manifest.size(), nullptr, 1,
+                                             &result, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(result == nullptr);
+    auto size = files[0].struct_size;
+    files[0].struct_size = sizeof(size_t);
+    REQUIRE(tensoracle_inspect_embedded_bundle(manifest.data(), manifest.size(), pointers.data(),
+                                             pointers.size(), &result, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(result == nullptr);
+    files[0].struct_size = size;
 }
 
 TEST_CASE("C++ producer compiles CUDA source and verifies all three SMs without a GPU",

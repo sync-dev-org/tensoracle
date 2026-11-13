@@ -2,9 +2,15 @@ include_guard(GLOBAL)
 include("${CMAKE_CURRENT_LIST_DIR}/TensoracleCuda.cmake")
 
 function(tensoracle_add_cubin_plugin)
-    cmake_parse_arguments(ARG "" "TARGET;TENSORRT_ROOT;BUNDLE_ROOT" "SOURCES" ${ARGN})
+    cmake_parse_arguments(ARG "" "TARGET;TYPE;TENSORRT_ROOT;BUNDLE_ROOT" "SOURCES" ${ARGN})
     if(NOT ARG_TARGET OR NOT ARG_TENSORRT_ROOT OR NOT ARG_BUNDLE_ROOT OR NOT ARG_SOURCES)
         message(FATAL_ERROR "TARGET, TENSORRT_ROOT, BUNDLE_ROOT, and SOURCES are required")
+    endif()
+    if(NOT DEFINED ARG_TYPE)
+        set(ARG_TYPE SHARED)
+    endif()
+    if(NOT ARG_TYPE MATCHES "^(SHARED|STATIC|OBJECT)$")
+        message(FATAL_ERROR "TYPE must be SHARED, STATIC, or OBJECT")
     endif()
 
     get_filename_component(_tensoracle_cpp "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
@@ -19,7 +25,7 @@ function(tensoracle_add_cubin_plugin)
         PATHS "${ARG_TENSORRT_ROOT}/lib" "${ARG_TENSORRT_ROOT}/lib64"
         NO_DEFAULT_PATH REQUIRED)
 
-    add_library(${ARG_TARGET} SHARED
+    add_library(${ARG_TARGET} ${ARG_TYPE}
         ${ARG_SOURCES}
         "${_tensoracle_cpp}/src/cubin_plugin.cpp"
         "${ARG_BUNDLE_ROOT}/bundle.cpp")
@@ -35,5 +41,6 @@ function(tensoracle_add_cubin_plugin)
         target_link_libraries(${ARG_TARGET} PRIVATE Threads::Threads)
     endif()
     set_target_properties(${ARG_TARGET} PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
         CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 endfunction()

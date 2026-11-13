@@ -1,6 +1,7 @@
 #ifndef TENSORACLE_BUILDER_H
 #define TENSORACLE_BUILDER_H
 #include "engine.h"
+#include "plugins.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -105,9 +106,14 @@ typedef struct tensoracle_builder_options {
     int64_t workspace_limit;
     int32_t optimization_level;
     uint32_t force_rebuild;
+    const tensoracle_plugin_libraries* const* embedded_plugins;
+    size_t embedded_plugin_count;
 } tensoracle_builder_options;
 /* name/version/files/profiles/IO fields are required. Missing trailing fields
  * mean no plugins, default TensorRT workspace, optimization level 3, no force.
+ * Missing embedded_plugins/count means no embedded registrations. Each handle
+ * is borrowed only during open_engine; register its creators before this call.
+ * Registered containing-file digests join the existing plugin cache conditions.
  * Present workspace must be positive; optimization level is 0..5. No precision
  * or TF32 option: network tensor types determine precision and TF32 is disabled.
  * All inputs are borrowed only for this call. Profile/IO arrays use pointers so

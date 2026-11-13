@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.26)
+project(embedded_plugin_consumer LANGUAGES CXX)
+find_package(tensoracle 2 CONFIG REQUIRED)
+find_package(TensorRT CONFIG REQUIRED)
+list(GET TensorRT_INCLUDE_DIRS 0 _tensorrt_include)
+get_filename_component(TENSORRT_ROOT "${_tensorrt_include}" DIRECTORY)
+tensoracle_add_cubin_plugin(TARGET embedded_plugin TYPE "${PLUGIN_TYPE}"
+    TENSORRT_ROOT "${TENSORRT_ROOT}" BUNDLE_ROOT "${EXAMPLE_ROOT}/bundle"
+    SOURCES "${EXAMPLE_ROOT}/plugin.cpp")
+# Linked creators cannot be discovered through TensorRT's loadLibrary contract.
+target_compile_definitions(embedded_plugin PRIVATE getCreators=embeddedExampleCreators)
+if(OWNER_SHARED)
+    add_library(model SHARED model.cpp bundle_data.cpp)
+    target_link_libraries(model PRIVATE embedded_plugin tensoracle::tensoracle
+        TensorRT::nvinfer tensoracle_cuda_driver)
+    add_executable(probe main.cpp)
+    target_link_libraries(probe PRIVATE model)
+    add_executable(relative_probe load_relative.cpp)
+    target_link_libraries(relative_probe PRIVATE ${CMAKE_DL_LIBS})
+else()
+    add_executable(probe main.cpp model.cpp bundle_data.cpp)
+    target_link_libraries(probe PRIVATE embedded_plugin tensoracle::tensoracle
+        TensorRT::nvinfer tensoracle_cuda_driver)
+endif()
+if(PLUGIN_TYPE STREQUAL "SHARED")
+    set(_container "$<TARGET_FILE:embedded_plugin>")
+elseif(OWNER_SHARED)
+    set(_container "$<TARGET_FILE:model>")
+else()
+    set(_container "$<TARGET_FILE:probe>")
+endif()
+file(GENERATE OUTPUT "container.txt" CONTENT "${_container}")

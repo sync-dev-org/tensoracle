@@ -1,5 +1,6 @@
 #include <tensoracle/tensoracle.h>
 #include <tensoracle/tensoracle.hpp>
+#include <tensoracle/builder.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <array>
@@ -7,6 +8,37 @@
 #include <cstring>
 #include <type_traits>
 #include <utility>
+
+TEST_CASE("Older builder requests ignore appended embedded registrations",
+          "[SP-TENSORACLE-055][SP-TENSORACLE-077]") {
+    const char* weights[]{"unused.safetensors"};
+    tensoracle_builder_options request{};
+    request.struct_size = offsetof(tensoracle_builder_options, embedded_plugins);
+    request.name = "old-header"; request.graph_version = "1";
+    request.weight_files = weights; request.weight_count = 1;
+    request.optimization_level = -1; // Stop during validation, before any GPU access.
+    request.embedded_plugins = reinterpret_cast<const tensoracle_plugin_libraries* const*>(1);
+    request.embedded_plugin_count = 1;
+    tensoracle_network_builder callback{sizeof(callback), nullptr,
+        [](void*, void*, const tensoracle_weights*, const char**) noexcept -> tensoracle_status { return TENSORACLE_SUCCESS; }};
+    tensoracle_engine* engine = nullptr;
+    tensoracle_error* diagnostic = nullptr;
+    REQUIRE(tensoracle_open_engine(&request, &callback, &engine, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+    tensoracle::error_handle owner(diagnostic);
+    const char* message = nullptr;
+    REQUIRE(tensoracle_error_message(owner.get(), &message, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(std::strstr(message, "optimization level"));
+    REQUIRE(engine == nullptr);
+
+    request.struct_size = sizeof(request);
+    request.embedded_plugins = nullptr;
+    diagnostic = nullptr;
+    REQUIRE(tensoracle_open_engine(&request, &callback, &engine, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+    owner.reset(diagnostic);
+    REQUIRE(tensoracle_error_message(owner.get(), &message, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(std::strstr(message, "registration handles"));
+    REQUIRE(engine == nullptr);
+}
 
 TEST_CASE("C callers read the loaded library version", "[SP-TENSORACLE-055][SP-TENSORACLE-056]") {
     tensoracle_version version{sizeof(version), 99, 99, 99};

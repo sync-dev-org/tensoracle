@@ -4,6 +4,7 @@
 #include "error.hpp"
 #include "safetensors.hpp"
 #include "structure.hpp"
+#include "plugins_internal.hpp"
 #include <algorithm>
 #include <iterator>
 #include <set>
@@ -69,6 +70,14 @@ cache_request request_from(const tensoracle_builder_options* options) {
     if (size >= offsetof(tensoracle_builder_options, optimization_level) + sizeof(int32_t)) request.optimization_level = options->optimization_level;
     auto force = read_field<uint32_t>(options, size, offsetof(tensoracle_builder_options, force_rebuild));
     require(force <= 1, "force_rebuild must be 0 or 1"); request.force_rebuild = force != 0;
+    auto embedded_count = read_field<size_t>(options, size, offsetof(tensoracle_builder_options, embedded_plugin_count));
+    auto embedded = read_field<const tensoracle_plugin_libraries* const*>(options, size, offsetof(tensoracle_builder_options, embedded_plugins));
+    require(!embedded_count || embedded, "embedded plugin registration handles are required");
+    for (size_t i = 0; i < embedded_count; ++i) {
+        require(embedded[i], "embedded plugin registration must not be null");
+        const auto& identities = embedded[i]->identities;
+        request.embedded_plugins.insert(request.embedded_plugins.end(), identities.begin(), identities.end());
+    }
     (void)validate_cache_request(request);
     return request;
 }

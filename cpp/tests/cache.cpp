@@ -200,6 +200,25 @@ TEST_CASE("Changed plugin bytes cannot select conditions for an older loaded cre
     REQUIRE_THROWS_AS(make_conditions(request, {registered}, {}, "11.4.0", "Linux", "x86_64"), std::invalid_argument);
 }
 
+TEST_CASE("Embedded plugin identities use the existing cache conditions and reject changed containers",
+          "[SP-TENSORACLE-077][SP-TENSORACLE-078][SP-TENSORACLE-009][SP-TENSORACLE-055]") {
+    fixture files;
+    auto weight = files.directory / "weight";
+    auto container = files.directory / "container";
+    put(weight, "weights"); put(container, "original");
+    cache_request request;
+    request.name = "embedded"; request.graph_version = "1"; request.weights = {weight};
+    auto baseline = make_conditions(request, {}, {}, "11.4.0", "Linux", "x86_64");
+    auto registered = sha256("original", 8);
+    request.embedded_plugins = {{container, registered}};
+    auto embedded = make_conditions(request, {}, {}, "11.4.0", "Linux", "x86_64");
+    REQUIRE(embedded["plugins"] == nlohmann::json::array({registered}));
+    baseline["plugins"] = embedded["plugins"];
+    REQUIRE(embedded == baseline);
+    put(container, "changed");
+    REQUIRE_THROWS_AS(make_conditions(request, {}, {}, "11.4.0", "Linux", "x86_64"), std::invalid_argument);
+}
+
 TEST_CASE("A weight changed during hashing leaves no digest record until a stable read", "[SP-TENSORACLE-002][SP-TENSORACLE-009]") {
     fixture files;
     auto weight = files.directory / "weights";

@@ -38,6 +38,7 @@ nav:
   - TensorRT SDK setup: tensorrt-sdk.md
   - Prebuilt C and C++ SDK: cpp-sdk.md
   - C++ SDK and plugin builds: cpp-python-repositories.md
+  - Embedded cubin plugins: embedded-plugins.md
   - API reference:
       - C++ interfaces and comparison: api/index.md
       - Cubin bundle inspection: api/bundle.md

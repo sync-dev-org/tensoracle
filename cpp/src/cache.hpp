@@ -34,6 +34,7 @@ struct cache_request {
     int optimization_level = 3;
     std::optional<uint64_t> workspace_limit;
     bool force_rebuild = false;
+    std::vector<std::pair<std::filesystem::path, std::string>> embedded_plugins;
 };
 struct stored_plan {
     nlohmann::json header;

@@ -71,11 +71,12 @@ target_include_directories(tensoracle_cache_probe PRIVATE ../src
     "${TENSORACLE_TENSORRT_INCLUDE}" "${TENSORACLE_CUDA_INCLUDE}")
 target_link_libraries(tensoracle_cache_probe PRIVATE tensoracle::tensoracle tensoracle_json "${TENSORACLE_TENSORRT_LIBRARY}" ${CMAKE_DL_LIBS})
 add_executable(tensoracle_cubin_test cubin.cpp)
-target_link_libraries(tensoracle_cubin_test PRIVATE tensoracle::tensoracle Catch2::Catch2WithMain)
+target_link_libraries(tensoracle_cubin_test PRIVATE tensoracle::tensoracle tensoracle_json Catch2::Catch2WithMain)
 catch_discover_tests(tensoracle_cubin_test ADD_TAGS_AS_LABELS PROPERTIES
     ENVIRONMENT "${_tensoracle_test_environment}" TIMEOUT 60)
 target_compile_definitions(tensoracle_cubin_test PRIVATE
-    TENSORACLE_TEST_CUDA_ROOT="${_tensoracle_test_producer_cuda_root}")
+    TENSORACLE_TEST_CUDA_ROOT="${_tensoracle_test_producer_cuda_root}"
+    TENSORACLE_TEST_BUNDLE_ROOT="${PROJECT_SOURCE_DIR}/../examples/cubin_plugin/bundle")
 
 add_library(tensoracle_exports_fixture SHARED native_exports_fixture.cpp)
 set_target_properties(tensoracle_exports_fixture PROPERTIES CXX_VISIBILITY_PRESET hidden)
@@ -97,13 +98,28 @@ target_compile_definitions(tensoracle_rejected_plugin PRIVATE TENSORACLE_PLUGIN_
 target_include_directories(tensoracle_rejected_plugin PRIVATE
     "${TENSORACLE_TENSORRT_INCLUDE}" "${TENSORACLE_CUDA_INCLUDE}")
 add_executable(tensoracle_plugins_test plugins.cpp)
-target_include_directories(tensoracle_plugins_test PRIVATE ../src)
-target_link_libraries(tensoracle_plugins_test PRIVATE tensoracle::tensoracle Catch2::Catch2WithMain ${CMAKE_DL_LIBS})
+foreach(_fixture IN ITEMS registration no_exports other_registration)
+    add_library(tensoracle_${_fixture}_plugin SHARED registration_fixture.cpp)
+    target_include_directories(tensoracle_${_fixture}_plugin PRIVATE
+        "${TENSORACLE_TENSORRT_INCLUDE}" "${TENSORACLE_CUDA_INCLUDE}")
+    target_compile_definitions(tensoracle_${_fixture}_plugin PRIVATE
+        TENSORACLE_FIXTURE_NAMESPACE="tensoracle.tests.${_fixture}")
+    set_target_properties(tensoracle_${_fixture}_plugin PROPERTIES CXX_VISIBILITY_PRESET hidden)
+endforeach()
+target_compile_definitions(tensoracle_no_exports_plugin PRIVATE TENSORACLE_NO_GET_CREATORS)
+target_include_directories(tensoracle_plugins_test PRIVATE ../src
+    "${TENSORACLE_TENSORRT_INCLUDE}" "${TENSORACLE_CUDA_INCLUDE}")
+target_link_libraries(tensoracle_plugins_test PRIVATE tensoracle::tensoracle Catch2::Catch2WithMain
+    "${TENSORACLE_TENSORRT_LIBRARY}" ${CMAKE_DL_LIBS})
 target_compile_definitions(tensoracle_plugins_test PRIVATE
     TENSORACLE_VALID_PLUGIN="$<TARGET_FILE:tensoracle_valid_plugin>"
     TENSORACLE_INVALID_PLUGIN="$<TARGET_FILE:tensoracle_invalid_plugin>"
+    TENSORACLE_REGISTRATION_PLUGIN="$<TARGET_FILE:tensoracle_registration_plugin>"
+    TENSORACLE_NO_EXPORTS_PLUGIN="$<TARGET_FILE:tensoracle_no_exports_plugin>"
+    TENSORACLE_OTHER_REGISTRATION_PLUGIN="$<TARGET_FILE:tensoracle_other_registration_plugin>"
     TENSORACLE_REJECTED_PLUGIN="$<TARGET_FILE:tensoracle_rejected_plugin>")
-add_dependencies(tensoracle_plugins_test tensoracle_valid_plugin tensoracle_invalid_plugin tensoracle_rejected_plugin)
+add_dependencies(tensoracle_plugins_test tensoracle_valid_plugin tensoracle_invalid_plugin tensoracle_rejected_plugin
+    tensoracle_registration_plugin tensoracle_no_exports_plugin tensoracle_other_registration_plugin)
 catch_discover_tests(tensoracle_plugins_test ADD_TAGS_AS_LABELS PROPERTIES
     ENVIRONMENT "${_tensoracle_test_environment}" TIMEOUT 30)
 

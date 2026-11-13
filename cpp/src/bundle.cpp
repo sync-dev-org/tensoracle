@@ -271,6 +271,37 @@ extern "C" tensoracle_status tensoracle_inspect_bundle(const char *root, const c
         return TENSORACLE_SUCCESS;
     });
 }
+extern "C" tensoracle_status tensoracle_inspect_embedded_bundle(
+    const void *manifest, size_t manifest_size, const tensoracle_bundle_file *const *files,
+    size_t count, tensoracle_bundle_result **result, tensoracle_error **error) noexcept {
+    return guard(error, [&]() -> tensoracle_status {
+        if (result)
+            *result = nullptr;
+        require(manifest && result && (!count || files),
+                "embedded bundle inspection requires manifest, files and result",
+                TENSORACLE_INVALID_ARGUMENT);
+        std::map<std::string, const tensoracle_bundle_file*> members;
+        for (size_t i = 0; i < count; ++i) {
+            auto *file = files[i];
+            require(file && structure_size(file) >= offsetof(tensoracle_bundle_file, size) + sizeof(file->size),
+                    "embedded cubin requires all file fields", TENSORACLE_INVALID_ARGUMENT);
+            require(present(file->name) && file->data,
+                    "embedded cubin requires name and bytes", TENSORACLE_INVALID_ARGUMENT);
+            require(members.emplace(file->name, file).second,
+                    "duplicate embedded cubin name", TENSORACLE_INVALID_ARGUMENT);
+        }
+        auto value = inspect(
+            std::string(static_cast<const char*>(manifest), manifest_size),
+            [&](const std::string &name) {
+                auto member = members.find(name);
+                require(member != members.end(), "missing embedded cubin: " + name, TENSORACLE_MISSING_CUBIN);
+                auto *file = member->second;
+                return std::string(static_cast<const char*>(file->data), file->size);
+            }, nullptr);
+        *result = new tensoracle_bundle_result(std::move(value));
+        return TENSORACLE_SUCCESS;
+    });
+}
 extern "C" tensoracle_status tensoracle_inspect_wheel(const char *path, const char *plugin,
                                                       tensoracle_bundle_result **result,
                                                       tensoracle_error **error) noexcept {

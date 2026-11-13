@@ -12,6 +12,10 @@
 
 ## Inspection errors
 
+C and C++ model modules can also [inspect embedded manifest and cubin bytes](../embedded-plugins.md#inspect-an-embedded-manifest-and-cubins)
+with `tensoracle_inspect_embedded_bundle` / `tensoracle::inspect_embedded_bundle`.
+This uses the same validation without reading a directory or loading a plugin.
+
 The following exception classes are exported by `tensoracle.bundle` from the native binding:
 
 | Exception | Meaning |

@@ -68,6 +68,21 @@ TENSORACLE_API tensoracle_status tensoracle_compile_bundle(
 TENSORACLE_API tensoracle_status
 tensoracle_inspect_bundle(const char *root, const char *plugin, tensoracle_bundle_result **result,
                           tensoracle_error **error) TENSORACLE_NOEXCEPT;
+typedef struct tensoracle_bundle_file {
+    size_t struct_size;
+    const char *name; /* Relative file name from the manifest. */
+    const void *data;
+    size_t size;
+} tensoracle_bundle_file;
+/* Inspect manifest and cubin bytes already in memory. All input is borrowed
+ * only during this call. Names must be unique. No files are opened, no plugin
+ * is loaded, and CUDA is not initialized. Uses the same manifest, size, digest
+ * and architecture checks and error codes as directory inspection. The JSON
+ * length excludes a terminating NUL. Initialize every file's struct_size. */
+TENSORACLE_API tensoracle_status tensoracle_inspect_embedded_bundle(
+    const void *manifest_json, size_t manifest_size,
+    const tensoracle_bundle_file *const *files, size_t count,
+    tensoracle_bundle_result **result, tensoracle_error **error) TENSORACLE_NOEXCEPT;
 TENSORACLE_API tensoracle_status tensoracle_inspect_wheel(
     const char *wheel, const char *plugin_member, tensoracle_bundle_result **result,
     tensoracle_error **error) TENSORACLE_NOEXCEPT;

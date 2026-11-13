@@ -78,6 +78,7 @@ struct builder_options {
     std::optional<int64_t> workspace_limit;
     int32_t optimization_level = 3;
     bool force_rebuild = false;
+    std::vector<const tensoracle_plugin_libraries*> embedded_plugins;
 };
 // A callback returns void or throws; every exception is translated before the
 // C callback returns. TensorRT headers are needed only where the graph is built.
@@ -118,7 +119,8 @@ template<class F> engine_handle open_engine(const builder_options& options, F&& 
     tensoracle_builder_options request{sizeof(request), options.name.c_str(), options.graph_version.c_str(),
         files.data(), files.size(), profile_pointers.data(), profile_pointers.size(), io_pointers.data(), io_pointers.size(),
         plugins.data(), plugins.size(), uint32_t(options.workspace_limit.has_value()), options.workspace_limit.value_or(0),
-        options.optimization_level, uint32_t(options.force_rebuild)};
+        options.optimization_level, uint32_t(options.force_rebuild),
+        options.embedded_plugins.data(), options.embedded_plugins.size()};
     tensoracle_engine* result = nullptr; tensoracle_error* diagnostic = nullptr;
     auto status = tensoracle_open_engine(&request, &callback, &result, &diagnostic);
     check(status, diagnostic); return engine_handle(result);

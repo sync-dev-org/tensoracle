@@ -98,9 +98,13 @@ def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-015")
 @pytest.mark.req("SP-TENSORACLE-038")
+@pytest.mark.req("SP-TENSORACLE-077")
 @pytest.mark.parametrize("windows", [False, True], ids=["linux-sdk", "windows-sdk"])
 @pytest.mark.parametrize("root_in_environment", [False, True], ids=["cmake-root", "env-root"])
-def test_plugin_helper_finds_standard_tensorrt_library(tmp_path, windows, root_in_environment):
+@pytest.mark.parametrize("library_type", [None, "SHARED", "STATIC", "OBJECT"])
+def test_plugin_helper_finds_standard_tensorrt_library(
+    tmp_path, windows, root_in_environment, library_type
+):
     """The plugin finds TensorRT and wheel CUDA inputs without a complete OS toolkit."""
     project = Path(__file__).resolve().parents[1]
     root = project.parent if project.name == "python" else project
@@ -133,8 +137,11 @@ def test_plugin_helper_finds_standard_tensorrt_library(tmp_path, windows, root_i
         + "add_library(CUDA::cuda_driver INTERFACE IMPORTED)\n"
         + f'include("{root.as_posix()}/cpp/cmake/TensoracleCubinPlugin.cmake")\n'
         + "tensoracle_add_cubin_plugin(TARGET check_sdk\n"
-        '  TENSORRT_ROOT "${SDK_ROOT}" BUNDLE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"\n'
+        + (f"  TYPE {library_type}\n" if library_type else "")
+        + '  TENSORRT_ROOT "${SDK_ROOT}" BUNDLE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}"\n'
         '  SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/plugin.cpp")\n'
+        "get_target_property(kind check_sdk TYPE)\n"
+        'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/type.txt" "${kind}")\n'
         'file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/library.txt" "${TENSORACLE_NVINFER_LIBRARY}")\n'
         "get_target_property(dependencies check_sdk LINK_LIBRARIES)\n"
         "foreach(dependency IN LISTS dependencies)\n"
@@ -173,6 +180,12 @@ def test_plugin_helper_finds_standard_tensorrt_library(tmp_path, windows, root_i
         timeout=45,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    assert (build / "type.txt").read_text() == {
+        None: "SHARED_LIBRARY",
+        "SHARED": "SHARED_LIBRARY",
+        "STATIC": "STATIC_LIBRARY",
+        "OBJECT": "OBJECT_LIBRARY",
+    }[library_type]
     assert Path((build / "library.txt").read_text(encoding="utf-8")) == library
     location, headers = (build / "cuda.txt").read_text(encoding="utf-8").splitlines()
     # Linux may prefer the installed driver; Windows uses the wheel's import library.

@@ -53,3 +53,8 @@ TENSORACLE_2.2 {
         tensoracle_engine_scratch_size;
         tensoracle_execution_create_with_scratch;
 } TENSORACLE_2.1;
+TENSORACLE_2.5 {
+    global:
+        tensoracle_register_embedded_plugins;
+        tensoracle_inspect_embedded_bundle;
+} TENSORACLE_2.2;

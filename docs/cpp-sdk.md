@@ -63,6 +63,10 @@ the link stub is not part of the application runtime.
 
 ## Embed tensoracle from source
 
+To embed a cubin plugin in a model library or executable, see
+[Embedded cubin plugins](embedded-plugins.md). This works with either the shared
+tensoracle SDK or a source-built static tensoracle library.
+
 Source builds select a shared library by default (`BUILD_SHARED_LIBS=ON`). After
 [preparing the build dependencies](https://github.com/sync-dev-org/tensoracle/blob/main/cpp/README.md), select a static library
 with `BUILD_SHARED_LIBS=OFF`:

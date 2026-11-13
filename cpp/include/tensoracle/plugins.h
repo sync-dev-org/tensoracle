@@ -14,6 +14,24 @@ typedef struct tensoracle_plugin_libraries tensoracle_plugin_libraries;
 TENSORACLE_API tensoracle_status tensoracle_register_libraries(
     const char* const* paths, size_t count, tensoracle_plugin_libraries** result,
     tensoracle_error** error) TENSORACLE_NOEXCEPT;
+/* Register creators already linked into this process, without loading a plugin
+ * file. Each creator is an nvinfer1::IPluginCreatorInterface*. module_address
+ * must point into the library/executable containing their implementation.
+ * plugin_namespace is the TensorRT registration namespace (empty is valid).
+ * The result contains one SHA-256: the COMPLETE containing shared library, or
+ * the executable for statically linked code. Reading that file is required for
+ * identity, but registration itself uses the supplied creators in memory.
+ * Repeating the same creators and namespace is valid. Conflicting creators or
+ * changed bytes at a registered path fail. Registration may partially succeed.
+ * The caller must keep the creators and their containing module alive for the
+ * lifetime of the process; destroying the result never deregisters them.
+ * The creator array and namespace string are borrowed only for this call;
+ * *result is NULL on failure.
+ * Currently supported on Linux; Windows reports PLUGIN_LIBRARY_ERROR. */
+TENSORACLE_API tensoracle_status tensoracle_register_embedded_plugins(
+    const void* module_address, void* const* creators, size_t count,
+    const char* plugin_namespace, tensoracle_plugin_libraries** result,
+    tensoracle_error** error) TENSORACLE_NOEXCEPT;
 TENSORACLE_API tensoracle_status tensoracle_plugin_libraries_count(
     const tensoracle_plugin_libraries* libraries, size_t* count,
     tensoracle_error** error) TENSORACLE_NOEXCEPT;

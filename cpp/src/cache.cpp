@@ -216,10 +216,16 @@ json make_conditions(const cache_request& request, const std::vector<std::string
     for (size_t i = 0; i < plugins.size(); ++i)
         if (file_sha256(request.plugins[i]) != plugins[i])
             throw std::invalid_argument("plugin library changed while determining engine conditions: " + request.plugins[i].string());
+    auto all_plugins = plugins;
+    for (const auto& [path, registered] : request.embedded_plugins) {
+        if (file_sha256(path) != registered)
+            throw std::invalid_argument("embedded plugin containing file changed while determining engine conditions: " + path.string());
+        all_plugins.push_back(registered);
+    }
     json weights = json::array();
     for (const auto& path : request.weights) weights.push_back(weight_sha256(path, request.force_rebuild));
     return {{"name", request.name}, {"graph_version", request.graph_version}, {"weights", weights},
-        {"plugins", plugins}, {"inputs", inputs}, {"builder_settings", {{"optimization_level", request.optimization_level}, {"tf32", false}}},
+        {"plugins", all_plugins}, {"inputs", inputs}, {"builder_settings", {{"optimization_level", request.optimization_level}, {"tf32", false}}},
         {"gpu", gpu}, {"os", os}, {"architecture", architecture}, {"tensorrt_version", tensorrt}};
 }
 fs::path cache_path(const json& conditions) { return cache_directory() / (digest(canonical(conditions)) + ".engine"); }

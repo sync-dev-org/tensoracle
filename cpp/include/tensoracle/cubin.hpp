@@ -2,6 +2,7 @@
 #include "cubin.h"
 #include "tensoracle.hpp"
 #include <string>
+#include <string_view>
 
 namespace tensoracle {
 class bundle_result {
@@ -34,6 +35,16 @@ inline bundle_result inspect_bundle(const char *root, const char *plugin = nullp
     tensoracle_bundle_result *result = nullptr;
     tensoracle_error *diagnostic = nullptr;
     auto status = tensoracle_inspect_bundle(root, plugin, &result, &diagnostic);
+    check(status, diagnostic);
+    return bundle_result(result);
+}
+inline bundle_result inspect_embedded_bundle(std::string_view manifest,
+                                            const tensoracle_bundle_file *const *files,
+                                            size_t count) {
+    tensoracle_bundle_result *result = nullptr;
+    tensoracle_error *diagnostic = nullptr;
+    auto status = tensoracle_inspect_embedded_bundle(manifest.data(), manifest.size(), files,
+                                                    count, &result, &diagnostic);
     check(status, diagnostic);
     return bundle_result(result);
 }
