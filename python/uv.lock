@@ -790,7 +790,6 @@ source = { editable = "." }
 dependencies = [
     { name = "numpy" },
     { name = "safetensors" },
-    { name = "tensorrt-cu13" },
 ]
 
 [package.optional-dependencies]
@@ -805,6 +804,9 @@ producer = [
     { name = "nvidia-cuda-nvrtc" },
     { name = "nvidia-nvvm" },
 ]
+tensorrt = [
+    { name = "tensorrt-cu13" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -815,6 +817,7 @@ dev = [
     { name = "mkdocstrings", extra = ["python"] },
     { name = "pytest" },
     { name = "ruff" },
+    { name = "tensoracle", extra = ["tensorrt"] },
 ]
 docs = [
     { name = "mkdocs" },
@@ -831,10 +834,10 @@ requires-dist = [
     { name = "nvidia-cuda-nvrtc", marker = "extra == 'producer'", specifier = "==13.2.*" },
     { name = "nvidia-nvvm", marker = "extra == 'producer'", specifier = "==13.2.*" },
     { name = "safetensors", specifier = ">=0.4" },
-    { name = "tensorrt-cu13", specifier = ">=11.2,<12" },
+    { name = "tensorrt-cu13", marker = "extra == 'tensorrt'", specifier = ">=11.2,<12" },
     { name = "torch", marker = "extra == 'convert'", specifier = ">=2.6", index = "https://download.pytorch.org/whl/cpu" },
 ]
-provides-extras = ["convert", "producer"]
+provides-extras = ["convert", "tensorrt", "producer"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -845,6 +848,7 @@ dev = [
     { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.6" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.8" },
+    { name = "tensoracle", extras = ["tensorrt"] },
 ]
 docs = [
     { name = "mkdocs", specifier = ">=1.6.1" },

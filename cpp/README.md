@@ -108,6 +108,7 @@ consumers can use the prebuilt SDK archive without Conan or its targets.
 nanobind stays in Python's build requirements. C++ build inputs come from Conan;
 the CUDA compiler and tools used at runtime by the cubin producer stay in PyPI
 wheels. The release profile uses the CUDA toolkit in the manylinux image through
-the same recipe's `system` mode; development uses verified NVIDIA redist archives. Installed Python wheels resolve
-TensorRT through their existing runtime wheel dependency. Native applications
+the same recipe's `system` mode; development uses verified NVIDIA redist archives. Installed Python wheels without the
+`tensorrt` extra use the host's TensorRT runtime (installed with apt on Linux);
+`tensoracle[tensorrt]` selects the optional TensorRT wheel. Native applications
 install TensorRT and its builder resources on their execution host.

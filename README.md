@@ -20,7 +20,21 @@ Read the [v2 user guide](https://sync-dev-org.github.io/tensoracle/) and [Migrat
 
 v2 supplies a Linux x86_64 `manylinux_2_28`, `cp312-abi3` wheel, including WSL2. The package currently declares Python 3.12 and 3.13 support. Target GPUs are sm86, sm89, and sm120 with TensorRT 11.2 or later (below 12); fp8 requires sm89 or sm120. Windows x86_64 users must keep using tensoracle 1.x until a later v2 minor release adds a Windows wheel.
 
-The wheel contains the C++ public headers, `libtensoracle`, CMake package configuration, and cubin plugin helper sources. TensorRT is resolved through a wheel dependency; the NVIDIA driver is not bundled. Public C++ interfaces and saved engine files remain compatible within a major version.
+The wheel contains the C++ public headers, `libtensoracle`, CMake package configuration, and cubin plugin helper sources. TensorRT and the NVIDIA driver are not bundled. Public C++ interfaces and saved engine files remain compatible within a major version.
+
+## Install
+
+On Linux or WSL2, configure NVIDIA's CUDA apt repository for your distribution using the [TensorRT Debian installation guide](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-debian.html), then install the TensorRT runtime and tensoracle:
+
+```bash
+sudo apt-get update
+sudo apt-get install libnvinfer11
+pip install tensoracle
+```
+
+Use TensorRT 11.2 or later, below 12, including its builder resources. The wheel is built against TensorRT SDK 11.2.1.2. A full CUDA Toolkit and TensorRT's Python bindings are not required for execution. The host must supply a compatible NVIDIA driver.
+
+If you prefer pip to supply TensorRT, install `pip install 'tensoracle[tensorrt]'`. The extra declares `tensorrt-cu13>=11.2,<12`. The wheel looks for that extra's `tensorrt_libs` directory first, then uses the host loader's normal search for `libnvinfer.so.11`. Applications that use the host's apt installation depend on `tensoracle` without the extra. See [runtime installation](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/#install-the-runtime) for verification.
 
 ## Build and reopen an engine in C++
 

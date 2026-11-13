@@ -107,7 +107,14 @@ install(TARGETS tensoracle EXPORT tensoracleTargets
     RUNTIME DESTINATION "${_tensoracle_root}${CMAKE_INSTALL_BINDIR}"
     ARCHIVE DESTINATION "${TENSORACLE_LIBRARY_DIR}")
 install(DIRECTORY include/ DESTINATION "${TENSORACLE_INCLUDE_DIR}")
-include("${CMAKE_BINARY_DIR}/conan/tensoracle_licenses.cmake")
+# Resolve notices from the same packages as the headers, including when the
+# caller supplies CMakeDeps instead of running this project's bootstrap.
+find_file(TENSORACLE_NLOHMANN_JSON_LICENSE LICENSE.MIT
+    PATHS ${nlohmann_json_INCLUDE_DIRS} PATH_SUFFIXES ../licenses
+    NO_DEFAULT_PATH REQUIRED NO_CACHE)
+find_file(TENSORACLE_MINIZ_LICENSE LICENSE
+    PATHS ${miniz_INCLUDE_DIRS} PATH_SUFFIXES ../licenses
+    NO_DEFAULT_PATH REQUIRED NO_CACHE)
 install(FILES "${TENSORACLE_NLOHMANN_JSON_LICENSE}"
     DESTINATION "${_tensoracle_root}licenses/nlohmann-json")
 install(FILES "${TENSORACLE_MINIZ_LICENSE}"

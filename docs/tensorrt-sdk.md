@@ -37,7 +37,30 @@ uv sync
 TENSORACLE_CONAN_OFFLINE=ON uv run pytest
 ```
 
-Isolated wheel builds install their Python build requirements and use the same Conan recipe and lock. TensorRT is not a Python build requirement. During stub generation, the build imports the extension with the exact Conan SDK library and records the loaded library's path and SHA256. The installed wheel requires `tensorrt-cu13>=11.2,<12` and keeps its relative TensorRT RUNPATH; it contains no TensorRT library.
+The default development group selects `tensoracle[tensorrt]`, so `uv sync` and `uv run pytest` keep the TensorRT runtime wheel available for tests. Use `uv sync --all-extras` when also testing checkpoint conversion and cubin production.
+
+Isolated wheel builds install their Python build requirements and use the same Conan recipe and lock. TensorRT is not a Python build requirement. During stub generation, the build imports the extension with the exact Conan SDK library and records the loaded library's path and SHA256. The installed wheel contains no TensorRT library and requires its pip runtime only when the `tensorrt` extra is selected.
+
+## Install the runtime
+
+Linux and WSL2 applications use a TensorRT runtime installed by apt on their execution host. Follow [NVIDIA's Debian installation instructions](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/install-debian.html) to configure the CUDA network repository for your distribution, then run:
+
+```bash
+sudo apt-get update
+sudo apt-get install libnvinfer11
+pip install tensoracle
+python -c 'from tensoracle import _native; print(_native.tensorrt_version())'
+```
+
+Use TensorRT 11.2 or later, below 12, including the builder resources needed for engine construction. The wheel is built with TensorRT SDK 11.2.1.2. `apt` resolves the runtime's CUDA library dependencies; a full CUDA Toolkit and TensorRT's Python bindings are not required to execute tensoracle. The host must provide a compatible NVIDIA driver.
+
+To obtain TensorRT through pip instead, select the optional runtime:
+
+```bash
+pip install 'tensoracle[tensorrt]'
+```
+
+That extra requires `tensorrt-cu13>=11.2,<12`. The wheel's relative RUNPATH checks the sibling `tensorrt_libs` directory when present. Without it, the host loader finds apt's `libnvinfer.so.11` through its normal configuration; no `LD_LIBRARY_PATH` is needed for a standard apt installation. Packages that use the host runtime declare `tensoracle` without an extra. Neither the tensoracle wheel nor a model wheel should copy TensorRT or the NVIDIA driver libraries.
 
 ## Use the recipe in a C++ consumer
 
@@ -118,7 +141,7 @@ The preprocessor prints `11`, `2`, `1`, and `2` on separate lines; the library's
 
 ## Runtime and other releases
 
-A Conan SDK package supplies build inputs. Native applications install TensorRT 11.2 or later (below 12), including the builder resources needed for engine construction, on their execution host using NVIDIA's instructions. Python applications obtain the runtime through tensoracle's wheel dependency. Validate engine construction, separate-process reuse, inference, and numerical output on an NVIDIA GPU and driver. Cubin generation and bundle inspection can run without a GPU.
+A Conan SDK package supplies build inputs. Native and Python applications install TensorRT 11.2 or later (below 12), including the builder resources needed for engine construction, on their execution host using apt as described above. Python applications can instead select `tensoracle[tensorrt]`. Validate engine construction, separate-process reuse, inference, and numerical output on an NVIDIA GPU and driver. Cubin generation and bundle inspection can run without a GPU.
 
 This recipe fixes SDK 11.2.1.2. Releases before 11.2 are outside tensoracle's supported range and cannot be used with v2. Another SDK release in the supported range requires its own reviewed header commit, wheel filename and platform, all digests, and exact four-part header version. An explicit external SDK passed to the public plugin helper remains the caller's responsibility to verify and test.
 

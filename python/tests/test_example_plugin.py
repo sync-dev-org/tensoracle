@@ -71,7 +71,15 @@ def installed_example(tmp_path_factory):
     )
     example_wheel = next(example_dist.glob("*.whl"))
     installed = subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), str(main_wheel), str(example_wheel)],
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            f"{main_wheel}[tensorrt]",
+            str(example_wheel),
+        ],
         check=False,
         capture_output=True,
         text=True,

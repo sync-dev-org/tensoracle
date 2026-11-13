@@ -37,7 +37,7 @@ For an unpublished v2 build, create `/tmp/tensoracle-build-constraints.txt` with
 tensoracle @ file:///tmp/tensoracle-wheels/<tensoracle-wheel-filename>.whl
 ```
 
-Build and install the example and tensoracle into a new environment:
+Install the [host's TensorRT runtime](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/#install-the-runtime) with apt, then build and install the example and tensoracle into a new environment:
 
 ```bash
 uv build examples/cubin_plugin --wheel --out-dir /tmp/example-wheels \

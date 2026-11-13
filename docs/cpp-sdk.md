@@ -64,7 +64,7 @@ the link stub is not part of the application runtime.
 ## Embed tensoracle from source
 
 Source builds select a shared library by default (`BUILD_SHARED_LIBS=ON`). After
-[preparing the build dependencies](../cpp/README.md), select a static library
+[preparing the build dependencies](https://github.com/sync-dev-org/tensoracle/blob/main/cpp/README.md), select a static library
 with `BUILD_SHARED_LIBS=OFF`:
 
 ```bash
@@ -144,8 +144,9 @@ TensorRT-specific search path. The host loader finds `libnvinfer.so.11` through
 its normal configuration. If TensorRT is installed outside the system loader's
 configured locations, configure that loader or set `LD_LIBRARY_PATH` to the
 runtime directory. Do not copy TensorRT or driver libraries into tensoracle's
-SDK or the application prefix. The Python wheel retains its existing SDK and
-its relative lookup of the separate TensorRT wheel.
+SDK or the application prefix. The Python wheel uses the host runtime too;
+it also checks the sibling TensorRT wheel when the optional
+`tensoracle[tensorrt]` extra is installed. See [runtime installation](tensorrt-sdk.md#install-the-runtime).
 
 ## Package an application that embeds tensoracle
 

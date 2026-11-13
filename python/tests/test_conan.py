@@ -12,6 +12,49 @@ import pytest
 from native_build import PROJECT, ROOT
 
 
+@pytest.mark.req("SP-TENSORACLE-063")
+def test_caller_toolchain_configures_and_reconfigures_without_conan(tmp_path):
+    """A caller's toolchain remains usable without installing another dependency graph."""
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.26)\n"
+        f'include("{ROOT / "cpp/conan/bootstrap.cmake"}")\n'
+        "project(caller_toolchain LANGUAGES NONE)\n"
+        'if(NOT CALLER_TOOLCHAIN_LOADED STREQUAL "yes")\n'
+        '  message(FATAL_ERROR "The caller toolchain was replaced")\n'
+        "endif()\n"
+    )
+    toolchain = tmp_path / "caller.cmake"
+    toolchain.write_text('set(CALLER_TOOLCHAIN_LOADED "yes")\n')
+    empty_path = tmp_path / "empty-bin"
+    empty_path.mkdir()
+    environment = {**os.environ, "PATH": str(empty_path)}
+    assert shutil.which("conan", path=environment["PATH"]) is None
+    build = tmp_path / "build"
+    for _ in range(2):
+        result = subprocess.run(
+            [
+                shutil.which("cmake"),
+                "-S",
+                str(source),
+                "-B",
+                str(build),
+                "-G",
+                "Ninja",
+                f"-DCMAKE_MAKE_PROGRAM={shutil.which('ninja')}",
+                f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
+            ],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert not (build / "conan").exists()
+
+
 def configure(tmp_path, *options, environment=None, cuda=False):
     source = tmp_path / "source"
     source.mkdir()

@@ -29,7 +29,7 @@ absolute file URI of the wheel just built:
 tensoracle @ file:///tmp/tensoracle-wheels/<tensoracle-wheel-filename>.whl
 ```
 
-Then build and install the two wheels into a new environment:
+Install the [host's TensorRT runtime](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/#install-the-runtime) with apt, then build and install the two wheels into a new environment:
 
 ```bash
 uv build examples/wheel_consumer --wheel --out-dir /tmp/consumer-wheels \
@@ -68,5 +68,7 @@ build paths and driver link directories do not enter that RUNPATH.
 
 The consumer wheel contains no copy of `libtensoracle`, TensorRT, or the CUDA
 driver. The tensoracle wheel supplies `libtensoracle.so.2`, which locates
-TensorRT through its own relative RUNPATH and declared wheel dependency.
+TensorRT through the host loader's normal search. Installing
+`tensoracle[tensorrt]` instead selects the optional pip runtime, which tensoracle
+finds through its relative RUNPATH.
 Neither importing nor running this example needs `LD_LIBRARY_PATH`.

@@ -23,7 +23,19 @@ If your model package uses tensoracle 1.x, start with [Migrate from 1.x](migrati
 
 v2 supplies a Linux x86_64 `manylinux_2_28` wheel, including WSL2, with the `cp312-abi3` tag. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and GPU generations sm86, sm89, and sm120 are the targets; fp8 requires sm89 or sm120. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release supplies a Windows wheel. A Linux wheel runs under WSL2, not directly in Windows Python.
 
-The wheel includes the shared C++ library, public headers, CMake package configuration, and source-based cubin plugin helpers. It resolves TensorRT through its wheel dependency rather than bundling TensorRT or the NVIDIA driver. The C ABI uses opaque handles and structures with `struct_size`; the C++ headers add exceptions and automatic resource release. Public C++ interfaces and saved engine files remain compatible within the same major version.
+The wheel includes the shared C++ library, public headers, CMake package configuration, and source-based cubin plugin helpers. TensorRT and the NVIDIA driver are not bundled. The C ABI uses opaque handles and structures with `struct_size`; the C++ headers add exceptions and automatic resource release. Public C++ interfaces and saved engine files remain compatible within the same major version.
+
+## Install
+
+Configure NVIDIA's CUDA apt repository for your Linux or WSL2 distribution as described in the [runtime installation guide](tensorrt-sdk.md#install-the-runtime), then install:
+
+```bash
+sudo apt-get update
+sudo apt-get install libnvinfer11
+pip install tensoracle
+```
+
+The host runtime must be TensorRT 11.2 or later, below 12, with builder resources; the wheel is built against SDK 11.2.1.2. A compatible NVIDIA driver is required, but neither the CUDA Toolkit nor TensorRT's Python bindings are needed for execution. TensorRT's pip wheel is optional: use `pip install 'tensoracle[tensorrt]'` to select it. Without that extra, tensoracle uses the host loader's normal TensorRT search. Model packages that use apt's runtime declare `tensoracle` without the extra.
 
 ### Connect a C++ model package
 

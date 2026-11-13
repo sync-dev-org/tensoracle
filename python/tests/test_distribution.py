@@ -40,7 +40,7 @@ def test_runtime_dependency_accepts_tensorrt_11_2_through_11_x():
     config = tomllib.loads((PROJECT / "pyproject.toml").read_text())
     dependency = next(
         Requirement(value)
-        for value in config["project"]["dependencies"]
+        for value in config["project"]["optional-dependencies"]["tensorrt"]
         if Requirement(value).name == "tensorrt-cu13"
     )
     assert "11.1" not in dependency.specifier
@@ -301,7 +301,7 @@ def test_wheel_contains_only_the_package_and_distribution_metadata(distributions
 @pytest.mark.req("SP-TENSORACLE-022")
 @pytest.mark.req("SP-TENSORACLE-057")
 def test_wheel_delivers_the_stable_abi_and_cpp_sdk(distributions):
-    """The cp312-abi3 platform wheel supplies its SDK and depends on TensorRT's wheel."""
+    """The cp312-abi3 platform wheel supplies its SDK without bundling TensorRT."""
     assert re.search(
         r"-cp312-abi3-(?:linux|manylinux[^-]*)_x86_64\.whl$", distributions["wheel"].name
     )
@@ -333,6 +333,28 @@ def test_wheel_delivers_the_stable_abi_and_cpp_sdk(distributions):
         )
 
 
+@pytest.mark.req("SP-TENSORACLE-057")
+@pytest.mark.req("SP-TENSORACLE-072")
+def test_wheel_makes_tensorrt_an_optional_runtime(distributions):
+    """TensorRT's wheel is installed only when the TensorRT extra is selected."""
+    with zipfile.ZipFile(distributions["wheel"]) as archive:
+        name = next(name for name in archive.namelist() if name.endswith(".dist-info/METADATA"))
+        metadata = email.message_from_bytes(archive.read(name))
+    dependencies = [
+        Requirement(value)
+        for value in metadata.get_all("Requires-Dist")
+        if Requirement(value).name == "tensorrt-cu13"
+    ]
+    assert len(dependencies) == 1
+    dependency = dependencies[0]
+    assert dependency.marker is not None
+    assert not dependency.marker.evaluate({"extra": ""})
+    assert dependency.marker.evaluate({"extra": "tensorrt"})
+    assert not dependency.marker.evaluate({"extra": "convert"})
+    assert not dependency.marker.evaluate({"extra": "producer"})
+    assert "tensorrt" in metadata.get_all("Provides-Extra")
+
+
 @pytest.mark.req("SP-TENSORACLE-022")
 @pytest.mark.req("SP-TENSORACLE-056")
 @pytest.mark.req("SP-TENSORACLE-057")
@@ -342,7 +364,7 @@ def test_installed_wheel_serves_python_and_cpp_without_the_source_tree(distribut
     subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
     python = runtime / "bin/python"
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), str(distributions["wheel"])],
+        ["uv", "pip", "install", "--python", str(python), f"{distributions['wheel']}[tensorrt]"],
         check=True,
         timeout=120,
     )
@@ -394,7 +416,7 @@ def test_installed_wheel_serves_python_and_cpp_without_the_source_tree(distribut
 
 @pytest.fixture(scope="module")
 def extracted_sdk(distributions, tmp_path_factory):
-    """Use the installed package files without the wheel's TensorRT dependency nearby."""
+    """Use the installed package files without the optional TensorRT wheel nearby."""
     prefix = tmp_path_factory.mktemp("native-sdk")
     with zipfile.ZipFile(distributions["wheel"]) as archive:
         for name in archive.namelist():
@@ -537,7 +559,7 @@ def test_wheel_types_the_native_module_with_a_matching_stub(distributions, tmp_p
     subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
     python = runtime / "bin/python"
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), str(distributions["wheel"])],
+        ["uv", "pip", "install", "--python", str(python), f"{distributions['wheel']}[tensorrt]"],
         check=True,
         timeout=120,
     )
@@ -624,7 +646,15 @@ def consumer_wheel(distributions, tmp_path_factory):
     ):
         environment.pop(name, None)
     subprocess.run(
-        ["uv", "pip", "install", "--python", str(python), str(distributions["wheel"]), str(wheel)],
+        [
+            "uv",
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            f"{distributions['wheel']}[tensorrt]",
+            str(wheel),
+        ],
         cwd=work,
         env=environment,
         check=True,
@@ -751,7 +781,7 @@ print(json.dumps(result))
 def test_wheel_installs_the_cache_console_script_without_extra_dependencies(
     distributions, tmp_path
 ):
-    """The wheel supplies a runnable cache command and declares the supported TensorRT runtime."""
+    """The wheel supplies a runnable cache command without installing TensorRT."""
     with zipfile.ZipFile(distributions["wheel"]) as archive:
         name = next(
             name for name in archive.namelist() if name.endswith(".dist-info/entry_points.txt")
@@ -767,7 +797,7 @@ def test_wheel_installs_the_cache_console_script_without_extra_dependencies(
         str(Requirement(value))
         for value in metadata.get_all("Requires-Dist")
         if not Requirement(value).marker
-    } == {"numpy>=2.0", "safetensors>=0.4", "tensorrt-cu13<12,>=11.2"}
+    } == {"numpy>=2.0", "safetensors>=0.4"}
     runtime = tmp_path / "runtime"
     subprocess.run(["uv", "venv", "--python", sys.executable, str(runtime)], check=True)
     executable = runtime / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")

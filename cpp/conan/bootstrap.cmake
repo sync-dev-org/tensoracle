@@ -1,5 +1,9 @@
 # Every build entry point includes this before its first project().
 include_guard(GLOBAL)
+if(CMAKE_TOOLCHAIN_FILE AND NOT CMAKE_TOOLCHAIN_FILE STREQUAL "${CMAKE_BINARY_DIR}/conan/conan_toolchain.cmake")
+    # The caller already resolved the dependency graph, for example in conan create.
+    return()
+endif()
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build configuration" FORCE)
 endif()

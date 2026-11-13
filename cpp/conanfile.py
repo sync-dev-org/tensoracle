@@ -1,11 +1,9 @@
 """Resolve the same native dependencies for standalone, test, and wheel builds."""
 
-import os
 from typing import ClassVar
 
 from conan import ConanFile
 from conan.tools.cmake import CMakeDeps, CMakeToolchain
-from conan.tools.files import save
 
 
 class TensoracleDependencies(ConanFile):
@@ -30,12 +28,3 @@ class TensoracleDependencies(ConanFile):
             "cuda-toolkit"
         ].conf_info.get("user.cuda:root")
         toolchain.generate()
-        licenses = []
-        for name, filename in (("nlohmann_json", "LICENSE.MIT"), ("miniz", "LICENSE")):
-            path = os.path.join(
-                self.dependencies[name].package_folder, "licenses", filename
-            )
-            licenses.append(
-                f'set(TENSORACLE_{name.upper()}_LICENSE "{path.replace(chr(92), "/")}")'
-            )
-        save(self, "tensoracle_licenses.cmake", "\n".join(licenses) + "\n")
