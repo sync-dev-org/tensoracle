@@ -24,6 +24,7 @@ add_test(NAME "Installed SDK builds a separate C++ application"
         "-DCONFIG=$<CONFIG>"
         "-DCXX=${CMAKE_CXX_COMPILER}"
         "-DSHARED=${BUILD_SHARED_LIBS}"
+        "-DTOOLCHAIN_FILE=${CMAKE_TOOLCHAIN_FILE}"
         "-DTENSORRT_LIBRARY=${TENSORACLE_TENSORRT_LIBRARY}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/installed.cmake")
 set_tests_properties("Installed SDK builds a separate C++ application" PROPERTIES

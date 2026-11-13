@@ -149,10 +149,11 @@ std::optional<json> read_weight_record(const fs::path& path) {
         auto payload = record;
         auto checksum = payload.at("checksum");
         payload.erase("checksum");
-        if (payload.size() == 6 && payload.at("version").is_number_integer() && payload.at("version") == 1
+        if (payload.size() == 6 && payload.at("version").is_number_integer() && payload.at("version").get<uint64_t>() == 1
             && payload.at("path").is_string() && payload.at("size").is_number_integer()
             && payload.at("mtime_ns").is_number_integer() && payload.at("inode").is_number_integer()
-            && hex_digest(payload.at("sha256")) && checksum == digest(canonical(payload))) return record;
+            && hex_digest(payload.at("sha256")) && checksum.is_string()
+            && checksum.get<std::string>() == digest(canonical(payload))) return record;
     } catch (const json::exception&) {
     } catch (const std::ios_base::failure&) {
     }
@@ -276,7 +277,7 @@ stored_plan read_engine_file(const fs::path& path, const json& expected) {
     if (metadata.header["conditions"] != expected) throw engine_condition_error("TensorRT engine conditions differ: " + path.string());
     stored_plan result{std::move(metadata.header), std::vector<uint8_t>(static_cast<size_t>(metadata.plan_size))};
     read_exact(file.value, result.plan.data(), result.plan.size(), path);
-    if (result.header["plan_sha256"] != sha256(result.plan.data(), result.plan.size()))
+    if (result.header["plan_sha256"].get<std::string>() != sha256(result.plan.data(), result.plan.size()))
         throw corrupt_engine_error("TensorRT engine checksum differs: " + path.string());
     return result;
 }

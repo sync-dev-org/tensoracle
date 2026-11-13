@@ -88,9 +88,10 @@ static bool integer(const json &value, uint64_t minimum, uint64_t maximum) {
 }
 void validate_entry(const json &entry) {
     require(entry.is_object(), "invalid cubin entry");
-    require(entry.contains("target_sm") &&
-                (entry["target_sm"] == "sm86" || entry["target_sm"] == "sm89" ||
-                 entry["target_sm"] == "sm120"),
+    require(entry.contains("target_sm") && entry["target_sm"].is_string(),
+            "unsupported target SM");
+    auto target_sm = entry["target_sm"].get<std::string>();
+    require(target_sm == "sm86" || target_sm == "sm89" || target_sm == "sm120",
             "unsupported target SM");
     require(!entry.contains("hidden_trailing_parameters"),
             "CUDA C++ kernels have no hidden trailing parameters");
@@ -135,7 +136,8 @@ void validate_entry(const json &entry) {
         auto divisor = rule.value().get<uint32_t>();
         require((divisor & (divisor - 1)) == 0, "unsupported specialization rule");
         for (auto const &argument : signature)
-            require(!(argument["name"] == rule.key() && argument["type"] == "fp32" && divisor != 1),
+            require(!(argument["name"].get<std::string>() == rule.key() &&
+                      argument["type"].get<std::string>() == "fp32" && divisor != 1),
                     "unsupported floating point specialization rule");
     }
     for (auto const *key : {"sha256", "file"})
@@ -151,14 +153,18 @@ tensoracle_bundle_result inspect(const std::string &text,
                                  const std::function<std::string(const std::string &)> &read,
                                  const std::string *plugin) {
     auto manifest = parse_manifest(text);
-    require(manifest.is_object() && manifest.value("schema_version", json()) == 2,
+    require(manifest.is_object() && manifest.contains("schema_version") &&
+                manifest["schema_version"].is_number() &&
+                manifest["schema_version"].get<double>() == 2,
             "unsupported bundle manifest");
     require(manifest.contains("entries") && manifest["entries"].is_array() &&
                 !manifest["entries"].empty(),
             "bundle has no cubin entries");
     auto hash = digest(manifest);
     if (manifest.contains("bundle_sha256"))
-        require(manifest["bundle_sha256"] == hash, "bundle manifest digest differs");
+        require(manifest["bundle_sha256"].is_string() &&
+                    manifest["bundle_sha256"].get<std::string>() == hash,
+                "bundle manifest digest differs");
     std::set<std::string> paths, ids, symbols;
     std::vector<std::pair<std::string, std::string>> cubins;
     for (auto const &entry : manifest["entries"]) {
@@ -171,10 +177,10 @@ tensoracle_bundle_result inspect(const std::string &text,
                     "duplicate or invalid cubin id");
         auto data = read(name);
         require(data.size() == entry["bytes"].get<uint64_t>() &&
-                    sha256(data.data(), data.size()) == entry["sha256"],
+                    sha256(data.data(), data.size()) == entry["sha256"].get<std::string>(),
                 "cubin digest or size differs: " + name, TENSORACLE_CORRUPT_CUBIN);
         auto sm = "sm" + std::to_string(architecture(data));
-        require(entry["target_sm"] == sm,
+        require(entry["target_sm"].get<std::string>() == sm,
                 "cubin " + name + " declares " + entry["target_sm"].get<std::string>() +
                     " but ELF contains " + sm,
                 TENSORACLE_CUBIN_ARCHITECTURE_ERROR);

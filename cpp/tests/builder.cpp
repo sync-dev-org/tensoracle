@@ -89,7 +89,7 @@ void reusable(const fs::path& weights, const std::string& label, const std::stri
     auto engine = tensoracle::open_engine(request,
         [](nvinfer1::INetworkDefinition&, const tensoracle::weights_view&) { throw std::runtime_error("saved engine was lost"); });
     auto result = outcome(weights, label);
-    REQUIRE(engine.path() == result.at("path"));
+    REQUIRE(engine.path() == result.at("path").get<std::string>());
     REQUIRE(run(engine) == result.at("values").get<std::vector<float>>());
 }
 }

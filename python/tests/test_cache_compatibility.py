@@ -30,50 +30,84 @@ def run(command, **kwargs):
     return result.stdout
 
 
+def install_json_dependencies(folder, version, *, cppstd=None):
+    """Resolve one locked JSON version from prepared packages without changing other inputs."""
+    selected_lock = ROOT / "cpp/conan.lock"
+    if version == "3.12.0":
+        lock = json.loads(selected_lock.read_text())
+        compatibility = json.loads((ROOT / "cpp/conan/cache-compatibility.lock").read_text())
+        lock["requires"] = [
+            compatibility["requires"][0] if ref.startswith("nlohmann_json/") else ref
+            for ref in lock["requires"]
+        ]
+        selected_lock = folder / "conan.lock"
+        selected_lock.write_text(json.dumps(lock))
+    profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc13"))
+    if not profile.is_absolute():
+        profile = ROOT / "cpp/conan/profiles" / profile
+    options = ["--settings:host", f"compiler.cppstd={cppstd}"] if cppstd else []
+    if cache := os.environ.get("TENSORACLE_CONAN_CACHE"):
+        options.extend(["--core-conf", f"core.cache:storage_path={cache}"])
+    dependencies = folder / "dependencies"
+    run(
+        [
+            "conan",
+            "install",
+            ROOT / "cpp",
+            "--lockfile",
+            selected_lock,
+            "--profile:all",
+            profile,
+            "--no-remote",
+            "--build=never",
+            "--output-folder",
+            dependencies,
+            "--conf:all",
+            "tools.build:jobs=4",
+            *options,
+        ]
+    )
+    return dependencies
+
+
+@pytest.mark.req("SP-TENSORACLE-073")
+@pytest.mark.req("SP-TENSORACLE-074")
+@pytest.mark.parametrize("shared", ["ON", "OFF"], ids=["shared", "static"])
+def test_sources_build_with_cpp20_and_json_3_12(tmp_path, shared):
+    """Source consumers can build either library form with C++20 and JSON 3.12.0."""
+    dependencies = install_json_dependencies(tmp_path, "3.12.0", cppstd="20")
+    build = tmp_path / "build"
+    run(
+        [
+            "cmake",
+            "-S",
+            ROOT / "cpp",
+            "-B",
+            build,
+            "-G",
+            "Ninja",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DCMAKE_CXX_STANDARD=20",
+            "-DCMAKE_CXX_STANDARD_REQUIRED=ON",
+            f"-DCMAKE_TOOLCHAIN_FILE={dependencies / 'conan_toolchain.cmake'}",
+            "-DBUILD_TESTING=OFF",
+            f"-DBUILD_SHARED_LIBS={shared}",
+            "-DTENSORACLE_BUILD_CUBIN_HELPER=OFF",
+        ]
+    )
+    run(["cmake", "--build", build, "--target", "tensoracle", "--parallel", "4"])
+
+
 @pytest.fixture(scope="module")
 def cache_versions(tmp_path_factory):
     """Use prepared Conan packages; never download or rebuild dependencies during tests."""
     work = tmp_path_factory.mktemp("cache-json-versions")
-    profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc13"))
-    if not profile.is_absolute():
-        profile = ROOT / "cpp/conan/profiles" / profile
-    cache_args = []
-    if cache := os.environ.get("TENSORACLE_CONAN_CACHE"):
-        cache_args = ["--core-conf", f"core.cache:storage_path={cache}"]
     lock_bytes = (ROOT / "cpp/conan.lock").read_bytes()
     executables = {}
     for version in ("3.11.3", "3.12.0"):
         folder = work / version
         folder.mkdir()
-        selected_lock = ROOT / "cpp/conan.lock"
-        if version == "3.12.0":
-            compatibility = json.loads((ROOT / "cpp/conan/cache-compatibility.lock").read_text())
-            lock = json.loads(lock_bytes)
-            lock["requires"] = [
-                compatibility["requires"][0] if ref.startswith("nlohmann_json/") else ref
-                for ref in lock["requires"]
-            ]
-            selected_lock = folder / "conan.lock"
-            selected_lock.write_text(json.dumps(lock))
-        dependencies = folder / "dependencies"
-        run(
-            [
-                "conan",
-                "install",
-                ROOT / "cpp",
-                "--lockfile",
-                selected_lock,
-                "--profile:all",
-                profile,
-                "--no-remote",
-                "--build=never",
-                "--output-folder",
-                dependencies,
-                "--conf:all",
-                "tools.build:jobs=4",
-                *cache_args,
-            ]
-        )
+        dependencies = install_json_dependencies(folder, version)
         build = folder / "build"
         run(
             [
