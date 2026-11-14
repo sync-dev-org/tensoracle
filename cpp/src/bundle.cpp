@@ -3,6 +3,7 @@
 #include "native_exports.hpp"
 #include "sha256.hpp"
 #include <fstream>
+#include <cstdio>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -13,18 +14,18 @@
 namespace tensoracle::detail {
 std::string read_file(const fs::path &path, tensoracle_status code) {
     std::ifstream file(path, std::ios::binary);
-    require(bool(file), "missing or unreadable file: " + path.string(), code);
+    require(bool(file), "missing or unreadable file: " + path_utf8(path), code);
     std::string bytes((std::istreambuf_iterator<char>(file)), {});
-    require(!file.bad(), "could not read file: " + path.string(), code);
+    require(!file.bad(), "could not read file: " + path_utf8(path), code);
     return bytes;
 }
 void write_file(const fs::path &path, const std::string &bytes) {
     fs::create_directories(path.parent_path());
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    require(bool(file), "could not write file: " + path.string());
+    require(bool(file), "could not write file: " + path_utf8(path));
     file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     file.close();
-    require(bool(file), "could not finish writing file: " + path.string());
+    require(bool(file), "could not finish writing file: " + path_utf8(path));
 }
 static uint64_t number(const std::string &data, uint64_t offset, size_t count,
                        tensoracle_status code = TENSORACLE_PLUGIN_BUNDLE_MISMATCH) {
@@ -57,7 +58,7 @@ static bool relative_path(const std::string &name) {
     for (auto &ch : normalized)
         if (ch == '\\')
             ch = '/';
-    for (auto const &part : fs::path(normalized))
+    for (auto const &part : fs::u8path(normalized))
         if (part == "..")
             return false;
     return true;
@@ -266,11 +267,11 @@ extern "C" tensoracle_status tensoracle_inspect_bundle(const char *root, const c
         require(present(root) && result, "bundle inspection requires root and result",
                 TENSORACLE_INVALID_ARGUMENT);
         auto library =
-            plugin ? read_file(plugin, TENSORACLE_PLUGIN_BUNDLE_MISMATCH) : std::string();
+            plugin ? read_file(fs::u8path(plugin), TENSORACLE_PLUGIN_BUNDLE_MISMATCH) : std::string();
         auto value = inspect(
-            read_file(fs::path(root) / "bundle.json"),
+            read_file(fs::u8path(root) / "bundle.json"),
             [&](auto const &name) {
-                return read_file(fs::path(root) / name, TENSORACLE_MISSING_CUBIN);
+                return read_file(fs::u8path(root) / fs::u8path(name), TENSORACLE_MISSING_CUBIN);
             },
             plugin ? &library : nullptr);
         *result = new tensoracle_bundle_result(std::move(value));
@@ -319,13 +320,25 @@ extern "C" tensoracle_status tensoracle_inspect_wheel(const char *path, const ch
         require(!plugin || relative_path(plugin), "invalid plugin path in wheel");
         struct Archive {
             mz_zip_archive zip{};
+#if defined(_WIN32)
+            FILE* file = nullptr;
+#endif
             ~Archive() {
                 if (zip.m_pState)
                     mz_zip_reader_end(&zip);
+#if defined(_WIN32)
+                if (file) std::fclose(file);
+#endif
             }
         } archive;
+#if defined(_WIN32)
+        archive.file = _wfopen(fs::u8path(path).c_str(), L"rb");
+        require(archive.file && mz_zip_reader_init_cfile(&archive.zip, archive.file, 0, 0),
+                "invalid or unreadable wheel ZIP");
+#else
         require(mz_zip_reader_init_file(&archive.zip, path, 0) != 0,
                 "invalid or unreadable wheel ZIP");
+#endif
         std::map<std::string, std::string> members;
         std::string manifest;
         for (mz_uint i = 0; i < mz_zip_reader_get_num_files(&archive.zip); ++i) {
@@ -343,7 +356,7 @@ extern "C" tensoracle_status tensoracle_inspect_wheel(const char *path, const ch
             std::unique_ptr<void, decltype(&mz_free)> bytes(raw, mz_free);
             require(raw != nullptr, "corrupt wheel member: " + name);
             members.emplace(name, std::string(static_cast<const char *>(raw), size));
-            if (fs::path(name).filename() == "bundle.json") {
+            if (fs::u8path(name).filename() == "bundle.json") {
                 require(manifest.empty(), "wheel must contain exactly one cubin bundle");
                 manifest = name;
             }
@@ -351,11 +364,11 @@ extern "C" tensoracle_status tensoracle_inspect_wheel(const char *path, const ch
         require(!manifest.empty(), "wheel must contain exactly one cubin bundle");
         require(!plugin || members.count(plugin), "plugin is missing in wheel",
                 TENSORACLE_PLUGIN_BUNDLE_MISMATCH);
-        auto parent = fs::path(manifest).parent_path();
+        auto parent = fs::u8path(manifest).parent_path();
         auto value = inspect(
             members.at(manifest),
             [&](auto const &name) {
-                auto member = (parent / name).generic_string();
+                auto member = path_utf8(parent / fs::u8path(name), true);
                 require(members.count(member), "missing cubin: " + member,
                         TENSORACLE_MISSING_CUBIN);
                 return members.at(member);

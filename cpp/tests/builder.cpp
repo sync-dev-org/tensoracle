@@ -1,3 +1,4 @@
+#include "test_platform.hpp"
 #include "builder_fixture.hpp"
 #include "concurrent_builder.hpp"
 #include <future>
@@ -7,58 +8,51 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cstdio>
+#if !defined(_WIN32)
 #include <sys/wait.h>
+#endif
+#if !defined(_WIN32)
 #include <unistd.h>
-#if defined(__GLIBC__)
+#endif
+#if defined(__GLIBC__) || defined(_WIN32)
 #include <malloc.h>
+#endif
+#if defined(_WIN32)
+#include <psapi.h>
 #endif
 
 using namespace builder_fixture;
 namespace {
 struct builder_process {
-    pid_t pid = -1;
-    int channel = -1;
+    std::unique_ptr<test_platform::process> child;
+    test_channel::endpoint channel = -1;
     builder_process(const fs::path& weights, const std::string& label, bool force = false,
                     const std::string& name = "linear-fp32") {
-        int pair[2];
-        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) throw std::runtime_error("socketpair failed");
-        auto number = std::to_string(pair[1]);
-        pid = fork();
-        if (pid == 0) {
-            close(pair[0]); fcntl(pair[1], F_SETFD, 0);
-            execl(TENSORACLE_BUILDER_PROBE, TENSORACLE_BUILDER_PROBE, "--concurrent",
-                weights.c_str(), number.c_str(), force ? "force" : "reuse", name.c_str(), label.c_str(), nullptr);
-            _exit(127);
-        }
-        close(pair[1]); channel = pair[0];
-        if (pid < 0) { close(channel); throw std::runtime_error("fork failed"); }
+        auto pair = test_channel::pair();
+        try {
+            child = std::make_unique<test_platform::process>(std::vector<std::string>{TENSORACLE_BUILDER_PROBE, "--concurrent",
+                weights.u8string(), std::to_string(pair[1]), force ? "force" : "reuse", name, label});
+        } catch (...) { test_channel::close(pair[0]); test_channel::close(pair[1]); throw; }
+        test_channel::close(pair[1]); channel = pair[0];
     }
-    ~builder_process() {
-        if (pid > 0) { kill(pid, SIGKILL); waitpid(pid, nullptr, 0); }
-        close(channel);
-    }
+    ~builder_process() { child.reset(); test_channel::close(channel); }
     char next() { return concurrent_builder::receive(channel); }
     void command(char value) { concurrent_builder::send(channel, value); }
     bool quiet() { return concurrent_builder::quiet(channel); }
-    int finish() {
-        int status{};
-        if (waitpid(pid, &status, 0) != pid) throw std::runtime_error("waitpid failed");
-        pid = -1; return status;
-    }
+    int finish() { return child->wait(); }
 };
 struct builder_thread {
-    int channel = -1;
+    test_channel::endpoint channel = -1;
     std::future<int> task;
     builder_thread(const fs::path& weights, const std::string& label) {
-        int pair[2];
-        if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair)) throw std::runtime_error("socketpair failed");
+        auto pair = test_channel::pair();
         channel = pair[0];
         task = std::async(std::launch::async, [weights, label, endpoint = pair[1]] {
-            struct cleanup { int fd; ~cleanup() { close(fd); } } release{endpoint};
+            struct cleanup { test_channel::endpoint fd; ~cleanup() { test_channel::close(fd); } } release{endpoint};
             return concurrent_builder::open(weights, endpoint, false, "linear-fp32", label);
         });
     }
-    ~builder_thread() { shutdown(channel, SHUT_RDWR); if (task.valid()) task.wait(); close(channel); }
+    ~builder_thread() { test_channel::shutdown(channel); if (task.valid()) task.wait(); test_channel::close(channel); }
     char next() { return concurrent_builder::receive(channel); }
     void command(char value) { concurrent_builder::send(channel, value); }
     bool quiet() { return concurrent_builder::quiet(channel); }
@@ -75,11 +69,11 @@ std::vector<std::string> calls(const fs::path& weights) {
 }
 void successful(builder_process& process) {
     REQUIRE(process.next() == 's');
-    auto status = process.finish(); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 0);
+    auto status = process.finish(); REQUIRE(status == 0);
 }
 void failed(builder_process& process, const fs::path& weights, const std::string& label) {
     REQUIRE(process.next() == 'e');
-    auto status = process.finish(); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 1);
+    auto status = process.finish(); REQUIRE(status == 1);
     REQUIRE(outcome(weights, label).at("status") == TENSORACLE_INTERNAL_ERROR);
     REQUIRE(outcome(weights, label).at("error") == "controlled callback failure");
 }
@@ -107,7 +101,7 @@ TEST_CASE("Concurrent first opens in separate processes build once and all reuse
     REQUIRE(entries[0].status == TENSORACLE_CACHE_BUILDING_OR_LEFTOVER);
     REQUIRE(entries[0].size_bytes == 0);
     for (const auto& entry : fs::directory_iterator(files.path / "tensoracle")) {
-        auto name = entry.path().filename().string();
+        auto name = entry.path().filename().u8string();
         REQUIRE((entry.path().extension() == ".engine" || (name.rfind("weight-", 0) == 0 && entry.path().extension() == ".json")));
     }
     first.command('g'); successful(first); successful(second); successful(third);
@@ -140,12 +134,12 @@ TEST_CASE("A waiting process rebuilds after the first network callback fails", "
     reusable(weights, "second");
 }
 
-TEST_CASE("A waiting process rebuilds after SIGKILL releases the first builder lock", "[SP-TENSORACLE-067][gpu]") {
+TEST_CASE("A waiting process rebuilds after process termination releases the first builder lock", "[SP-TENSORACLE-067][gpu]") {
     temporary_directory files; auto weights = files.path / "weights"; write_weights(weights);
     builder_process first(weights, "first"); REQUIRE(first.next() == 'o'); REQUIRE(first.next() == 'b');
     builder_process second(weights, "second"); REQUIRE(second.next() == 'o'); CHECK(second.quiet());
-    REQUIRE(kill(first.pid, SIGKILL) == 0);
-    auto status = first.finish(); REQUIRE(WIFSIGNALED(status)); REQUIRE(WTERMSIG(status) == SIGKILL);
+    first.child->terminate();
+    auto status = first.finish(); REQUIRE(status == 137);
     REQUIRE(second.next() == 'b'); second.command('g'); successful(second);
     REQUIRE(calls(weights) == std::vector<std::string>{"first", "second"});
     reusable(weights, "second");
@@ -305,9 +299,7 @@ TEST_CASE("FP32 FP16 BF16 and explicit INT8 networks compute caller limits and r
         REQUIRE(maximum > 1e-5f);
         REQUIRE(maximum < (precision == "fp16" ? 0.003f : precision == "bf16" ? 0.015f : 0.03f));
         auto output = files.path / (precision + ".bin");
-        auto pid = fork(); REQUIRE(pid >= 0);
-        if (!pid) { execl(TENSORACLE_BUILDER_PROBE, TENSORACLE_BUILDER_PROBE, path.c_str(), precision.c_str(), output.c_str(), nullptr); _exit(127); }
-        int status; REQUIRE(waitpid(pid, &status, 0) == pid); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 0);
+        REQUIRE(test_platform::run({TENSORACLE_BUILDER_PROBE, path.u8string(), precision, output.u8string()}) == 0);
         std::vector<float> restarted(actual.size()); std::ifstream saved(output, std::ios::binary); saved.read(reinterpret_cast<char*>(restarted.data()), restarted.size() * sizeof(float));
         REQUIRE(saved.good()); REQUIRE(restarted == actual);
     }
@@ -323,9 +315,7 @@ TEST_CASE("FP8 explicitly quantized networks reuse identical outputs after exec 
     for (size_t i = 0; i < actual.size(); ++i) maximum = std::max(maximum, std::abs(actual[i] - reference[i]));
     REQUIRE(maximum > 1e-5f); REQUIRE(maximum < 0.13f);
     auto output = files.path / "fp8.bin";
-    auto pid = fork(); REQUIRE(pid >= 0);
-    if (!pid) { execl(TENSORACLE_BUILDER_PROBE, TENSORACLE_BUILDER_PROBE, path.c_str(), "fp8", output.c_str(), nullptr); _exit(127); }
-    int status{}; REQUIRE(waitpid(pid, &status, 0) == pid); REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 0);
+    REQUIRE(test_platform::run({TENSORACLE_BUILDER_PROBE, path.u8string(), "fp8", output.u8string()}) == 0);
     std::vector<float> restarted(actual.size());
     std::ifstream saved(output, std::ios::binary); saved.read(reinterpret_cast<char*>(restarted.data()), restarted.size() * sizeof(float));
     REQUIRE(saved.good()); REQUIRE(restarted == actual);
@@ -363,7 +353,7 @@ TEST_CASE("Callback failures duplicate weights and shape outputs leave no saved 
     REQUIRE(raw_engine == nullptr); REQUIRE(raw_calls == 1);
     REQUIRE(tensoracle_error_message(owned.get(), &message, nullptr) == TENSORACLE_SUCCESS);
     REQUIRE(std::string(message) == "C callback status retained");
-    auto other = files.path / "other"; fs::copy_file(path, other); request.weights.push_back(other.string()); bool called = false;
+    auto other = files.path / "other"; fs::copy_file(path, other); request.weights.push_back(other.u8string()); bool called = false;
     REQUIRE_THROWS_AS(tensoracle::open_engine(request, [&](nvinfer1::INetworkDefinition&, const tensoracle::weights_view&) { called = true; }), tensoracle::error);
     REQUIRE_FALSE(called);
     request.weights.pop_back();
@@ -392,8 +382,8 @@ TEST_CASE("Ordinary shape layer outputs remain supported by the public builder",
 }
 
 TEST_CASE("Build success and failure return unused host allocations after releasing mapped weights", "[SP-TENSORACLE-054][SP-TENSORACLE-059][gpu]") {
-#if !defined(__GLIBC__)
-    SKIP("allocator RSS check requires glibc malloc_trim");
+#if !defined(__GLIBC__) && !defined(_WIN32)
+    SKIP("allocator memory check requires glibc or the Windows CRT");
 #else
     context gpu; temporary_directory files; auto path = files.path / "matrix.safetensors";
     nlohmann::json header{{"matrix", {{"dtype", "F32"}, {"shape", {512, 512}}, {"data_offsets", {0, 512 * 512 * 4}}}}};
@@ -401,7 +391,18 @@ TEST_CASE("Build success and failure return unused host allocations after releas
     std::vector<float> values(512 * 512, 1.0f / 512);
     { std::ofstream file(path, std::ios::binary); char length[8]; for (int i = 0; i < 8; ++i) length[i] = char(uint64_t(encoded.size()) >> (8 * i));
       file.write(length, 8); file << encoded; file.write(reinterpret_cast<const char*>(values.data()), values.size() * sizeof(float)); }
+#if defined(_WIN32)
+    auto rss = [] {
+        PROCESS_MEMORY_COUNTERS_EX memory{};
+        if (!K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory)))
+            throw std::runtime_error("process memory query failed");
+        return uint64_t(memory.PrivateUsage);
+    };
+    auto trim = [] { (void)_heapmin(); };
+#else
     auto rss = [] { std::ifstream stat("/proc/self/statm"); uint64_t virtual_pages, resident; stat >> virtual_pages >> resident; return resident * uint64_t(sysconf(_SC_PAGESIZE)); };
+    auto trim = [] { (void)malloc_trim(0); };
+#endif
     for (bool failure : {false, true}) {
         auto request = options(path); request.name = failure ? "memory-failure" : "memory-success";
         request.inputs = {{"features", {1, 512}, {1, 512}, {1, 512}}};
@@ -418,7 +419,7 @@ TEST_CASE("Build success and failure return unused host allocations after releas
             });
             REQUIRE_FALSE(failure);
         } catch (const tensoracle::error& error) { REQUIRE(failure); REQUIRE(error.status() == TENSORACLE_INTERNAL_ERROR); }
-        auto before = rss(); (void)malloc_trim(0); auto after = rss(); auto reduction = before > after ? before - after : 0;
+        auto before = rss(); trim(); auto after = rss(); auto reduction = before > after ? before - after : 0;
         std::printf("memory failure=%d RSS=%llu second_trim=%llu\n", failure, (unsigned long long)before, (unsigned long long)reduction);
         REQUIRE(reduction <= 32ULL * 1024 * 1024);
     }

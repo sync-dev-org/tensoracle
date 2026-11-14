@@ -115,7 +115,7 @@ def test_stub_generation_loads_the_digest_verified_conan_tensorrt(distributions)
     proofs = re.findall(r"TensorRT for stub generation: (\{.*\})", distributions["build_log"])
     assert proofs, distributions["build_log"]
     data = yaml.safe_load((tensorrt_recipe() / "conandata.yml").read_text())
-    expected = data["sources"]["11.2.1.2"]["library_sha256"]
+    expected = data["sources"]["11.2.1.2"]["libraries"]["libnvinfer.so.11"]
     for value in proofs:
         proof = json.loads(value)
         assert proof["sha256"] == expected
@@ -454,7 +454,7 @@ def test_sdk_target_links_tensorrt_without_consumer_link_settings(
         (source / "conanfile.txt").write_text(
             "[requires]\ntensorrt/11.2.1.2\n[generators]\nCMakeDeps\nCMakeToolchain\n"
         )
-        profile = ROOT / "cpp/conan/profiles/linux-gcc13"
+        profile = ROOT / "cpp/conan/profiles/linux-gcc-toolset-13"
         generators = tmp_path / "generators"
         subprocess.run(
             [

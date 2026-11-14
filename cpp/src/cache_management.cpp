@@ -101,9 +101,10 @@ extern "C" tensoracle_status tensoracle_cache_result_entry(const tensoracle_cach
         WRITE(file, entry.file.c_str());
         WRITE(status, entry.status);
         WRITE(has_stat, uint32_t(entry.observed.has_value()));
-        WRITE(size_bytes, entry.observed ? uint64_t(entry.observed->st_size) : uint64_t(0));
-        WRITE(recorded_at_seconds, entry.observed ? int64_t(entry.observed->st_mtim.tv_sec) : int64_t(0));
-        WRITE(recorded_at_nanoseconds, entry.observed ? uint32_t(entry.observed->st_mtim.tv_nsec) : uint32_t(0));
+        WRITE(size_bytes, entry.observed ? uint64_t(entry.observed->size) : uint64_t(0));
+        auto time = entry.observed ? entry.observed->mtime : file_time{};
+        WRITE(recorded_at_seconds, time.first);
+        WRITE(recorded_at_nanoseconds, uint32_t(time.second));
         WRITE(header_json, entry.header_json.empty() ? static_cast<const char*>(nullptr) : entry.header_json.c_str());
         WRITE(weight_paths_json, entry.weight_paths_json.empty() ? static_cast<const char*>(nullptr) : entry.weight_paths_json.c_str());
         WRITE(reason, entry.reason.empty() ? static_cast<const char*>(nullptr) : entry.reason.c_str());

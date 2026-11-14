@@ -3,6 +3,8 @@
 import json
 import os
 import re
+import runpy
+import shutil
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -10,6 +12,44 @@ from pathlib import Path
 NATIVE = Path(__file__).resolve().parent / "native"
 PROJECT = NATIVE.parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
+
+
+def build_jobs():
+    return os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", "8")
+
+
+@lru_cache
+def preparation():
+    return runpy.run_path(str(ROOT / "cpp/conan/prepare.py"))
+
+
+def prepare_native(build):
+    """Give a native fixture its own offline toolchain without editing user presets."""
+    output = Path(build) / "conan"
+    preparation()["install"](output, wheel=True, offline=True)
+    return f"-DCMAKE_TOOLCHAIN_FILE={output / 'conan_toolchain.cmake'}"
+
+
+def tool_command(command, environment=None):
+    """Windows subprocess needs an absolute executable from the activated PATH."""
+    command = list(map(str, command))
+    if command[0] in ("cmake", "ctest", "ninja"):
+        environment = os.environ if environment is None else environment
+        executable = shutil.which(command[0], path=environment.get("PATH"))
+        assert executable, f"Conan did not supply {command[0]}"
+        command[0] = executable
+    return command
+
+
+def python_code(source):
+    """Native Windows test children register the prepared SDK before loading bindings."""
+    if os.name == "nt":
+        source = (
+            "import os\n"
+            f"_test_sdk_directory = os.add_dll_directory({str(tensorrt_root() / 'bin')!r})\n"
+            + source
+        )
+    return source
 
 
 def tensorrt_recipe():
@@ -31,9 +71,6 @@ def tensorrt_recipe():
 @lru_cache
 def _dependency_root(name):
     """Locate a package in the same prepared, locked Conan graph as native builds."""
-    profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc13"))
-    if not profile.is_absolute():
-        profile = ROOT / "cpp/conan/profiles" / profile
     command = [
         "conan",
         "graph",
@@ -43,10 +80,7 @@ def _dependency_root(name):
         str(ROOT / "cpp/conan.lock"),
         "--no-remote",
         "--format=json",
-        "--profile:host",
-        str(profile),
-        "--profile:build",
-        str(profile),
+        *preparation()["profile_arguments"](),
     ]
     cache_args = []
     if cache := os.environ.get("TENSORACLE_CONAN_CACHE"):
@@ -54,16 +88,14 @@ def _dependency_root(name):
         command.extend(cache_args)
     result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
     assert result.returncode == 0, (
-        result.stdout
-        + result.stderr
-        + "\nPrepare dependencies: cmake -P cpp/conan/prepare-tests.cmake"
+        result.stdout + result.stderr + "\nPrepare dependencies: python cpp/conan/prepare-tests.py"
     )
     node = next(
         node
         for node in json.loads(result.stdout)["graph"]["nodes"].values()
         if node.get("name") == name
     )
-    assert node["binary"] == "Cache", "Prepare dependencies: cmake -P cpp/conan/prepare-tests.cmake"
+    assert node["binary"] == "Cache", "Prepare dependencies: python cpp/conan/prepare-tests.py"
     reference = f"{node['ref']}:{node['package_id']}#{node['prev']}"
     path = subprocess.run(
         ["conan", "cache", "path", reference, *cache_args],
@@ -111,13 +143,17 @@ def _build(work, definitions):
             str(NATIVE),
             "-B",
             str(build),
+            "-G",
+            "Ninja",
             "-DCMAKE_BUILD_TYPE=Release",
             *(f"-D{name}={value}" for name, value in definitions.items()),
         ],
         ["cmake", "--build", str(build), "--config", "Release"],
     ]
     for command in commands:
-        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=45)
+        result = subprocess.run(
+            tool_command(command), check=False, capture_output=True, text=True, timeout=45
+        )
         assert result.returncode == 0, result.stdout + result.stderr
     return Path((build / "artifact-Release.txt").read_text(encoding="utf-8").strip())
 

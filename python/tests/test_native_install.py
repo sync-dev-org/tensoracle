@@ -1,13 +1,12 @@
 """Caller-resolved Conan dependencies support shared and static native installs."""
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from native_build import ROOT
+from native_build import ROOT, build_jobs, preparation
 
 
 def run(*command):
@@ -19,7 +18,7 @@ def run(*command):
 @pytest.fixture(scope="module")
 def caller_dependencies(tmp_path_factory):
     caller = tmp_path_factory.mktemp("caller-dependencies")
-    profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc13"))
+    profile = preparation()["profile_path"]()
     if not profile.is_absolute():
         profile = ROOT / "cpp/conan/profiles" / profile
     graph = json.loads(
@@ -29,14 +28,13 @@ def caller_dependencies(tmp_path_factory):
             str(ROOT / "cpp"),
             "--lockfile",
             str(ROOT / "cpp/conan.lock"),
-            "--profile:host",
-            str(profile),
-            "--profile:build",
-            str(profile),
+            *preparation()["profile_arguments"](profile),
             "--output-folder",
             str(caller),
             "--no-remote",
             "--build=never",
+            "-c",
+            "tools.cmake.cmaketoolchain:user_presets=",
             "--format=json",
         )
     )
@@ -82,7 +80,7 @@ def test_caller_conan_toolchain_builds_and_installs_sdk(tmp_path, caller_depende
     entry = next(line for line in cache.splitlines() if line.startswith("CMAKE_TOOLCHAIN_FILE:"))
     assert entry.partition("=")[2] == str(toolchain)
     assert not (build / "conan").exists()
-    run("cmake", "--build", str(build), "--parallel", "8")
+    run("cmake", "--build", str(build), "--parallel", build_jobs())
     prefix = tmp_path / "prefix"
     run("cmake", "--install", str(build), "--prefix", str(prefix))
 

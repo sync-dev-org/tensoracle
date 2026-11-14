@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from native_build import prepare_native
+
 
 @pytest.mark.req("SP-TENSORACLE-004")
 @pytest.mark.req("SP-TENSORACLE-015")
@@ -52,12 +54,6 @@ def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
     )
     # The source library uses the parent's toolchain. Prepare it before project(),
     # and resolve the Linux packages before simulating WIN32 for the thread check.
-    bootstrap = (
-        'set(TENSORACLE_CONAN_OFFLINE ON CACHE BOOL "" FORCE)\n'
-        f'include("{root.as_posix()}/cpp/conan/bootstrap.cmake")\n'
-        if target_kind == "static-library"
-        else ""
-    )
     dependencies = (
         f'include("{root.as_posix()}/cpp/cmake/TensoracleDependencies.cmake")\n'
         if target_kind == "static-library"
@@ -65,7 +61,6 @@ def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
     )
     (tmp_path / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.20)\n"
-        + bootstrap
         + "project(check_threads LANGUAGES CXX)\n"
         + dependencies
         + platform
@@ -73,6 +68,7 @@ def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
         encoding="utf-8",
     )
     build = tmp_path / "build"
+    toolchain = [prepare_native(build)] if target_kind == "static-library" else []
     result = subprocess.run(
         [
             "cmake",
@@ -82,6 +78,8 @@ def test_cubin_targets_link_platform_threads(tmp_path, windows, target_kind):
             str(build),
             "-G",
             "Unix Makefiles",
+            "-DCMAKE_BUILD_TYPE=Release",
+            *toolchain,
             f"-DTENSORRT_ROOT={sdk}",
             f"-DCUDAToolkit_ROOT={cuda}",
         ],
@@ -215,6 +213,8 @@ def test_plugin_build_reports_missing_cuda_inputs(tmp_path):
             str(root / "cpp"),
             "-B",
             str(build),
+            prepare_native(build),
+            "-DCMAKE_BUILD_TYPE=Release",
             f"-DTENSORRT_ROOT={sdk}",
             f"-DCUDAToolkit_ROOT={missing}",
         ],

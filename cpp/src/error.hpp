@@ -6,11 +6,15 @@
 #include <exception>
 #include <new>
 #include <stdexcept>
+#include <system_error>
 
 namespace tensoracle::detail {
 
 tensoracle_status fail(tensoracle_status status, const char* message,
                       tensoracle_error** error) noexcept;
+#if defined(_WIN32)
+tensoracle_status fail_system_error(const std::system_error& failure, tensoracle_error** error) noexcept;
+#endif
 
 /* The common exception boundary for operations added to the C ABI. */
 template <class Operation>
@@ -24,6 +28,10 @@ tensoracle_status guard(tensoracle_error** error, Operation&& operation) noexcep
         return fail(TENSORACLE_OUT_OF_MEMORY, "tensoracle allocation failed", error);
     } catch (const std::invalid_argument& e) {
         return fail(TENSORACLE_INVALID_ARGUMENT, e.what(), error);
+#if defined(_WIN32)
+    } catch (const std::system_error& e) {
+        return fail_system_error(e, error);
+#endif
     } catch (const std::exception& e) {
         return fail(TENSORACLE_INTERNAL_ERROR, e.what(), error);
     } catch (...) {

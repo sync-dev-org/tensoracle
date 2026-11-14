@@ -10,9 +10,12 @@ The default is a shared library (`BUILD_SHARED_LIBS=ON`). To embed tensoracle
 statically, build from source with `-DBUILD_SHARED_LIBS=OFF` and install the result:
 
 ```bash
-cmake -S cpp -B build/static -G Ninja -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
-cmake --build build/static --parallel 8
-cmake --install build/static --prefix /path/to/prefix
+python3 cpp/conan/prepare.py --output build/cpp
+. ./build/cpp/conanbuild.sh
+cd cpp
+cmake --preset conan-release -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
+cmake --build --preset conan-release
+cmake --install ../build/cpp --prefix /path/to/prefix
 ```
 
 Both forms provide the same headers and CMake target, `tensoracle::tensoracle`.
@@ -38,8 +41,9 @@ tensoracle shared library there. Python processes use the wheel's shared
 library. Relink an artifact that embeds tensoracle whenever its embedded
 tensoracle version is updated.
 
-C++ builds require CMake 3.26 or later, Ninja, GCC 13 on Linux x86_64, the pinned
-Conan dependencies. CUDA headers and the driver link stub come from the locked
+C++ builds use GCC 13 on Linux x86_64 or MSVC 19.4 on Windows x86_64.
+Conan supplies CMake 3.31.12, Ninja 1.13.2, and the pinned native dependencies.
+CUDA headers and the driver link stub come from the locked
 `cuda-toolkit/13.2.2` recipe (`compiler=False`), as described in the
 [SDK guide](../docs/tensorrt-sdk.md).
 Python bindings are built separately through `python/`. The supported TensorRT
@@ -49,17 +53,37 @@ Install the Conan CLI at the exact version declared by `python/pyproject.toml`:
 
 ```bash
 uv tool install "$(python3 -c 'import tomllib; from pathlib import Path; print(next(r for r in tomllib.loads(Path("python/pyproject.toml").read_text())["build-system"]["requires"] if r.startswith("conan==")))')"
-cmake -P cpp/conan/prepare-tests.cmake
-cmake -S cpp -B .nf/tmp/cpp -G Ninja
-cmake --build .nf/tmp/cpp --parallel 8
-ctest --test-dir .nf/tmp/cpp --output-on-failure
+python3 cpp/conan/prepare-tests.py
+python3 cpp/conan/prepare.py --output build/cpp --offline
+. ./build/cpp/conanbuild.sh
+cd cpp
+cmake --preset conan-release
+cmake --build --preset conan-release
+ctest --preset conan-release --output-on-failure -LE gpu
 ```
+
+The default output `build/cpp` uses `conan-release`. Other output directories
+use `conan-<directory-id>-release`, where the identifier is derived from the
+complete resolved output path. `prepare.py` prints the exact preset name.
+All outputs remain included, so switching output directories leaves earlier
+presets usable, including directories with the same final component.
+From the repository root, for example:
+
+```bash
+python3 cpp/conan/prepare.py --output build/first --offline
+python3 cpp/conan/prepare.py --output build/second --offline
+```
+
+Activate the chosen output's `conanbuild.sh` (or `call conanbuild.bat` in cmd),
+then run configure, build, and test from `cpp/` using the name printed for that
+output in place of `conan-release`. `cmake --list-presets` lists all prepared
+outputs. Reusing the same output preserves its preset name.
 
 Run these commands from the repository root. Test configuration uses prepared
 recipes and binaries with no remotes, package builds, or recipe exports. Prepare
 again after changing a recipe, profile, or lock. Without prepared dependencies,
-configuration fails and prints the preparation command. To build only the library,
-pass `-DBUILD_TESTING=OFF`; dependencies can then be obtained during configuration.
+the preparation script fails and prints the preparation command. To build only the library,
+pass `-DBUILD_TESTING=OFF` when configuring. CMake never installs dependencies.
 
 CTest needs a full TensorRT runtime, including its builder resources, separately
 from the Conan SDK used for compilation and linking. By default, test configuration
@@ -77,9 +101,9 @@ The C++ cubin producer test uses the CUDA compiler tools from `python/.venv`
 when the producer extra is installed. Its compilation still uses the Conan
 CUDA headers. Without those runtime tools, that optional test is skipped.
 
-A source build using `add_subdirectory(cpp)` includes `cpp/conan/bootstrap.cmake`
-in its top-level `CMakeLists.txt` before the first `project()`, so the parent
-project also uses the generated compiler settings and dependency search paths.
+A source build using `add_subdirectory(cpp)` or `conan create` uses the caller's
+Conan graph and toolchain. Declare tensoracle's dependencies in that graph;
+tensoracle does not run another preparation or replace the caller's toolchain.
 
 `cpp/conanfile.py` and `cpp/conan.lock` select nlohmann/json 3.11.3, miniz 3.1.1,
 Catch2 3.16.1, TensorRT SDK 11.2.1.2, and CUDA build inputs 13.2.2. Miniz, nlohmann/json, and Catch2
@@ -88,19 +112,45 @@ verified input manifest, and licenses in `cpp/conan/recipes/tensorrt/`, plus the
 CUDA recipe and manifest in `cpp/conan/recipes/cuda-toolkit/`. The generated
 toolchain supplies `CUDAToolkit_ROOT`; an explicit existing CUDA root is still accepted. TensorRT headers
 and the link library come from the same digest-verified recipe for standalone,
-wheel, and test builds; no `TENSORACLE_SDK_ROOT` or `TENSORRT_ROOT` is required. The default profile is `linux-gcc13`; release builds select
-`linux-gcc14` for the manylinux image's compiler. Each profile selects C++17,
-`libstdc++11`, and at most eight build jobs. CMake is supplied by the build
-environment, including isolated Python builds.
-CMake's tool requirement is represented as `cmake/system` in Conan, so the lock
-does not depend on the installed CMake version. Each CMake entry point checks
-the minimum version. Conan does not download or build a CMake package.
+wheel, and test builds; no `TENSORACLE_SDK_ROOT` or `TENSORRT_ROOT` is required. The default profile is `linux-gcc-toolset-13`; release builds select
+`linux-gcc-toolset-14` for the manylinux image's compiler. Linux profiles select
+C++17 and `libstdc++11`; the Windows profile selects
+MSVC's dynamic Release runtime. Linux and wheel builds default to eight jobs;
+the Windows profile retains its four-job default. Set `CMAKE_BUILD_PARALLEL_LEVEL`
+to limit a run, and use `-Cbuild.tool-args=-j4` or `SKBUILD_BUILD_TOOL_ARGS=-j4`
+when limiting Python builds. The preparation scripts apply the CMake job limit
+to Conan as well. The common
+`cpp/conan/profiles/tools` selects CMake and Ninja for consumers and dependencies;
+`cpp/conan.lock` records their recipe revisions. Host installations of CMake and
+Ninja are unnecessary. Preparation requires their prebuilt ConanCenter binaries
+and never builds these tools from source.
 
-Set `CONAN_HOME` to isolate Conan's metadata. To isolate its package storage, pass
-`-DTENSORACLE_CONAN_CACHE=/absolute/package/directory` to both preparation and
-configuration. The equivalent environment variable also applies to Python test
-fixtures. Python's editable build accepts
-`-Ccmake.define.TENSORACLE_CONAN_CACHE=/absolute/package/directory`.
+For native Windows, run these commands from cmd after installing the pinned Conan CLI:
+
+```bat
+python cpp\conan\prepare-tests.py
+python cpp\conan\prepare.py --output build\cpp --offline
+call build\cpp\conanbuild.bat
+if errorlevel 1 exit /b %errorlevel%
+cd cpp
+cmake --preset conan-release -DTENSORACLE_TEST_TENSORRT_RUNTIME=C:/path/to/TensorRT/lib
+cmake --build --preset conan-release
+ctest --preset conan-release --output-on-failure -LE gpu
+```
+
+When placing these commands in a batch file, stop after each command that fails.
+The build environment includes MSVC and Windows SDK settings. CTest propagates the
+selected full TensorRT runtime and the tensoracle DLL directory to child processes.
+A standalone C++ build needs no Python environment after dependency preparation;
+a runtime directory can be passed explicitly. Windows runtime DLLs can also be
+discovered under `python/.venv/Lib/site-packages/tensorrt_libs`.
+
+Set `CONAN_HOME` to isolate Conan's metadata and `TENSORACLE_CONAN_CACHE` to isolate
+package storage. Use the same values for preparation, native builds, and wheel
+builds. `TENSORACLE_CONAN_PROFILE` selects a profile by name or absolute path;
+`TENSORACLE_CONAN_BUILD_PROFILE` can select a separate build profile.
+The wheel backend prepares its own toolchain and tools before dependency-discovery,
+metadata, wheel, or editable hooks, and leaves native user presets unchanged.
 Run Python tests after preparation with `TENSORACLE_CONAN_OFFLINE=ON`; native
 fixtures always use this mode. Conan is a build dependency: installed CMake
 consumers can use the prebuilt SDK archive without Conan or its targets.

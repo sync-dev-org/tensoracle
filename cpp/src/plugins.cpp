@@ -2,6 +2,7 @@
 #include "error.hpp"
 #include "native_exports.hpp"
 #include "sha256.hpp"
+#include "file.hpp"
 #include "plugins_internal.hpp"
 #include <NvInferRuntime.h>
 #include <filesystem>
@@ -10,6 +11,12 @@
 #include <mutex>
 #include <set>
 #include <vector>
+#include <array>
+#include <cstring>
+#if defined(_WIN32)
+#include "engine_internal.hpp"
+#include <psapi.h>
+#endif
 #if defined(__linux__)
 #include <array>
 #include <cerrno>
@@ -22,6 +29,7 @@
 #endif
 
 namespace {
+using tensoracle::detail::path_utf8;
 struct registered_libraries {
     std::mutex mutex;
     // Byte identities seen by either registration API, including partial success.
@@ -35,21 +43,72 @@ registered_libraries& registered() { static registered_libraries state; return s
 [[noreturn]] void plugin_error(const std::string& message) {
     throw tensoracle::error(TENSORACLE_PLUGIN_LIBRARY_ERROR, message.c_str());
 }
+void register_creator(nvinfer1::IPluginRegistry& registry, nvinfer1::IPluginCreatorInterface& creator,
+                      const char* plugin_namespace, const std::string& failure) {
+    if (!registry.registerCreator(creator, plugin_namespace)) plugin_error(failure);
+}
+#if defined(_WIN32)
+const char* creator_namespace(nvinfer1::IPluginCreatorInterface& creator) {
+    const auto info = creator.getInterfaceInfo();
+    if (!std::strcmp(info.kind, "PLUGIN CREATOR_V3ONE"))
+        return static_cast<nvinfer1::IPluginCreatorV3One&>(creator).getPluginNamespace();
+    if (!std::strcmp(info.kind, "PLUGIN CREATOR_V1"))
+        return static_cast<nvinfer1::IPluginCreator&>(creator).getPluginNamespace();
+    plugin_error("TensorRT could not register plugin creator interface: " + std::string(info.kind));
+}
+HMODULE load_windows_library(const std::filesystem::path& path, nvinfer1::IPluginRegistry& registry) {
+    auto failure = "TensorRT could not register plugin library: " + path_utf8(path);
+    struct registration {
+        nvinfer1::IPluginRegistry& registry;
+        HMODULE module;
+        std::vector<nvinfer1::IPluginCreatorInterface*> added;
+        ~registration() {
+            if (!module) return;
+            for (auto* creator : added) registry.deregisterCreator(*creator);
+            FreeLibrary(module);
+        }
+    } loading{registry, LoadLibraryExW(path.c_str(), nullptr, 0), {}};
+    if (!loading.module) plugin_error(failure);
+    auto set_logger = reinterpret_cast<void(*)(nvinfer1::ILoggerFinder*)>(GetProcAddress(loading.module, "setLoggerFinder"));
+    auto get_creators = reinterpret_cast<nvinfer1::IPluginCreatorInterface* const*(*)(int32_t&)>(GetProcAddress(loading.module, "getCreators"));
+    if (!set_logger || !get_creators) plugin_error(failure);
+    struct logger_finder : nvinfer1::ILoggerFinder {
+        nvinfer1::ILogger* findLogger() override { return &tensoracle::detail::process_engine_logger(); }
+    };
+    static logger_finder finder;
+    set_logger(&finder);
+    int32_t count = 0;
+    auto* creators = get_creators(count);
+    if (count < 0 || (count && !creators)) plugin_error(failure);
+    loading.added.reserve(static_cast<size_t>(count));
+    for (int32_t i = 0; i < count; ++i) {
+        if (!creators[i]) plugin_error(failure);
+        auto* plugin_namespace = creator_namespace(*creators[i]);
+        if (!plugin_namespace) plugin_error(failure);
+        register_creator(registry, *creators[i], plugin_namespace, failure);
+        loading.added.push_back(creators[i]);
+    }
+    auto result = loading.module;
+    // Creators and the logger finder remain valid until process exit.
+    loading.module = nullptr;
+    return result;
+}
+#endif
 std::string read(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);
-    if (!stream) plugin_error("plugin library is missing or unreadable: " + path.string());
+    if (!stream) plugin_error("plugin library is missing or unreadable: " + path_utf8(path));
     std::string data{std::istreambuf_iterator<char>(stream), {}};
-    if (stream.bad()) plugin_error("could not read plugin library: " + path.string());
+    if (stream.bad()) plugin_error("could not read plugin library: " + path_utf8(path));
     return data;
 }
-#if defined(__linux__)
 struct module_file {
     std::filesystem::path path;
     std::string digest;
 };
 [[noreturn]] void module_file_error(const std::filesystem::path& path = {}) {
-    plugin_error("cannot match the loaded plugin module to its current file; restart the process: " + path.string());
+    plugin_error("cannot match the loaded plugin module to its current file; restart the process: " + path_utf8(path));
 }
+#if defined(__linux__)
 // Resolve the owning module even when address itself is in anonymous BSS, then
 // verify a file-backed segment and hash its file through the same open fd.
 module_file identify_module_file(const void* address) {
@@ -117,6 +176,33 @@ module_file identify_module_file(const void* address) {
     }
     module_file_error();
 }
+#elif defined(_WIN32)
+module_file identify_module_file(const void* address) {
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(address), &module)) module_file_error();
+    std::vector<wchar_t> name(32768), mapped(32768), opened(32768);
+    auto length = GetModuleFileNameW(module, name.data(), DWORD(name.size()));
+    if (!length || length >= name.size()) module_file_error();
+    std::filesystem::path path(std::wstring(name.data(), length));
+    // Keep writes and replacements excluded while hashing the loaded file.
+    auto handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) module_file_error(path);
+    struct owner { HANDLE handle; ~owner() { CloseHandle(handle); } } file{handle};
+    auto mapped_size = K32GetMappedFileNameW(GetCurrentProcess(), module, mapped.data(), DWORD(mapped.size()));
+    auto opened_size = GetFinalPathNameByHandleW(handle, opened.data(), DWORD(opened.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_NT);
+    if (!mapped_size || mapped_size >= mapped.size() || !opened_size || opened_size >= opened.size()
+        || _wcsicmp(mapped.data(), opened.data()) != 0) module_file_error(path);
+    tensoracle::detail::sha256_state hash;
+    std::array<char, 64 * 1024> buffer{};
+    for (;;) {
+        DWORD count = 0;
+        if (!ReadFile(handle, buffer.data(), DWORD(buffer.size()), &count, nullptr)) module_file_error(path);
+        if (!count) break;
+        hash.update(buffer.data(), count);
+    }
+    return {std::move(path), hash.finish()};
+}
 #endif
 }
 
@@ -132,28 +218,32 @@ extern "C" tensoracle_status tensoracle_register_libraries(const char* const* pa
         std::lock_guard<std::mutex> lock(state.mutex);
         for (size_t i = 0; i < count; ++i) {
             std::error_code reason;
-            auto path = std::filesystem::canonical(paths[i], reason);
+            auto path = std::filesystem::canonical(std::filesystem::u8path(paths[i]), reason);
             if (reason) plugin_error("plugin library is missing or unreadable: " + std::string(paths[i]));
             auto data = read(path);
             auto digest = tensoracle::detail::sha256(data.data(), data.size());
             result->identities.emplace_back(path, digest);
             auto found = state.paths.find(path);
             if (found != state.paths.end() && found->second != digest)
-                plugin_error("loaded plugin library changed: " + path.string());
+                plugin_error("loaded plugin library changed: " + path_utf8(path));
             try {
                 if (!tensoracle::detail::native_exports(data).count("getCreators"))
-                    plugin_error("plugin library does not export getCreators: " + path.string());
+                    plugin_error("plugin library does not export getCreators: " + path_utf8(path));
             } catch (const tensoracle::error& failure) {
-                plugin_error(std::string(failure.what()) + ": " + path.string());
+                plugin_error(std::string(failure.what()) + ": " + path_utf8(path));
             }
             if (!state.digests.count(digest)) {
                 auto* registry = getPluginRegistry();
                 if (!registry) plugin_error("TensorRT plugin registry is not available");
-                auto handle = registry->loadLibrary(path.c_str());
-                if (!handle) plugin_error("TensorRT could not register plugin library: " + path.string());
+#if defined(_WIN32)
+                auto handle = load_windows_library(path, *registry);
+#else
+                auto handle = registry->loadLibrary(path_utf8(path).c_str());
+#endif
+                if (!handle) plugin_error("TensorRT could not register plugin library: " + path_utf8(path));
                 auto after = read(path);
                 if (tensoracle::detail::sha256(after.data(), after.size()) != digest)
-                    plugin_error("plugin library changed while loading: " + path.string());
+                    plugin_error("plugin library changed while loading: " + path_utf8(path));
                 state.digests.emplace(digest, handle);
             }
             state.paths.emplace(path, digest);
@@ -171,7 +261,7 @@ extern "C" tensoracle_status tensoracle_register_embedded_plugins(const void* mo
             throw std::invalid_argument("embedded registration requires module address, creators, namespace and result");
         for (size_t i = 0; i < count; ++i)
             if (!creators[i]) throw std::invalid_argument("embedded plugin creator must not be null");
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
         auto& state = registered();
         std::lock_guard<std::mutex> lock(state.mutex);
         auto identity = identify_module_file(module_address);
@@ -179,7 +269,7 @@ extern "C" tensoracle_status tensoracle_register_embedded_plugins(const void* mo
         const auto& digest = identity.digest;
         auto found = state.paths.find(path);
         if (found != state.paths.end() && found->second != digest)
-            plugin_error("loaded plugin containing file changed: " + path.string());
+            plugin_error("loaded plugin containing file changed: " + path_utf8(path));
         auto result = std::make_unique<tensoracle_plugin_libraries>();
         result->identities.emplace_back(path, digest);
         auto* registry = getPluginRegistry();
@@ -188,17 +278,17 @@ extern "C" tensoracle_status tensoracle_register_embedded_plugins(const void* mo
             auto* creator = static_cast<nvinfer1::IPluginCreatorInterface*>(creators[i]);
             auto key = std::make_pair(creator, std::string(plugin_namespace));
             if (state.creators.count(key)) continue;
-            if (!registry->registerCreator(*creator, plugin_namespace))
-                plugin_error("TensorRT could not register embedded plugin creator in namespace: " + std::string(plugin_namespace));
+            register_creator(*registry, *creator, plugin_namespace,
+                "TensorRT could not register embedded plugin creator in namespace: " + std::string(plugin_namespace));
             state.creators.insert(std::move(key));
             state.paths.emplace(path, digest);
         }
         if (identify_module_file(module_address).digest != digest)
-            plugin_error("plugin containing file changed while registering: " + path.string());
+            plugin_error("plugin containing file changed while registering: " + path_utf8(path));
         *output = result.release();
         return TENSORACLE_SUCCESS;
 #else
-        plugin_error("embedded plugin registration is unsupported on Windows and other non-Linux platforms");
+        plugin_error("embedded plugin registration is unsupported on this platform");
 #endif
     });
 }

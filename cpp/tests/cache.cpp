@@ -1,12 +1,21 @@
+#include "test_platform.hpp"
 #include "cache.hpp"
 #include "sha256.hpp"
+#include <tensoracle/builder.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <fstream>
 #include <array>
+#include <future>
+#include <mutex>
+#include <condition_variable>
 #include <fcntl.h>
 #include <sys/stat.h>
+#if !defined(_WIN32)
 #include <sys/wait.h>
+#endif
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace tensoracle::detail;
@@ -17,6 +26,7 @@ std::string changing_weight;
 int stat_calls = 0;
 int writer_ready = -1, writer_release = -1;
 }
+#if !defined(_WIN32)
 extern "C" int __real_stat(const char*, struct stat*);
 extern "C" int __wrap_stat(const char* path, struct stat* value) {
     if (path == changing_weight && ++stat_calls == 2) {
@@ -36,6 +46,28 @@ extern "C" int __wrap_fsync(int fd) {
     }
     return __real_fsync(fd);
 }
+#else
+namespace {
+std::string handle_path(HANDLE handle) {
+    std::vector<wchar_t> path(32768);
+    auto count = GetFinalPathNameByHandleW(handle, path.data(), DWORD(path.size()), FILE_NAME_NORMALIZED);
+    if (!count || count >= path.size()) throw std::runtime_error("test file path failed");
+    auto value = std::filesystem::path(std::wstring(path.data(), count)).u8string();
+    if (value.rfind("\\\\?\\", 0) == 0) value.erase(0, 4);
+    return value;
+}
+struct install_stat_boundary {
+    install_stat_boundary() {
+        windows_boundary::before_stat = [](HANDLE file) {
+            if (changing_weight.empty() || handle_path(file) != changing_weight || ++stat_calls != 2) return;
+            auto path = std::filesystem::u8path(changing_weight);
+            auto time = std::filesystem::last_write_time(path);
+            std::filesystem::last_write_time(path, time + std::chrono::seconds(1));
+        };
+    }
+} install_stat;
+}
+#endif
 
 namespace {
 struct fixture {
@@ -43,18 +75,15 @@ struct fixture {
     std::string old_xdg;
     bool had_xdg;
     fixture() {
-        char pattern[] = "/tmp/tensoracle-cache-XXXXXX";
-        auto* path = mkdtemp(pattern);
-        REQUIRE(path);
-        directory = path;
-        auto* old = std::getenv("XDG_CACHE_HOME");
-        had_xdg = old != nullptr;
-        if (old) old_xdg = old;
-        setenv("XDG_CACHE_HOME", directory.c_str(), 1);
+        directory = test_platform::make_directory();
+        auto old = test_platform::get_environment("XDG_CACHE_HOME");
+        had_xdg = old.has_value();
+        if (old) old_xdg = *old;
+        test_platform::set_environment("XDG_CACHE_HOME", directory.u8string());
     }
     ~fixture() {
-        if (had_xdg) setenv("XDG_CACHE_HOME", old_xdg.c_str(), 1);
-        else unsetenv("XDG_CACHE_HOME");
+        if (had_xdg) test_platform::set_environment("XDG_CACHE_HOME", old_xdg.c_str());
+        else test_platform::unset_environment("XDG_CACHE_HOME");
         fs::remove_all(directory);
     }
 };
@@ -131,16 +160,7 @@ TEST_CASE("Weight records are checked refreshed and shared across processes", "[
     fs::last_write_time(weight, time);
     REQUIRE(weight_sha256(weight, false) == original);
     // A new OS process must read the disk record, not an in-memory digest.
-    auto pid = fork();
-    REQUIRE(pid >= 0);
-    if (!pid) {
-        execl(TENSORACLE_CACHE_PROBE, TENSORACLE_CACHE_PROBE, weight.c_str(), original.c_str(), nullptr);
-        _exit(127);
-    }
-    int status = 0;
-    REQUIRE(waitpid(pid, &status, 0) == pid);
-    REQUIRE(WIFEXITED(status));
-    REQUIRE(WEXITSTATUS(status) == 0);
+    REQUIRE(test_platform::run({TENSORACLE_CACHE_PROBE, weight.u8string(), original}) == 0);
     REQUIRE(weight_sha256(weight, true) == sha256("other", 5));
     for (const auto& entry : fs::directory_iterator(cache_directory())) {
         if (entry.path().extension() != ".json") continue;
@@ -165,12 +185,16 @@ TEST_CASE("Weight record write failure leaves hashing usable and cache paths obe
     // A file in place of the cache directory makes writes fail for every user.
     put(cache_directory(), "cannot create a directory here");
     REQUIRE(weight_sha256(weight, false) == sha256("contents", 8));
-    auto* previous = std::getenv("HOME");
-    std::string home = previous ? previous : "";
-    unsetenv("XDG_CACHE_HOME");
-    setenv("HOME", files.directory.c_str(), 1);
+    #if defined(_WIN32)
+    constexpr auto home_variable = "USERPROFILE";
+#else
+    constexpr auto home_variable = "HOME";
+#endif
+    auto previous = test_platform::get_environment(home_variable);
+    test_platform::unset_environment("XDG_CACHE_HOME");
+    test_platform::set_environment(home_variable, files.directory.u8string());
     REQUIRE(cache_directory() == files.directory / ".cache" / "tensoracle");
-    if (previous) setenv("HOME", home.c_str(), 1); else unsetenv("HOME");
+    if (previous) test_platform::set_environment(home_variable, *previous); else test_platform::unset_environment(home_variable);
 }
 
 TEST_CASE("Recording a successful load never recreates a missing engine file", "[SP-TENSORACLE-042][SP-TENSORACLE-046][SP-TENSORACLE-048]") {
@@ -224,7 +248,7 @@ TEST_CASE("A weight changed during hashing leaves no digest record until a stabl
     auto weight = files.directory / "weights";
     put(weight, "first");
     struct reset { ~reset() { changing_weight.clear(); } } restore;
-    changing_weight = weight.string(); stat_calls = 0;
+    changing_weight = weight.u8string(); stat_calls = 0;
     REQUIRE(weight_sha256(weight, false) == sha256("first", 5));
     REQUIRE(stat_calls == 2);
     REQUIRE_FALSE(fs::exists(cache_directory()));
@@ -239,6 +263,27 @@ TEST_CASE("Concurrent digest writers publish one complete reusable record", "[SP
     fixture files;
     auto weight = files.directory / "weights";
     put(weight, "contents");
+#if defined(_WIN32)
+    std::mutex mutex;
+    std::condition_variable condition;
+    int ready = 0; bool released = false;
+    windows_boundary::before_flush = [&](HANDLE) {
+        std::unique_lock<std::mutex> lock(mutex);
+        ++ready; condition.notify_all();
+        condition.wait(lock, [&] { return released; });
+    };
+    struct reset_flush { ~reset_flush() { windows_boundary::before_flush = {}; } } reset;
+    auto write = [&] { return weight_sha256(weight, true); };
+    auto first = std::async(std::launch::async, write), second = std::async(std::launch::async, write);
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        auto completed = condition.wait_for(lock, std::chrono::seconds(10), [&] { return ready == 2; });
+        released = true; condition.notify_all();
+        REQUIRE(completed);
+    }
+    REQUIRE(first.get() == sha256("contents", 8)); REQUIRE(second.get() == sha256("contents", 8));
+    windows_boundary::before_flush = {};
+#else
     int ready[2], release[2];
     REQUIRE(pipe(ready) == 0); REQUIRE(pipe(release) == 0);
     std::array<pid_t, 2> children{};
@@ -261,6 +306,7 @@ TEST_CASE("Concurrent digest writers publish one complete reusable record", "[SP
         int status{}; REQUIRE(waitpid(pid, &status, 0) == pid);
         REQUIRE(WIFEXITED(status)); REQUIRE(WEXITSTATUS(status) == 0);
     }
+#endif
     REQUIRE(std::distance(fs::directory_iterator(cache_directory()), fs::directory_iterator{}) == 1);
     auto record = read_weight_record(fs::directory_iterator(cache_directory())->path());
     REQUIRE(record); REQUIRE(record->at("sha256") == sha256("contents", 8));
@@ -279,4 +325,31 @@ TEST_CASE("Relative weight paths in different working directories have separate 
     fs::current_path(first); REQUIRE(weight_sha256("weights", false) == sha256("first", 5));
     fs::current_path(second); REQUIRE(weight_sha256("weights", false) == sha256("other", 5));
     REQUIRE(std::distance(fs::directory_iterator(cache_directory()), fs::directory_iterator{}) == 2);
+}
+
+TEST_CASE("Japanese weight paths retain reusable UTF-8 digest records across processes",
+          "[SP-TENSORACLE-015][SP-TENSORACLE-054][SP-TENSORACLE-009]") {
+    fixture files;
+    auto weight = files.directory / fs::u8path(u8"重み.safetensors");
+    std::string header = R"({"value":{"dtype":"I8","shape":[1],"data_offsets":[0,1]}})";
+    std::string bytes(8, '\0');
+    for (size_t i = 0; i < 8; ++i) bytes[i] = char(uint64_t(header.size()) >> (8 * i));
+    bytes += header; bytes += 'a';
+    put(weight, bytes);
+    {
+        auto opened = tensoracle::open_weights(weight);
+        REQUIRE(opened.view().at("value").byte_size == 1);
+    }
+    auto original = weight_sha256(weight, false);
+    REQUIRE(original == sha256(bytes.data(), bytes.size()));
+    REQUIRE(std::distance(fs::directory_iterator(cache_directory()), fs::directory_iterator{}) == 1);
+    auto record = read_weight_record(fs::directory_iterator(cache_directory())->path());
+    REQUIRE(record);
+    REQUIRE(fs::u8path(record->at("path").get<std::string>()) == fs::absolute(weight));
+    auto time = fs::last_write_time(weight);
+    bytes.back() = 'b'; put(weight, bytes); fs::last_write_time(weight, time);
+    // Unchanged size/mtime/file ID prove reuse rather than a fresh hash.
+    REQUIRE(weight_sha256(weight, false) == original);
+    REQUIRE(test_platform::run({TENSORACLE_CACHE_PROBE, weight.u8string(), original}) == 0);
+    REQUIRE(weight_sha256(weight, true) == sha256(bytes.data(), bytes.size()));
 }

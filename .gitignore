@@ -4,3 +4,5 @@
 __pycache__/
 python/src/tensoracle/_version.py
 site/
+build/
+cpp/CMakeUserPresets.json

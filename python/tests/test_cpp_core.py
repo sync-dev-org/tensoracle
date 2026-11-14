@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from native_build import build_native, cuda_root, tensorrt_root
+from native_build import build_jobs, build_native, cuda_root, prepare_native, tensorrt_root
 
 
 @pytest.mark.req("SP-TENSORACLE-004")
@@ -26,6 +26,8 @@ def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
             str(root / "cpp"),
             "-B",
             str(build),
+            prepare_native(build),
+            "-DCMAKE_BUILD_TYPE=Release",
             f"-DCUDAToolkit_ROOT={cuda}",
         ],
         check=True,
@@ -41,7 +43,7 @@ def test_cpp_helpers_keep_field_order_and_check_digest(tmp_path):
             "--target",
             "tensoracle_core_test",
             "--parallel",
-            "8",
+            build_jobs(),
         ],
         check=True,
         timeout=45,

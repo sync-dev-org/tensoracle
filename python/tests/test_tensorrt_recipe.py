@@ -43,7 +43,7 @@ def recipe_inputs(tmp_path):
         "url": wheel.as_uri(),
         "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
     }
-    source["library_sha256"] = hashlib.sha256(library).hexdigest()
+    source["libraries"] = {"libnvinfer.so.11": hashlib.sha256(library).hexdigest()}
     profile = tmp_path / "profile"
     profile.write_text("[settings]\nos=Linux\narch=x86_64\n")
     return recipe, data, downloads, profile
@@ -103,7 +103,7 @@ def test_changed_sdk_inputs_fail_digest_verification(tmp_path, recipe_inputs, ch
         with (downloads / "tensorrt.whl").open("ab") as file:
             file.write(b"changed download")
     else:
-        data["sources"]["11.2.1.2"]["library_sha256"] = "0" * 64
+        data["sources"]["11.2.1.2"]["libraries"]["libnvinfer.so.11"] = "0" * 64
 
     result = create_sdk(tmp_path, recipe_inputs)
 

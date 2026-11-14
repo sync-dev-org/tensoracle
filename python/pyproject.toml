@@ -62,6 +62,7 @@ minimum-version = "0.11"
 wheel.packages = ["src/tensoracle"]
 wheel.py-api = "cp312"
 build.tool-args = ["-j8"]
+ninja.make-fallback = false
 sdist.include = ["src/tensoracle/_version.py"]
 
 sdist.exclude = [

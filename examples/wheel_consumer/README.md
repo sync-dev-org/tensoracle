@@ -7,8 +7,8 @@ through tensoracle's public execution interface. Python supplies a NumPy input
 and receives a NumPy output. Importing the example does not initialize CUDA.
 
 The build needs the tensoracle v2 wheel, the pinned Conan CLI, CMake 3.26 or
-later, and a C++17 compiler. It obtains TensorRT SDK 11.2.1.2 from the repository's
-recipe and lock; an explicit `TENSORRT_ROOT` remains supported. The isolated build installs nanobind and scikit-build-core from wheels.
+later, and a C++17 compiler. It uses TensorRT SDK 11.2.1.2 from the repository's
+prepared recipe and lock; an explicit `TENSORRT_ROOT` remains supported. The isolated build installs nanobind and scikit-build-core from wheels.
 Conan `cuda-toolkit/13.2.2` (`compiler=False`) supplies CUDA headers and the
 driver link stub; `CUDAToolkit_ROOT` still accepts an existing SDK root.
 Execution uses the installed NVIDIA driver for the CUDA Driver API. No OS CUDA Toolkit is required.
@@ -18,7 +18,10 @@ dependency to that wheel so that the build does not pick a published v1 package:
 
 ```bash
 # Run from the repository root after installing the pinned Conan CLI.
-cmake -P cpp/conan/prepare-tests.cmake
+python3 cpp/conan/prepare-tests.py
+python3 cpp/conan/prepare.py --output build/cpp --offline
+. ./build/cpp/conanbuild.sh
+export TENSORACLE_EXAMPLE_TOOLCHAIN="$PWD/build/cpp/conan_toolchain.cmake"
 uv build python --wheel --out-dir /tmp/tensoracle-wheels
 ```
 
@@ -33,7 +36,8 @@ Install the [host's TensorRT runtime](https://sync-dev-org.github.io/tensoracle/
 
 ```bash
 uv build examples/wheel_consumer --wheel --out-dir /tmp/consumer-wheels \
-  --build-constraints /tmp/tensoracle-build-constraints.txt
+  --build-constraints /tmp/tensoracle-build-constraints.txt \
+  -Ccmake.define.CMAKE_TOOLCHAIN_FILE="$TENSORACLE_EXAMPLE_TOOLCHAIN"
 uv venv --python 3.13 /tmp/tensoracle-consumer-runtime
 uv pip install --python /tmp/tensoracle-consumer-runtime/bin/python \
   /tmp/tensoracle-wheels/*.whl /tmp/consumer-wheels/*.whl

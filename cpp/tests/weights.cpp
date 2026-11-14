@@ -1,3 +1,4 @@
+#include "test_platform.hpp"
 #include <tensoracle/builder.hpp>
 #include "safetensors.hpp"
 #include <nlohmann/json.hpp>
@@ -6,14 +7,16 @@
 #include <fstream>
 #include <map>
 #include <type_traits>
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 namespace {
 struct directory {
     fs::path path;
-    directory() { char name[] = "/tmp/tensoracle-weights-XXXXXX"; path = mkdtemp(name); }
+    directory() { path = test_platform::make_directory(); }
     ~directory() { fs::remove_all(path); }
 };
 void save(const fs::path& path, const std::string& header, const std::string& data) {
@@ -22,6 +25,35 @@ void save(const fs::path& path, const std::string& header, const std::string& da
     for (int i = 0; i < 8; ++i) length[i] = char(size >> (8 * i));
     file.write(length, 8); file << header << data;
 }
+}
+TEST_CASE("The C weights API opens UTF-8 paths and returns UTF-8 path diagnostics",
+          "[SP-TENSORACLE-015][SP-TENSORACLE-054][SP-TENSORACLE-061]") {
+    directory files;
+    auto path = files.path / fs::u8path(u8"重み.safetensors");
+    auto utf8 = files.path.u8string() + u8"/重み.safetensors";
+    save(path, R"({"value":{"dtype":"I8","shape":[1],"data_offsets":[0,1]}})", "a");
+    tensoracle_weights* output = nullptr;
+    tensoracle_error* diagnostic = nullptr;
+    REQUIRE(tensoracle_weights_open(utf8.c_str(), &output, &diagnostic) == TENSORACLE_SUCCESS);
+    tensoracle::weights_handle owner(output);
+    REQUIRE(diagnostic == nullptr);
+    REQUIRE(*static_cast<const char*>(owner.view().at("value").data) == 'a');
+    owner.close();
+    save(path, "invalid JSON", "");
+    REQUIRE(tensoracle_weights_open(utf8.c_str(), &output, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+    tensoracle::error_handle error(diagnostic);
+    REQUIRE(output == nullptr);
+    const char* message = nullptr;
+    REQUIRE(tensoracle_error_message(error.get(), &message, nullptr) == TENSORACLE_SUCCESS);
+    REQUIRE(std::string(message).find(u8"重み.safetensors") != std::string::npos);
+}
+TEST_CASE("The C++ weights wrapper preserves native Unicode paths at the C boundary",
+          "[SP-TENSORACLE-015][SP-TENSORACLE-054][SP-TENSORACLE-061]") {
+    directory files;
+    auto path = files.path / fs::u8path(u8"重み-\U0001f310.safetensors");
+    save(path, R"({"value":{"dtype":"I8","shape":[1],"data_offsets":[0,1]}})", "b");
+    auto owner = tensoracle::open_weights(path);
+    REQUIRE(*static_cast<const char*>(owner.view().at("value").data) == 'b');
 }
 TEST_CASE("Safetensors views retain named typed shaped values and scalar and empty tensors", "[SP-TENSORACLE-005][SP-TENSORACLE-059]") {
     directory files;
@@ -75,8 +107,8 @@ TEST_CASE("Safetensors rejects malformed JSON shapes offsets holes and duplicate
     try { auto duplicate = tensoracle::detail::load_safetensors({path, other}); FAIL("duplicate tensor names accepted"); }
     catch (const std::invalid_argument& error) {
         REQUIRE(std::string(error.what()).find("x") != std::string::npos);
-        REQUIRE(std::string(error.what()).find(path.string()) != std::string::npos);
-        REQUIRE(std::string(error.what()).find(other.string()) != std::string::npos);
+        REQUIRE(std::string(error.what()).find(path.u8string()) != std::string::npos);
+        REQUIRE(std::string(error.what()).find(other.u8string()) != std::string::npos);
     }
 }
 TEST_CASE("Invalid builder declarations fail before CUDA or the network callback", "[SP-TENSORACLE-007][SP-TENSORACLE-052][SP-TENSORACLE-056]") {
@@ -230,7 +262,7 @@ TEST_CASE("Opening weights rejects the same malformed files as engine weight loa
         catch (const std::invalid_argument& error) { expected = error.what(); }
         tensoracle_weights* output = reinterpret_cast<tensoracle_weights*>(1);
         tensoracle_error* diagnostic = nullptr;
-        REQUIRE(tensoracle_weights_open(path.c_str(), &output, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
+        REQUIRE(tensoracle_weights_open(path.u8string().c_str(), &output, &diagnostic) == TENSORACLE_INVALID_ARGUMENT);
         REQUIRE(output == nullptr);
         tensoracle::error_handle error(diagnostic);
         const char* message = nullptr;
@@ -243,12 +275,12 @@ TEST_CASE("Opening weights rejects the same malformed files as engine weight loa
     fs::remove(path);
     tensoracle_weights* output = reinterpret_cast<tensoracle_weights*>(1);
     tensoracle_error* diagnostic = nullptr;
-    REQUIRE(tensoracle_weights_open(path.c_str(), &output, &diagnostic) == TENSORACLE_INTERNAL_ERROR);
+    REQUIRE(tensoracle_weights_open(path.u8string().c_str(), &output, &diagnostic) == TENSORACLE_INTERNAL_ERROR);
     REQUIRE(output == nullptr);
     tensoracle::error_handle error(diagnostic);
     const char* message = nullptr;
     REQUIRE(tensoracle_error_message(error.get(), &message, nullptr) == TENSORACLE_SUCCESS);
-    REQUIRE(std::string(message).find(path.string()) != std::string::npos);
+    REQUIRE(std::string(message).find(path.u8string()) != std::string::npos);
 }
 
 TEST_CASE("Invalid weight and metadata requests return diagnostics without transferring ownership", "[SP-TENSORACLE-061]") {
@@ -264,7 +296,7 @@ TEST_CASE("Invalid weight and metadata requests return diagnostics without trans
         REQUIRE(diagnostic != nullptr);
         REQUIRE(tensoracle_error_destroy(diagnostic) == TENSORACLE_SUCCESS);
     }
-    REQUIRE(tensoracle_weights_open(path.c_str(), nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
+    REQUIRE(tensoracle_weights_open(path.u8string().c_str(), nullptr, nullptr) == TENSORACLE_INVALID_ARGUMENT);
     size_t count = 99;
     REQUIRE(tensoracle_weights_metadata_count(nullptr, &count, nullptr) == TENSORACLE_INVALID_ARGUMENT);
     REQUIRE(count == 0);

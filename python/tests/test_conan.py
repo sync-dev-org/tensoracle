@@ -1,58 +1,13 @@
-"""Configure native dependencies through the repository's Conan bootstrap."""
+"""Configure native dependencies using a prepared Conan toolchain."""
 
 import os
-import shlex
 import shutil
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
 
-from native_build import PROJECT, ROOT
-
-
-@pytest.mark.req("SP-TENSORACLE-063")
-def test_caller_toolchain_configures_and_reconfigures_without_conan(tmp_path):
-    """A caller's toolchain remains usable without installing another dependency graph."""
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "CMakeLists.txt").write_text(
-        "cmake_minimum_required(VERSION 3.26)\n"
-        f'include("{ROOT / "cpp/conan/bootstrap.cmake"}")\n'
-        "project(caller_toolchain LANGUAGES NONE)\n"
-        'if(NOT CALLER_TOOLCHAIN_LOADED STREQUAL "yes")\n'
-        '  message(FATAL_ERROR "The caller toolchain was replaced")\n'
-        "endif()\n"
-    )
-    toolchain = tmp_path / "caller.cmake"
-    toolchain.write_text('set(CALLER_TOOLCHAIN_LOADED "yes")\n')
-    empty_path = tmp_path / "empty-bin"
-    empty_path.mkdir()
-    environment = {**os.environ, "PATH": str(empty_path)}
-    assert shutil.which("conan", path=environment["PATH"]) is None
-    build = tmp_path / "build"
-    for _ in range(2):
-        result = subprocess.run(
-            [
-                shutil.which("cmake"),
-                "-S",
-                str(source),
-                "-B",
-                str(build),
-                "-G",
-                "Ninja",
-                f"-DCMAKE_MAKE_PROGRAM={shutil.which('ninja')}",
-                f"-DCMAKE_TOOLCHAIN_FILE={toolchain}",
-            ],
-            env=environment,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        assert result.returncode == 0, result.stdout + result.stderr
-    assert not (build / "conan").exists()
+from native_build import ROOT, prepare_native, tool_command
 
 
 def configure(tmp_path, *options, environment=None, cuda=False):
@@ -60,12 +15,11 @@ def configure(tmp_path, *options, environment=None, cuda=False):
     source.mkdir()
     (source / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.26)\n"
-        f'include("{ROOT / "cpp/conan/bootstrap.cmake"}")\n'
         "project(dependency_probe LANGUAGES C CXX)\n"
         "include(CheckCXXSourceCompiles)\n"
         'check_cxx_source_compiles("#include <string>\\n'
-        "static_assert(__GNUC__ == 13);\\n"
-        "static_assert(_GLIBCXX_USE_CXX11_ABI == 1);\\n"
+        "#ifdef __GNUC__\\nstatic_assert(__GNUC__ == 13);\\n"
+        "static_assert(_GLIBCXX_USE_CXX11_ABI == 1);\\n#endif\\n"
         'int main() {}" ABI_MATCHES)\n'
         "find_package(nlohmann_json CONFIG REQUIRED)\n"
         "find_package(miniz CONFIG REQUIRED)\n"
@@ -74,7 +28,7 @@ def configure(tmp_path, *options, environment=None, cuda=False):
         'file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/sdk-includes.txt"\n'
         '  CONTENT "$<TARGET_PROPERTY:TensorRT::nvinfer,INTERFACE_INCLUDE_DIRECTORIES>")\n'
         + (
-            f'include("{ROOT / "cpp/cmake/TensoracleCuda.cmake"}")\n'
+            f'include("{(ROOT / "cpp/cmake/TensoracleCuda.cmake").as_posix()}")\n'
             "tensoracle_find_cuda(OUT_INCLUDE_DIR headers OUT_DRIVER_LIBRARY driver)\n"
             'file(WRITE "${CMAKE_BINARY_DIR}/cuda.txt" "${CUDAToolkit_ROOT}\\n${headers}\\n${driver}")\n'
             'file(WRITE "${CMAKE_BINARY_DIR}/probe.cpp" "#include <cuda_runtime_api.h>\\n'
@@ -86,7 +40,20 @@ def configure(tmp_path, *options, environment=None, cuda=False):
         )
     )
     return subprocess.run(
-        ["cmake", "-S", str(source), "-B", str(tmp_path / "build"), "-G", "Ninja", *options],
+        tool_command(
+            [
+                "cmake",
+                "-S",
+                str(source),
+                "-B",
+                str(tmp_path / "build"),
+                "-G",
+                "Ninja",
+                "-DCMAKE_BUILD_TYPE=Release",
+                prepare_native(tmp_path / "build"),
+                *options,
+            ]
+        ),
         env={**os.environ, **(environment or {})},
         capture_output=True,
         text=True,
@@ -95,44 +62,7 @@ def configure(tmp_path, *options, environment=None, cuda=False):
     )
 
 
-@pytest.mark.parametrize("executable", ["missing", "wrong-version"])
-def test_unavailable_or_different_conan_shows_the_pinned_install_command(tmp_path, executable):
-    """Configure rejects an absent or different CLI and tells the developer how to install it."""
-    cli = tmp_path / executable
-    if executable == "wrong-version":
-        cli.write_text("#!/bin/sh\nprintf 'Conan version 0.0.0\\n'\n")
-        cli.chmod(0o755)
-    requires = tomllib.loads((PROJECT / "pyproject.toml").read_text())["build-system"]["requires"]
-    pinned = next(value for value in requires if value.startswith("conan=="))
-
-    result = configure(tmp_path, f"-DTENSORACLE_CONAN_EXECUTABLE={cli}")
-
-    assert result.returncode != 0
-    assert f"uv tool install {pinned}" in result.stdout + result.stderr
-    if executable == "wrong-version":
-        assert "Conan version 0.0.0" in result.stdout + result.stderr
-
-
-def test_unprepared_native_tests_fail_with_the_preparation_command(tmp_path):
-    """An empty cache cannot trigger downloads, builds, or exports during test configure."""
-    home = tmp_path / "home"
-    storage = tmp_path / "packages"
-
-    result = configure(
-        tmp_path,
-        "-DTENSORACLE_CONAN_OFFLINE=ON",
-        f"-DTENSORACLE_CONAN_CACHE={storage}",
-        environment={"CONAN_HOME": str(home)},
-    )
-
-    assert result.returncode != 0
-    output = result.stdout + result.stderr
-    assert "cmake" in output and "-P" in output and "prepare-tests.cmake" in output
-    assert str(storage) in output
-    assert "Exporting recipe" not in output
-    assert not list(storage.glob("*/e/conanfile.py"))
-
-
+@pytest.mark.req("SP-TENSORACLE-063")
 def test_prepared_native_tests_configure_without_remotes_or_exports(tmp_path):
     """Prepared recipes supply the native libraries and TensorRT SDK without a remote."""
     assert shutil.which("conan"), "install the pinned Conan CLI before preparing tests"
@@ -160,37 +90,14 @@ def test_prepared_cuda_build_uses_conan_headers_and_driver_without_pypi(tmp_path
     assert (Path(headers) / "cuda_runtime_api.h").is_file()
     assert (Path(headers) / "crt/host_config.h").is_file()
     assert not (Path(root) / "bin/nvcc").exists()
-    assert Path(driver) == Path(root) / "lib64/stubs/libcuda.so"
+    assert Path(driver) == Path(root) / (
+        "lib/x64/cuda.lib" if os.name == "nt" else "lib64/stubs/libcuda.so"
+    )
     compiled = subprocess.run(
-        ["cmake", "--build", str(tmp_path / "build"), "--parallel", "2"],
+        tool_command(["cmake", "--build", str(tmp_path / "build"), "--parallel", "2"]),
         capture_output=True,
         text=True,
         check=False,
         timeout=45,
     )
     assert compiled.returncode == 0, compiled.stdout + compiled.stderr
-
-
-def test_native_tests_accept_a_different_system_cmake_without_changing_the_lock(tmp_path):
-    """A different system CMake version leaves the locked native libraries usable offline."""
-    original_cmake = shutil.which("cmake")
-    tools = tmp_path / "tools"
-    tools.mkdir()
-    cmake = tools / "cmake"
-    cmake.write_text(
-        '#!/bin/sh\nif [ "$1" = "--version" ]; then\n'
-        "  printf 'cmake version 3.28.4\\n'\n"
-        f'else\n  exec {shlex.quote(original_cmake)} "$@"\nfi\n'
-    )
-    cmake.chmod(0o755)
-    lock = ROOT / "cpp/conan.lock"
-    before = lock.read_bytes()
-
-    result = configure(
-        tmp_path,
-        "-DTENSORACLE_CONAN_OFFLINE=ON",
-        environment={"PATH": str(tools) + os.pathsep + os.environ["PATH"]},
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert lock.read_bytes() == before

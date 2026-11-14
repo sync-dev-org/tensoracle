@@ -5,6 +5,7 @@
 #include "safetensors.hpp"
 #include "structure.hpp"
 #include "plugins_internal.hpp"
+#include "path.hpp"
 #include <algorithm>
 #include <iterator>
 #include <set>
@@ -27,7 +28,7 @@ cache_request request_from(const tensoracle_builder_options* options) {
     cache_request request;
     request.name = text(options->name); request.graph_version = text(options->graph_version);
     require(options->weight_count && options->weight_files, "at least one weight file is required");
-    for (size_t i = 0; i < options->weight_count; ++i) request.weights.emplace_back(text(options->weight_files[i]));
+    for (size_t i = 0; i < options->weight_count; ++i) request.weights.push_back(std::filesystem::u8path(text(options->weight_files[i])));
     require(!options->input_count || options->inputs, "input profiles are required");
     for (size_t i = 0; i < options->input_count; ++i) {
         const auto* profile = options->inputs[i];
@@ -60,7 +61,7 @@ cache_request request_from(const tensoracle_builder_options* options) {
     auto count = read_field<size_t>(options, size, offsetof(tensoracle_builder_options, plugin_count));
     auto plugins = read_field<const char* const*>(options, size, offsetof(tensoracle_builder_options, plugins));
     require(!count || plugins, "plugin paths are required");
-    for (size_t i = 0; i < count; ++i) request.plugins.emplace_back(text(plugins[i]));
+    for (size_t i = 0; i < count; ++i) request.plugins.push_back(std::filesystem::u8path(text(plugins[i])));
     auto has_limit = read_field<uint32_t>(options, size, offsetof(tensoracle_builder_options, has_workspace_limit));
     require(has_limit <= 1, "workspace presence must be 0 or 1");
     if (has_limit) {
@@ -158,7 +159,7 @@ extern "C" tensoracle_status tensoracle_weights_open(const char* path, tensoracl
     return tensoracle::detail::guard(error, [&] {
         if (output) *output = nullptr;
         require(output, "weights output is required");
-        auto weights = tensoracle::detail::load_safetensors({text(path)});
+        auto weights = tensoracle::detail::load_safetensors({std::filesystem::u8path(text(path))});
         *output = weights.release(); return TENSORACLE_SUCCESS;
     });
 }
@@ -222,7 +223,7 @@ extern "C" tensoracle_status tensoracle_open_engine(const tensoracle_builder_opt
             }
         } release{built};
         auto cached = tensoracle::detail::open_cached_engine(request, [&] { built = true; return build_plan(request, *callback); });
-        cached.engine.get()->path = cached.path.string();
+        cached.engine.get()->path = path_utf8(cached.path);
         *output = cached.engine.release(); return TENSORACLE_SUCCESS;
     });
 }

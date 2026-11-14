@@ -1,4 +1,5 @@
 #include "safetensors.hpp"
+#include "file.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cerrno>
@@ -7,17 +8,25 @@
 #include <limits>
 #include <set>
 #include <stdexcept>
+#if !defined(_WIN32)
 #include <sys/mman.h>
+#endif
 #include <sys/stat.h>
 #include <system_error>
-#include <unistd.h>
+
 
 namespace tensoracle::detail {
 using json = nlohmann::json;
-mapped_weights_file::~mapped_weights_file() { if (mapping) munmap(mapping, size); }
+mapped_weights_file::~mapped_weights_file() {
+#if defined(_WIN32)
+    if (mapping) UnmapViewOfFile(mapping);
+#else
+    if (mapping) munmap(mapping, size);
+#endif
+}
 namespace {
 [[noreturn]] void invalid(const std::filesystem::path& path, const std::string& reason) {
-    throw std::invalid_argument("invalid safetensors file " + path.string() + ": " + reason);
+    throw std::invalid_argument("invalid safetensors file " + path_utf8(path) + ": " + reason);
 }
 uint64_t integer(const json& value, const std::filesystem::path& path) {
     if (value.is_number_unsigned()) return value.get<uint64_t>();
@@ -40,15 +49,22 @@ std::pair<tensoracle_dtype, size_t> dtype(const std::string& name, const std::fi
 std::unique_ptr<tensoracle_weights> load_safetensors(const std::vector<std::filesystem::path>& paths) {
     auto weights = std::make_unique<tensoracle_weights>();
     for (const auto& path : paths) {
-        struct descriptor { int fd; ~descriptor() { if (fd >= 0) close(fd); } } file{open(path.c_str(), O_RDONLY | O_CLOEXEC)};
-        if (file.fd < 0) throw std::system_error(errno, std::generic_category(), path.string());
-        struct stat info{};
-        if (fstat(file.fd, &info)) throw std::system_error(errno, std::generic_category(), path.string());
-        if (!S_ISREG(info.st_mode) || info.st_size < 8) invalid(path, "missing length or regular file");
+        file_descriptor file{open_file(path)};
+        auto info = status_of(file.value);
+        if (!info.regular || info.size < 8) invalid(path, "missing length or regular file");
         auto storage = std::make_unique<mapped_weights_file>();
-        storage->size = static_cast<size_t>(info.st_size);
-        void* mapping = mmap(nullptr, storage->size, PROT_READ, MAP_PRIVATE, file.fd, 0);
-        if (mapping == MAP_FAILED) throw std::system_error(errno, std::generic_category(), path.string());
+        storage->size = static_cast<size_t>(info.size);
+#if defined(_WIN32)
+        auto section = CreateFileMappingW(file_handle(file.value), nullptr, PAGE_READONLY, 0, 0, nullptr);
+        if (!section) windows_file_error(path);
+        void* mapping = MapViewOfFile(section, FILE_MAP_READ, 0, 0, storage->size);
+        auto mapping_error = GetLastError();
+        CloseHandle(section);
+        if (!mapping) { SetLastError(mapping_error); windows_file_error(path); }
+#else
+        void* mapping = mmap(nullptr, storage->size, PROT_READ, MAP_PRIVATE, file.value, 0);
+        if (mapping == MAP_FAILED) throw std::system_error(errno, std::generic_category(), path_utf8(path));
+#endif
         storage->mapping = mapping;
         auto* bytes = static_cast<const unsigned char*>(mapping);
         uint64_t header_size = 0;
@@ -82,7 +98,7 @@ std::unique_ptr<tensoracle_weights> load_safetensors(const std::vector<std::file
             }
             if (name.find('\0') != std::string::npos) invalid(path, "tensor name contains NUL");
             auto duplicate = weights->names.find(name);
-            if (duplicate != weights->names.end()) invalid(path, "duplicate tensor " + name + " also declared in " + weights->tensors[duplicate->second].source.string());
+            if (duplicate != weights->names.end()) invalid(path, "duplicate tensor " + name + " also declared in " + path_utf8(weights->tensors[duplicate->second].source));
             if (!value.is_object() || value.size() != 3 || !value.contains("dtype") || !value["dtype"].is_string()
                 || !value.contains("shape") || !value["shape"].is_array() || !value.contains("data_offsets")
                 || !value["data_offsets"].is_array() || value["data_offsets"].size() != 2) invalid(path, "invalid tensor descriptor " + name);

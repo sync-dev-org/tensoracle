@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from native_build import ROOT
+from native_build import ROOT, preparation
 
 NATIVE = Path(__file__).parent / "native/cache"
 GOLDEN = Path(__file__).parent / "fixtures/cache-3.11.3.json"
@@ -25,7 +25,7 @@ def run(command, **kwargs):
     )
     diagnostic = result.stdout + result.stderr
     if command[:2] == ["conan", "install"]:
-        diagnostic += "\nPrepare dependencies: cmake -P cpp/conan/prepare-tests.cmake"
+        diagnostic += "\nPrepare dependencies: python cpp/conan/prepare-tests.py"
     assert result.returncode == 0, diagnostic
     return result.stdout
 
@@ -42,7 +42,7 @@ def install_json_dependencies(folder, version, *, cppstd=None):
         ]
         selected_lock = folder / "conan.lock"
         selected_lock.write_text(json.dumps(lock))
-    profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc13"))
+    profile = Path(os.environ.get("TENSORACLE_CONAN_PROFILE", "linux-gcc-toolset-13"))
     if not profile.is_absolute():
         profile = ROOT / "cpp/conan/profiles" / profile
     options = ["--settings:host", f"compiler.cppstd={cppstd}"] if cppstd else []
@@ -56,10 +56,11 @@ def install_json_dependencies(folder, version, *, cppstd=None):
             ROOT / "cpp",
             "--lockfile",
             selected_lock,
-            "--profile:all",
-            profile,
+            *preparation()["profile_arguments"](profile),
             "--no-remote",
             "--build=never",
+            "-c",
+            "tools.cmake.cmaketoolchain:user_presets=",
             "--output-folder",
             dependencies,
             "--conf:all",
@@ -183,7 +184,7 @@ def test_unprepared_json_compatibility_dependency_shows_the_preparation_command(
     """An absent 3.12.0 recipe fails offline and tells the developer how to prepare it."""
     lock = ROOT / "cpp/conan/cache-compatibility.lock"
     reference = json.loads(lock.read_text())["requires"][0]
-    profile = ROOT / "cpp/conan/profiles/linux-gcc13"
+    profile = ROOT / "cpp/conan/profiles/linux-gcc-toolset-13"
     with pytest.raises(AssertionError) as failure:
         run(
             [
@@ -196,6 +197,8 @@ def test_unprepared_json_compatibility_dependency_shows_the_preparation_command(
                 profile,
                 "--no-remote",
                 "--build=never",
+                "-c",
+                "tools.cmake.cmaketoolchain:user_presets=",
                 "--output-folder",
                 tmp_path / "dependencies",
             ],
@@ -203,7 +206,7 @@ def test_unprepared_json_compatibility_dependency_shows_the_preparation_command(
         )
     message = str(failure.value)
     assert "nlohmann_json/3.12.0" in message
-    assert "Prepare dependencies: cmake -P cpp/conan/prepare-tests.cmake" in message
+    assert "Prepare dependencies: python cpp/conan/prepare-tests.py" in message
 
 
 @pytest.mark.req("SP-TENSORACLE-009")

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "test_platform.hpp"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -44,11 +45,16 @@ TEST_CASE("C++ callers inspect cubin architectures without initializing CUDA",
 TEST_CASE("C++ producer rejects ptxas outside CUDA 13.2 before writing a bundle",
           "[SP-TENSORACLE-037][SP-TENSORACLE-058]") {
     Directory directory;
+#if defined(_WIN32)
+    auto ptxas = directory.path / "ptxas tool.exe";
+    fs::copy_file(TENSORACLE_OLD_PTXAS, ptxas);
+#else
     auto ptxas = directory.path / "ptxas";
     write(ptxas, "#!/bin/sh\nprintf 'ptxas V13.1.115\\n'\n");
     fs::permissions(ptxas, fs::perms::owner_all);
-    auto output = (directory.path / "bundle").string();
-    auto tool = ptxas.string();
+#endif
+    auto output = (directory.path / fs::u8path(u8"bundle with spaces 重み")).u8string();
+    auto tool = ptxas.u8string();
     tensoracle_producer_options options{};
     options.struct_size = sizeof(options);
     options.output_directory = output.c_str();
@@ -82,6 +88,7 @@ TEST_CASE("Embedded bundle inspection matches directory inspection and rejects d
              fs::copy_options::recursive | fs::copy_options::overwrite_existing);
     std::ifstream manifest_file(directory.path / "bundle.json");
     std::string manifest((std::istreambuf_iterator<char>(manifest_file)), {});
+    manifest_file.close();
     auto parsed = nlohmann::json::parse(manifest);
     std::vector<std::string> names, payloads;
     for (const auto& entry : parsed["entries"]) {
@@ -94,7 +101,7 @@ TEST_CASE("Embedded bundle inspection matches directory inspection and rejects d
         files.push_back({sizeof(tensoracle_bundle_file), names[i].c_str(), payloads[i].data(), payloads[i].size()});
     std::vector<const tensoracle_bundle_file*> pointers;
     for (const auto& file : files) pointers.push_back(&file);
-    auto expected = tensoracle::inspect_bundle(directory.path.c_str());
+    auto expected = tensoracle::inspect_bundle(directory.path.u8string().c_str());
     fs::remove_all(directory.path);
     auto actual = tensoracle::inspect_embedded_bundle(manifest, pointers.data(), pointers.size());
     REQUIRE(actual.sha256() == expected.sha256());
@@ -129,10 +136,16 @@ TEST_CASE("C++ producer compiles CUDA source and verifies all three SMs without 
           "[SP-TENSORACLE-004][SP-TENSORACLE-038][SP-TENSORACLE-058]") {
     Directory directory;
     const char *root = TENSORACLE_TEST_CUDA_ROOT;
-    if (!fs::exists(fs::path(root) / "lib/libnvrtc.so.13") ||
-        !fs::exists(fs::path(root) / "bin/ptxas"))
+#if defined(_WIN32)
+    constexpr auto nvrtc = "bin/x86_64/nvrtc64_130_0.dll";
+    constexpr auto ptxas = "bin/ptxas.exe";
+#else
+    constexpr auto nvrtc = "lib/libnvrtc.so.13";
+    constexpr auto ptxas = "bin/ptxas";
+#endif
+    if (!fs::exists(fs::path(root) / nvrtc) || !fs::exists(fs::path(root) / ptxas))
         SKIP("CUDA 13.2 producer wheels are not installed in the supplied CUDA root");
-    auto output = (directory.path / "bundle").string();
+    auto output = (directory.path / fs::u8path(u8"bundle with spaces 重み")).u8string();
     tensoracle_kernel_argument x{sizeof(x), "x", "*fp32", 1};
     tensoracle_kernel_argument y{sizeof(y), "y", "*fp32", 1};
     tensoracle_kernel_argument n{sizeof(n), "n", "i32", 1};
@@ -157,7 +170,7 @@ TEST_CASE("C++ producer compiles CUDA source and verifies all three SMs without 
     REQUIRE(result.sha256().size() == 64);
     REQUIRE(result.manifest_json().find("hidden_trailing_parameters") == std::string::npos);
     for (int sm : {86, 89, 120}) {
-        auto path = directory.path / "bundle/cubins" / ("sm" + std::to_string(sm)) / "copy.cubin";
+        auto path = fs::u8path(output) / "cubins" / ("sm" + std::to_string(sm)) / "copy.cubin";
         REQUIRE(fs::file_size(path) > 64);
     }
     REQUIRE(tensoracle::inspect_bundle(output.c_str()).sha256() == result.sha256());

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from native_build import ROOT
+from native_build import ROOT, build_jobs, prepare_native
 
 
 def run(*command, **kwargs):
@@ -32,13 +32,15 @@ def static_sdk(tmp_path_factory):
         str(ROOT / "cpp"),
         "-B",
         str(build),
+        prepare_native(build),
         "-G",
         "Ninja",
+        "-DCMAKE_BUILD_TYPE=Release",
         "-DBUILD_SHARED_LIBS=OFF",
         "-DBUILD_TESTING=OFF",
         env=environment,
     )
-    run("cmake", "--build", str(build), "--parallel", "8", env=environment)
+    run("cmake", "--build", str(build), "--parallel", build_jobs(), env=environment)
     prefix = work / "prefix"
     run("cmake", "--install", str(build), "--prefix", str(prefix), env=environment)
     relocated = work / "relocated"
@@ -105,7 +107,7 @@ def static_consumers(static_sdk):
         f"-DCMAKE_TOOLCHAIN_FILE={library / 'conan/conan_toolchain.cmake'}",
         env=environment,
     )
-    run("cmake", "--build", str(build), "--parallel", "8", env=environment)
+    run("cmake", "--build", str(build), "--parallel", build_jobs(), env=environment)
     # The consumer keeps the installed SDK and resolved dependencies only.
     shutil.rmtree(source)
     return work, build, environment

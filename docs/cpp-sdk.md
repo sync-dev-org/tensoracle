@@ -1,7 +1,15 @@
 # Use the prebuilt C and C++ SDK
 
-Each Linux x86_64 release attaches `tensoracle-sdk-X.Y.Z-linux-x86_64.tar.gz` to the
-corresponding [public release](https://github.com/sync-dev-org/tensoracle/releases).
+Starting with v2.6.0, each release attaches SDK archives for Linux x86_64 and
+Windows x86_64 to the same
+[public release](https://github.com/sync-dev-org/tensoracle/releases), using the
+same version and tag:
+
+| Platform | Release asset |
+| --- | --- |
+| Linux x86_64 (including WSL2) | `tensoracle-sdk-X.Y.Z-linux-x86_64.tar.gz` |
+| Windows x86_64 | `tensoracle-sdk-X.Y.Z-windows-x86_64.zip` |
+
 The archive contains the shared C ABI library, public C and C++ headers, the CMake
 package and plugin helpers, their source files, and MIT and third-party licenses.
 It does not contain TensorRT. The release asset requires no authentication.
@@ -15,10 +23,14 @@ in this repository.
 ## Use the SDK with CMake
 
 Download the archive from the public release and check its SHA256 against the
-expected value for that release. For version 2.2.1, the download URL is
-`https://github.com/sync-dev-org/tensoracle/releases/download/v2.2.1/tensoracle-sdk-2.2.1-linux-x86_64.tar.gz`
-and the SHA256 is
-`f0d30002ec53262ac8eb1d2b9e57e1c8e83fad21b1c9ff2c665ae38afaa30391`.
+expected value for that release. Both archives extract under `tensoracle/cpp/`.
+The Windows SDK copies its wheel's `tensoracle/cpp/` files without changing their
+bytes and adds the MIT license.
+
+### Linux x86_64
+
+The download URL is
+`https://github.com/sync-dev-org/tensoracle/releases/download/vX.Y.Z/tensoracle-sdk-X.Y.Z-linux-x86_64.tar.gz`.
 Extract the verified archive with its relative layout and symlinks intact:
 
 ```bash
@@ -33,30 +45,66 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/sdk/tensoracle/cpp -DCMAKE_BUIL
 cmake --build build
 ```
 
+### Windows x86_64
+
+Choose a release from v2.6.0 onward. In PowerShell, replace `X.Y.Z` with its
+version, download the ZIP, and compare its SHA256 with the expected release value
+before extracting it:
+
+```powershell
+$version = "X.Y.Z"
+$archive = "tensoracle-sdk-$version-windows-x86_64.zip"
+Invoke-WebRequest "https://github.com/sync-dev-org/tensoracle/releases/download/v$version/$archive" -OutFile $archive
+Get-FileHash -Algorithm SHA256 $archive
+Expand-Archive -Path $archive -DestinationPath C:\path\to\sdk
+```
+
+The ZIP contains `tensoracle/cpp/bin/tensoracle-2.dll`, its import library
+`tensoracle/cpp/lib/tensoracle.lib`, and the common `include/`,
+`lib/cmake/tensoracle/`, `cmake/`, `src/`, and `licenses/` directories. The
+prebuilt DLL uses MSVC's dynamic Release runtime (`/MD`).
+
+From an x64 MSVC development shell with CMake and Ninja available, configure
+your application against the extracted SDK and a separately prepared TensorRT
+SDK containing `lib/nvinfer_11.lib`:
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL -DCMAKE_PREFIX_PATH=C:/path/to/sdk/tensoracle/cpp -DTENSORRT_ROOT=C:/path/to/TensorRT-SDK
+cmake --build build
+```
+
+Both platforms use the same CMake calls:
+
 ```cmake
 find_package(tensoracle 2 CONFIG REQUIRED)
 add_executable(application main.cpp)
 target_link_libraries(application PRIVATE tensoracle::tensoracle)
 ```
 
-The SDK supports Linux x86_64 and shared libraries only. Every application needs
-the TensorRT 11 link library at build time. The CMake package supplies its
+Every application needs the TensorRT 11 link library at build time
+(`libnvinfer.so.11` on Linux or `nvinfer_11.lib` on Windows).
+The CMake package supplies its
 link-time search path through `tensoracle::tensoracle` automatically: it uses an existing `TensorRT::nvinfer`
 target or discovers that target through `find_package(TensorRT CONFIG)`, including
 Conan's CMakeDeps files. Otherwise it searches the system library locations. For
 a TensorRT installation outside those locations, pass
 `-DTENSORRT_ROOT=/path/to/TensorRT` or
-`-DTENSORACLE_TENSORRT_LIBRARY=/path/to/libnvinfer.so.11` to CMake. Configuration
+`-DTENSORACLE_TENSORRT_LIBRARY=/path/to/libnvinfer.so.11` on Linux, or
+`-DTENSORACLE_TENSORRT_LIBRARY=C:/path/to/TensorRT-SDK/lib/nvinfer_11.lib` on
+Windows, to CMake. Configuration
 stops with these options if the library is missing. No build-time
-`LD_LIBRARY_PATH` is needed. The SDK inside a Python wheel can also find the
-separate TensorRT wheel installed beside it.
+`LD_LIBRARY_PATH` is needed. On Linux, the SDK inside a Python wheel can also
+find the separate TensorRT wheel installed beside it.
+On Windows, the TensorRT runtime wheel's DLL does not replace the build-time
+import library; supply the SDK's `nvinfer_11.lib`.
 
 Code that constructs TensorRT networks, or includes
 `tensoracle/cubin_plugin.hpp`, additionally needs the TensorRT 11.2 headers; see
 [Prepare a TensorRT SDK](tensorrt-sdk.md). The `tensoracle_find_cuda`,
 `tensoracle_cuda_driver`, and `tensoracle_add_cubin_plugin` helpers are available
 after `find_package(tensoracle)`. Plugin builds use Conan
-`cuda-toolkit/13.2.2` (`compiler=False`) for CUDA headers and the driver link stub.
+`cuda-toolkit/13.2.2` (`compiler=False`) for CUDA headers and the Linux driver
+link stub or Windows `lib/x64/cuda.lib` import library.
 Pass its `user.cuda:root` through `CUDAToolkit_ROOT` in the consumer toolchain,
 as shown in the SDK guide. Existing explicit CUDA SDK roots remain supported;
 the link stub is not part of the application runtime.
@@ -72,9 +120,11 @@ Source builds select a shared library by default (`BUILD_SHARED_LIBS=ON`). After
 with `BUILD_SHARED_LIBS=OFF`:
 
 ```bash
-cmake -S cpp -B build/static -G Ninja -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
-cmake --build build/static --parallel 8
-cmake --install build/static --prefix /path/to/prefix
+python3 cpp/conan/prepare.py --output build/cpp
+. ./build/cpp/conanbuild.sh
+cmake --preset conan-release -S cpp -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF
+cmake --build build/cpp --parallel 8
+cmake --install build/cpp --prefix /path/to/prefix
 ```
 
 The installed package keeps the same public headers and
@@ -92,7 +142,7 @@ same miniz and CUDA build inputs. For example, from the tensoracle source root:
 ```bash
 cmake -S /path/to/application -B build/application \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_TOOLCHAIN_FILE="$PWD/build/static/conan/conan_toolchain.cmake" \
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/build/cpp/conan_toolchain.cmake" \
   -DCMAKE_PREFIX_PATH=/path/to/prefix
 cmake --build build/application --parallel 8
 ```
@@ -120,6 +170,8 @@ by the TensorRT builder, using
 [NVIDIA's installation instructions](https://docs.nvidia.com/deeplearning/tensorrt/latest/installing-tensorrt/installing.html).
 The TensorRT build SDK provides build inputs; a single link library does not
 provide everything needed to build an engine on the execution host.
+
+### Linux application prefix
 
 When assembling a native application prefix, copy tensoracle's package content
 with its relative layout intact:
@@ -151,6 +203,46 @@ runtime directory. Do not copy TensorRT or driver libraries into tensoracle's
 SDK or the application prefix. The Python wheel uses the host runtime too;
 it also checks the sibling TensorRT wheel when the optional
 `tensoracle[tensorrt]` extra is installed. See [runtime installation](tensorrt-sdk.md#install-the-runtime).
+
+### Windows application prefix
+
+Keep the extracted SDK layout when placing it beside your application:
+
+```text
+prefix/
+  bin/application.exe
+  tensoracle/cpp/
+    bin/tensoracle-2.dll
+    lib/tensoracle.lib
+    include/tensoracle/
+    lib/cmake/tensoracle/
+    cmake/
+    src/
+    licenses/
+```
+
+Link through `tensoracle::tensoracle`; `tensoracle.lib` is a build input and
+`tensoracle-2.dll` is loaded at runtime. For a native executable, put the SDK's
+`bin` directory and the host's full TensorRT runtime DLL directory on the
+process's `PATH` before launch. For example, from cmd after moving the complete
+prefix:
+
+```bat
+set "PATH=C:\path\to\prefix\tensoracle\cpp\bin;C:\path\to\TensorRT\bin;%PATH%"
+C:\path\to\prefix\bin\application.exe
+```
+
+The TensorRT directory must contain `nvinfer_11.dll` and the full runtime's
+builder resources and dependencies. The build-time `TENSORRT_ROOT` setting
+does not configure runtime DLL lookup. TensorRT and NVIDIA driver DLLs stay on
+the host rather than being copied into the SDK or application prefix.
+
+Python model bindings use the tensoracle wheel's DLL. Import `tensoracle`
+before your model's native binding so its `os.add_dll_directory` registration
+is active. Register the host's TensorRT DLL directory separately, or import
+`tensorrt` first when using the optional extra; see the
+[Windows Python runtime examples](tensorrt-sdk.md#windows-x86_64).
+Use one tensoracle implementation per process, as described above.
 
 ## Package an application that embeds tensoracle
 

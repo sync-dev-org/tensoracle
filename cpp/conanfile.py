@@ -1,9 +1,13 @@
 """Resolve the same native dependencies for standalone, test, and wheel builds."""
 
+import hashlib
+import os
+from pathlib import Path
 from typing import ClassVar
 
 from conan import ConanFile
 from conan.tools.cmake import CMakeDeps, CMakeToolchain
+from conan.tools.env import VirtualBuildEnv
 
 
 class TensoracleDependencies(ConanFile):
@@ -23,8 +27,12 @@ class TensoracleDependencies(ConanFile):
     def generate(self):
         CMakeDeps(self).generate()
         toolchain = CMakeToolchain(self)
-        toolchain.user_presets_path = False
+        output = Path(self.generators_folder).resolve()
+        if output != (Path(self.recipe_folder).parent / "build/cpp").resolve():
+            identifier = hashlib.sha256(os.path.normcase(str(output)).encode()).hexdigest()[:16]
+            toolchain.presets_prefix = f"conan-{identifier}"
         toolchain.variables["CUDAToolkit_ROOT"] = self.dependencies.build[
             "cuda-toolkit"
         ].conf_info.get("user.cuda:root")
         toolchain.generate()
+        VirtualBuildEnv(self).generate()

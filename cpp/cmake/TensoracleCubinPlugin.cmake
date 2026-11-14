@@ -13,6 +13,19 @@ function(tensoracle_add_cubin_plugin)
         message(FATAL_ERROR "TYPE must be SHARED, STATIC, or OBJECT")
     endif()
 
+    if(WIN32)
+        # CMake source lists use forward slashes, including paths supplied by a
+        # native Windows caller rather than CMAKE_CURRENT_SOURCE_DIR.
+        file(TO_CMAKE_PATH "${ARG_TENSORRT_ROOT}" ARG_TENSORRT_ROOT)
+        file(TO_CMAKE_PATH "${ARG_BUNDLE_ROOT}" ARG_BUNDLE_ROOT)
+        set(_tensoracle_sources)
+        foreach(_source IN LISTS ARG_SOURCES)
+            file(TO_CMAKE_PATH "${_source}" _source)
+            list(APPEND _tensoracle_sources "${_source}")
+        endforeach()
+        set(ARG_SOURCES "${_tensoracle_sources}")
+    endif()
+
     get_filename_component(_tensoracle_cpp "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/.." ABSOLUTE)
     _tensoracle_find_cuda()
     find_path(TENSORACLE_NVINFER_INCLUDE NvInfer.h

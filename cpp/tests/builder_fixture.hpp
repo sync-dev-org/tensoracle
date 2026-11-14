@@ -1,3 +1,4 @@
+#include "test_platform.hpp"
 #pragma once
 #include <tensoracle/builder.hpp>
 #include <NvInfer.h>
@@ -35,12 +36,11 @@ struct temporary_directory {
     std::string old;
     bool existed;
     temporary_directory() {
-        char name[] = "/tmp/tensoracle-builder-XXXXXX"; auto* created = mkdtemp(name);
-        if (!created) throw std::runtime_error("temporary directory failed"); path = created;
-        const char* previous = std::getenv("XDG_CACHE_HOME"); existed = previous != nullptr; if (previous) old = previous;
-        setenv("XDG_CACHE_HOME", path.c_str(), 1);
+        path = test_platform::make_directory();
+        auto previous = test_platform::get_environment("XDG_CACHE_HOME"); existed = previous.has_value(); if (previous) old = *previous;
+        test_platform::set_environment("XDG_CACHE_HOME", path.u8string().c_str());
     }
-    ~temporary_directory() { fs::remove_all(path); if (existed) setenv("XDG_CACHE_HOME", old.c_str(), 1); else unsetenv("XDG_CACHE_HOME"); }
+    ~temporary_directory() { fs::remove_all(path); if (existed) test_platform::set_environment("XDG_CACHE_HOME", old.c_str()); else test_platform::unset_environment("XDG_CACHE_HOME"); }
 };
 inline std::vector<float> input(int rows = 16) {
     std::mt19937 random(11); std::uniform_real_distribution<float> distribution(-1, 1);
@@ -67,7 +67,7 @@ inline void write_weights(const fs::path& path, float change = 0) {
     output.write(length, 8); output << encoded << data;
 }
 inline tensoracle::builder_options options(const fs::path& file, const std::string& precision = "fp32", bool ranged = false) {
-    tensoracle::builder_options request; request.name = "linear-" + precision; request.graph_version = "1"; request.weights = {file.string()};
+    tensoracle::builder_options request; request.name = "linear-" + precision; request.graph_version = "1"; request.weights = {file.u8string()};
     request.workspace_limit = 64 * 1024 * 1024; request.optimization_level = 0;
     request.inputs = {{"features", {ranged ? 1 : 16, 32}, {ranged ? 8 : 16, 32}, {16, 32}}};
     request.io = {{"features", TENSORACLE_FLOAT32, {ranged ? -1 : 16, 32}, true}, {"result", TENSORACLE_FLOAT32, {ranged ? -1 : 16, 16}, false}};

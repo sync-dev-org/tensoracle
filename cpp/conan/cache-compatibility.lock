@@ -3,7 +3,10 @@
     "requires": [
         "nlohmann_json/3.12.0#2d634ab0ec8d9f56353e5ccef6d6612c"
     ],
-    "build_requires": [],
+    "build_requires": [
+        "cmake/3.31.12#71c3a0c80cc89cde62956db9e69550e0",
+        "ninja/1.13.2#c8c5dc2a52ed6e4e42a66d75b4717ceb"
+    ],
     "python_requires": [],
     "config_requires": []
 }

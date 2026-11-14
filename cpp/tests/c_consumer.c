@@ -9,21 +9,47 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
+
+#if defined(_WIN32)
+static void remove_test_file(const wchar_t* path) { _wunlink(path); }
+#else
+static void remove_test_file(const char* path) { unlink(path); }
+#endif
 
 static int read_weights(void) {
+#if defined(_WIN32)
+    wchar_t directory[MAX_PATH], native_path[MAX_PATH];
+    char path[4 * MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, directory) || !GetTempFileNameW(directory, L"tns", 0, native_path)) return 10;
+    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, native_path, -1, path, sizeof(path), NULL, NULL)) {
+        remove_test_file(native_path); return 10;
+    }
+#else
     char path[] = "/tmp/tensoracle-c-weights-XXXXXX";
+    const char* native_path = path;
+#endif
     const char header[] = "{\"__metadata__\":{\"format\":\"test\"},"
                           "\"bias\":{\"dtype\":\"I8\",\"shape\":[1],\"data_offsets\":[0,1]}}";
+#if defined(_WIN32)
+    FILE* file = _wfopen(native_path, L"wb");
+    if (!file) { remove_test_file(native_path); return 11; }
+#else
     int fd = mkstemp(path);
     if (fd < 0) return 10;
     FILE* file = fdopen(fd, "wb");
-    if (!file) { close(fd); unlink(path); return 11; }
+    if (!file) { close(fd); remove_test_file(native_path); return 11; }
+#endif
     uint64_t length = sizeof(header) - 1;
     for (int i = 0; i < 8; ++i) fputc((int)((length >> (8 * i)) & 255), file);
     fwrite(header, 1, (size_t)length, file);
     fputc(7, file);
-    if (fclose(file)) { unlink(path); return 12; }
+    if (fclose(file)) { remove_test_file(native_path); return 12; }
     tensoracle_weights* weights = NULL;
     tensoracle_error* error = NULL;
     int result = 13;
@@ -45,7 +71,7 @@ static int read_weights(void) {
 cleanup:
     tensoracle_error_destroy(error);
     tensoracle_weights_destroy(weights);
-    unlink(path);
+    remove_test_file(native_path);
     return result;
 }
 

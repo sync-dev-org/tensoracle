@@ -2,7 +2,15 @@
 
 `tensoracle.producer` wraps the C++ producer in `tensoracle/cubin.h` and `tensoracle/cubin.hpp`. It compiles caller-owned CUDA C++ source into sm86, sm89, and sm120 cubins, `bundle.json`, and `bundle.cpp`. Install `tensoracle[producer]` for NVRTC and the PyPI CUDA tools; neither a GPU nor an OS-installed CUDA Toolkit is required. Triton kernels are not accepted.
 
-The extra declares `nvidia-cuda-nvrtc`, `nvidia-cuda-nvcc`, `nvidia-cuda-cuobjdump`, `nvidia-cuda-crt`, and `nvidia-nvvm` in the 13.2 series. `compile_bundle` obtains NVRTC from `nvidia/cu13/lib/libnvrtc.so.13`, ptxas from `nvidia/cu13/bin/ptxas`, and cuobjdump from `nvidia/cu13/bin/cuobjdump` in the Python environment. `cuda_root` selects another CUDA package root; `nvrtc`, `ptxas`, and `cuobjdump` independently override individual paths. The producer does not use `CUDA_HOME`. Missing tools report the package and searched path. ptxas outside `>=13.2,<14` is rejected before output files are written.
+The extra declares `nvidia-cuda-nvrtc`, `nvidia-cuda-nvcc`, `nvidia-cuda-cuobjdump`, `nvidia-cuda-crt`, and `nvidia-nvvm` in the 13.2 series. Within the Python environment's `nvidia/cu13` directory, `compile_bundle` uses these platform-specific paths:
+
+| Tool | Linux x86_64 | Windows x86_64 |
+| --- | --- | --- |
+| NVRTC | `lib/libnvrtc.so.13` | `bin/x86_64/nvrtc64_130_0.dll` |
+| ptxas | `bin/ptxas` | `bin/ptxas.exe` |
+| cuobjdump | `bin/cuobjdump` | `bin/cuobjdump.exe` |
+
+`cuda_root` selects another CUDA package root; `nvrtc`, `ptxas`, and `cuobjdump` independently override individual paths. The producer does not use `CUDA_HOME`. Missing tools report the package and searched path. ptxas outside `>=13.2,<14` is rejected before output files are written.
 
 ## Describe a CUDA C++ kernel
 

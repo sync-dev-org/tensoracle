@@ -13,6 +13,9 @@
 #include <sstream>
 #include <tuple>
 #if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -26,8 +29,52 @@ namespace tensoracle::detail {
 namespace {
 std::string run(const std::vector<std::string> &arguments) {
 #if defined(_WIN32)
-    reject(TENSORACLE_COMPILATION_ERROR,
-           "cubin production on Windows requires the later Windows v2 release");
+    struct Handle {
+        HANDLE value = nullptr;
+        ~Handle() { if (value && value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    } reader, writer, process, thread;
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+    require(CreatePipe(&reader.value, &writer.value, &security, 0) != 0 &&
+                SetHandleInformation(reader.value, HANDLE_FLAG_INHERIT, 0) != 0,
+            "cannot create CUDA tool pipe", TENSORACLE_COMPILATION_ERROR);
+    // Quote each argument using the Windows CRT's backslash/quote convention.
+    std::wstring command;
+    for (const auto& argument : arguments) {
+        if (!command.empty()) command += L' ';
+        command += L'"';
+        size_t slashes = 0;
+        for (wchar_t c : fs::u8path(argument).wstring()) {
+            if (c == L'\\') { ++slashes; continue; }
+            command.append(slashes * (c == L'"' ? 2 : 1), L'\\');
+            if (c == L'"') command += L'\\';
+            command += c; slashes = 0;
+        }
+        command.append(slashes * 2, L'\\'); command += L'"';
+    }
+    STARTUPINFOW startup{}; startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = startup.hStdError = writer.value;
+    PROCESS_INFORMATION child{};
+    auto application = fs::u8path(arguments.front()).wstring();
+    require(CreateProcessW(application.c_str(), command.data(), nullptr, nullptr, TRUE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != 0,
+            "could not execute CUDA tool: " + arguments.front(), TENSORACLE_TOOL_NOT_FOUND);
+    process.value = child.hProcess; thread.value = child.hThread;
+    CloseHandle(writer.value); writer.value = nullptr;
+    std::string output;
+    std::array<char, 8192> buffer;
+    DWORD count = 0;
+    while (ReadFile(reader.value, buffer.data(), DWORD(buffer.size()), &count, nullptr) && count)
+        output.append(buffer.data(), count);
+    require(WaitForSingleObject(process.value, INFINITE) == WAIT_OBJECT_0,
+            "could not wait for CUDA tool", TENSORACLE_COMPILATION_ERROR);
+    DWORD status = 1;
+    require(GetExitCodeProcess(process.value, &status) && status == 0,
+            "CUDA tool failed: " + arguments.front() + "\n" + output, TENSORACLE_COMPILATION_ERROR);
+    // cuobjdump writes CRLF on Windows; its ELF section parser uses LF.
+    output.erase(std::remove(output.begin(), output.end(), '\r'), output.end());
+    return output;
 #else
     int descriptors[2];
     require(pipe(descriptors) == 0, "cannot create CUDA tool pipe", TENSORACLE_COMPILATION_ERROR);
@@ -94,6 +141,7 @@ struct Temporary {
 struct Nvrtc {
 #if defined(_WIN32)
     HMODULE library = nullptr;
+    HMODULE builtins = nullptr;
 #else
     void *library = nullptr;
 #endif
@@ -118,12 +166,12 @@ struct Nvrtc {
     }
     explicit Nvrtc(const fs::path &path) {
 #if defined(_WIN32)
-        library = LoadLibraryW(path.wstring().c_str());
+        library = LoadLibraryExW(fs::absolute(path).c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 #else
         library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 #endif
         require(library != nullptr,
-                "NVRTC is unavailable at " + path.string() +
+                "NVRTC is unavailable at " + path_utf8(path) +
                     "; install tensoracle[producer] (nvidia-cuda-nvrtc)",
                 TENSORACLE_TOOL_NOT_FOUND);
         try {
@@ -135,6 +183,18 @@ struct Nvrtc {
             symbol(log, "nvrtcGetProgramLog");
             symbol(destroy, "nvrtcDestroyProgram");
             symbol(version, "nvrtcVersion");
+#if defined(_WIN32)
+            // NVRTC loads builtins lazily during compilation. Preload its exact
+            // companion by absolute path so it remains available after the
+            // LoadLibraryEx dependency-search scope has ended.
+            int major = 0, minor = 0;
+            require(version(&major, &minor) == 0, "NVRTC version unavailable", TENSORACLE_COMPILATION_ERROR);
+            auto companion = fs::absolute(path).parent_path() /
+                ("nvrtc-builtins64_" + std::to_string(major) + std::to_string(minor) + ".dll");
+            builtins = LoadLibraryExW(companion.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+            require(builtins != nullptr, "NVRTC builtins are unavailable at " + path_utf8(companion) +
+                "; install tensoracle[producer] (nvidia-cuda-nvrtc)", TENSORACLE_TOOL_NOT_FOUND);
+#endif
         } catch (...) {
             close();
             throw;
@@ -144,6 +204,8 @@ struct Nvrtc {
 #if defined(_WIN32)
         if (library)
             FreeLibrary(library);
+        if (builtins) FreeLibrary(builtins);
+        builtins = nullptr;
 #else
         if (library)
             dlclose(library);
@@ -162,7 +224,7 @@ struct Nvrtc {
         } owner{*this, program};
         std::vector<std::string> options{"--gpu-architecture=compute_" + std::to_string(sm),
                                          "--std=c++17", "--fmad=false",
-                                         "--include-path=" + (root / "include").string()};
+                                         "--include-path=" + path_utf8(root / "include")};
         std::vector<const char *> values;
         for (auto const &option : options)
             values.push_back(option.c_str());
@@ -186,26 +248,48 @@ struct Nvrtc {
     }
 };
 fs::path default_root() {
+    fs::path module_path;
 #if defined(_WIN32)
-    return fs::path();
+    HMODULE module = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&tensoracle_compile_bundle), &module)) {
+        std::vector<wchar_t> name(32768);
+        auto size = GetModuleFileNameW(module, name.data(), DWORD(name.size()));
+        if (size && size < name.size()) module_path = fs::path(std::wstring(name.data(), size));
+    }
 #else
     Dl_info info{};
-    if (dladdr(reinterpret_cast<void *>(&tensoracle_compile_bundle), &info) && info.dli_fname) {
-        auto root =
-            fs::absolute(info.dli_fname).parent_path().parent_path().parent_path().parent_path();
-        return root / "nvidia/cu13";
-    }
-    return fs::path();
+    if (dladdr(reinterpret_cast<void *>(&tensoracle_compile_bundle), &info) && info.dli_fname)
+        module_path = fs::absolute(info.dli_fname);
 #endif
+    // A wheel places the library below tensoracle/cpp/{bin,lib}. Never search
+    // CUDA_PATH or the OS toolkit when locating the producer's wheel tools.
+    for (auto parent = module_path.parent_path(); !parent.empty();) {
+        auto root = parent / "nvidia/cu13";
+        if (fs::is_directory(root)) return root;
+        auto next = parent.parent_path();
+        if (next == parent) break;
+        parent = next;
+    }
+    return {};
 }
+#if defined(_WIN32)
+constexpr auto ptxas_relative = "bin/ptxas.exe";
+constexpr auto cuobjdump_relative = "bin/cuobjdump.exe";
+constexpr auto nvrtc_relative = "bin/x86_64/nvrtc64_130_0.dll";
+#else
+constexpr auto ptxas_relative = "bin/ptxas";
+constexpr auto cuobjdump_relative = "bin/cuobjdump";
+constexpr auto nvrtc_relative = "lib/libnvrtc.so.13";
+#endif
 std::string tool(const char *explicit_path, const fs::path &root, const char *relative,
                  const char *package, const char *argument) {
-    auto path = explicit_path ? fs::path(explicit_path) : root / relative;
+    auto path = explicit_path ? fs::u8path(explicit_path) : root / relative;
     require(fs::is_regular_file(path),
-            std::string(package) + " tool is missing at " + path.string() +
+            std::string(package) + " tool is missing at " + path_utf8(path) +
                 "; install tensoracle[producer] or pass " + argument + "=... explicitly",
             TENSORACLE_TOOL_NOT_FOUND);
-    return fs::absolute(path).string();
+    return path_utf8(fs::absolute(path));
 }
 void validate_ptx_signature(const std::string &ptx, const std::string &symbol,
                             const json &signature) {
@@ -244,7 +328,7 @@ std::string parameter_block(const std::string &elf, const std::string &symbol) {
 }
 json resources(const std::string &cuobjdump, const fs::path &path, const json &signature,
                const std::string &symbol, uint32_t dynamic) {
-    auto elf = parameter_block(run({cuobjdump, "-elf", path.string()}), symbol);
+    auto elf = parameter_block(run({cuobjdump, "-elf", path_utf8(path)}), symbol);
     std::regex pattern("Ordinal\\s*:\\s*0x([0-9a-fA-F]+)\\s+Offset\\s*:\\s*0x([0-9a-fA-F]+)\\s+"
                        "Size\\s*:\\s*0x([0-9a-fA-F]+)");
     std::vector<std::tuple<size_t, size_t, size_t>> actual, expected;
@@ -262,7 +346,7 @@ json resources(const std::string &cuobjdump, const fs::path &path, const json &s
     std::sort(actual.begin(), actual.end());
     require(actual == expected, "CUDA C++ public argument layout differs from signature: " + symbol,
             TENSORACLE_COMPILATION_ERROR);
-    auto usage = run({cuobjdump, "--dump-resource-usage", path.string()});
+    auto usage = run({cuobjdump, "--dump-resource-usage", path_utf8(path)});
     auto start = usage.find("Function " + symbol + ":");
     require(start != std::string::npos, "cuobjdump did not report function " + symbol,
             TENSORACLE_COMPILATION_ERROR);
@@ -352,8 +436,8 @@ extern "C" tensoracle_status tensoracle_compile_bundle(const tensoracle_kernel_s
         auto output = OPTION(output_directory);
         require(present(output), "producer requires an output directory",
                 TENSORACLE_INVALID_ARGUMENT);
-        auto root = OPTION(cuda_root) ? fs::path(OPTION(cuda_root)) : default_root();
-        auto ptxas = tool(OPTION(ptxas), root, "bin/ptxas", "nvidia-cuda-nvcc", "ptxas");
+        auto root = OPTION(cuda_root) ? fs::u8path(OPTION(cuda_root)) : default_root();
+        auto ptxas = tool(OPTION(ptxas), root, ptxas_relative, "nvidia-cuda-nvcc", "ptxas");
         auto version_output = run({ptxas, "--version"});
         std::smatch match;
         require(
@@ -443,11 +527,11 @@ extern "C" tensoracle_status tensoracle_compile_bundle(const tensoracle_kernel_s
             sources.push_back(std::move(source));
         }
         auto cuobjdump =
-            tool(OPTION(cuobjdump), root, "bin/cuobjdump", "nvidia-cuda-cuobjdump", "cuobjdump");
+            tool(OPTION(cuobjdump), root, cuobjdump_relative, "nvidia-cuda-cuobjdump", "cuobjdump");
         auto nvrtc_path =
-            tool(OPTION(nvrtc), root, "lib/libnvrtc.so.13", "nvidia-cuda-nvrtc", "nvrtc");
+            tool(OPTION(nvrtc), root, nvrtc_relative, "nvidia-cuda-nvrtc", "nvrtc");
 #undef OPTION
-        Nvrtc nvrtc(nvrtc_path);
+        Nvrtc nvrtc(fs::u8path(nvrtc_path));
         int major = 0, minor = 0;
         require(nvrtc.version(&major, &minor) == 0, "NVRTC version unavailable",
                 TENSORACLE_COMPILATION_ERROR);
@@ -473,7 +557,7 @@ extern "C" tensoracle_status tensoracle_compile_bundle(const tensoracle_kernel_s
                 fs::create_directories(path.parent_path());
                 auto symbol = entry["entry_symbol"].get<std::string>();
                 run({ptxas, "--gpu-name=sm_" + std::to_string(sm), "--entry", symbol,
-                     ptx_path.string(), "--output-file", path.string()});
+                     path_utf8(ptx_path), "--output-file", path_utf8(path)});
                 auto data = read_file(path);
                 require(architecture(data) == static_cast<uint32_t>(sm),
                         "compiled cubin has wrong SM", TENSORACLE_CUBIN_ARCHITECTURE_ERROR);
@@ -503,10 +587,10 @@ extern "C" tensoracle_status tensoracle_compile_bundle(const tensoracle_kernel_s
         // All compilation and validation finish before touching the destination.
         auto owner = std::make_unique<tensoracle_bundle_result>(result_for(manifest));
         for (size_t i = 0; i < payloads.size(); ++i)
-            write_file(fs::path(output) / manifest["entries"][i]["file"].get<std::string>(),
+            write_file(fs::u8path(output) / manifest["entries"][i]["file"].get<std::string>(),
                        payloads[i]);
-        write_file(fs::path(output) / "bundle.cpp", generated);
-        write_file(fs::path(output) / "bundle.json", text);
+        write_file(fs::u8path(output) / "bundle.cpp", generated);
+        write_file(fs::u8path(output) / "bundle.json", text);
         *result = owner.release();
         return TENSORACLE_SUCCESS;
     });

@@ -1,13 +1,13 @@
 #pragma once
 #include "cache.hpp"
 #include <tensoracle/cache.h>
-#include <sys/stat.h>
+#include "file.hpp"
 
 namespace tensoracle::detail {
 struct cache_entry_record {
     std::filesystem::path path;
     std::string file;
-    std::optional<struct stat> observed;
+    std::optional<file_status> observed;
     int32_t status = TENSORACLE_CACHE_UNRECOGNIZED;
     nlohmann::json header;
     std::string header_json, weight_paths_json, reason;

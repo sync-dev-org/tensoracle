@@ -62,7 +62,9 @@ private:
 
 inline weights_handle open_weights(const std::filesystem::path& path) {
     tensoracle_weights* result = nullptr; tensoracle_error* diagnostic = nullptr;
-    auto status = tensoracle_weights_open(path.string().c_str(), &result, &diagnostic);
+    auto bytes = path.u8string();
+    std::string utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    auto status = tensoracle_weights_open(utf8.c_str(), &result, &diagnostic);
     check(status, diagnostic); return weights_handle(result);
 }
 struct input_profile { std::string name; std::vector<int64_t> minimum, optimum, maximum; };

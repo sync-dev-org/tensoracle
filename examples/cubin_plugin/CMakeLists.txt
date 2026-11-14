@@ -1,7 +1,4 @@
 cmake_minimum_required(VERSION 3.26)
-if(NOT TENSORRT_ROOT OR NOT CUDAToolkit_ROOT)
-    include("${CMAKE_CURRENT_LIST_DIR}/../../cpp/conan/bootstrap.cmake")
-endif()
 project(tensoracle_cubin_example LANGUAGES CXX)
 
 find_package(Python 3.12 REQUIRED COMPONENTS

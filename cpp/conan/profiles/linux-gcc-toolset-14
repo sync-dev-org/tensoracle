@@ -15,11 +15,4 @@ cuda-toolkit/*:mode=system
 [conf]
 user.cuda:root=/usr/local/cuda-13.2
 tools.build:jobs=8
-tools.cmake.cmaketoolchain:generator={{ os.getenv("CMAKE_GENERATOR", "Unix Makefiles") }}
 tools.build:compiler_executables={"c": "{{ cc }}", "cpp": "{{ cxx }}"}
-
-[replace_tool_requires]
-cmake/*: cmake/system
-
-[platform_tool_requires]
-cmake/system

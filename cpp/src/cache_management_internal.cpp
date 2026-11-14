@@ -7,18 +7,13 @@
 #include <map>
 #include <set>
 #include <system_error>
-#include <unistd.h>
+
 
 namespace tensoracle::detail {
 namespace fs = std::filesystem;
 namespace {
-bool same_file(const struct stat& a, const struct stat& b) {
-    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
-        && a.st_mtim.tv_sec == b.st_mtim.tv_sec && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec
-        && a.st_ctim.tv_sec == b.st_ctim.tv_sec && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
-}
 uint64_t size_of(const cache_entry_record& entry) {
-    return entry.observed ? static_cast<uint64_t>(entry.observed->st_size) : 0;
+    return entry.observed ? static_cast<uint64_t>(entry.observed->size) : 0;
 }
 uint64_t add_size(uint64_t sum, uint64_t size) {
     if (size > std::numeric_limits<uint64_t>::max() - sum) throw std::overflow_error("cache size exceeds uint64 range");
@@ -34,41 +29,32 @@ std::vector<fs::path> paths_in(const fs::path& directory) {
     std::sort(paths.begin(), paths.end());
     return paths;
 }
-[[noreturn]] void os_error(const fs::path& path) {
-    throw std::system_error(errno, std::generic_category(), path.string());
-}
 cache_entry_record inspect(const fs::path& path) {
     cache_entry_record result;
-    result.path = fs::absolute(path).lexically_normal(); result.file = path.filename().string();
+    result.path = fs::absolute(path).lexically_normal(); result.file = path_utf8(path.filename());
     try {
-        struct stat observed{};
-        if (lstat(path.c_str(), &observed)) os_error(path);
-        if (observed.st_size < 0) throw std::runtime_error("file size is negative");
+        auto observed = status_of(path, true);
+        if (observed.size < 0) throw std::runtime_error("file size is negative");
         result.observed = observed;
-        if (!S_ISREG(observed.st_mode)) result.reason = "not a regular file";
-        else if (!observed.st_size) result.status = TENSORACLE_CACHE_BUILDING_OR_LEFTOVER;
+        if (!observed.regular) result.reason = "not a regular file";
+        else if (!observed.size) result.status = TENSORACLE_CACHE_BUILDING_OR_LEFTOVER;
         else {
-            struct file_owner { int fd; ~file_owner() { if (fd >= 0) ::close(fd); } } file{
-                ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
-            if (file.fd < 0) os_error(path);
-            struct stat opened{};
-            if (fstat(file.fd, &opened)) os_error(path);
-            if (!same_file(opened, observed)) throw std::runtime_error("file changed during inspection");
-            auto metadata = read_engine_header(file.fd, path, static_cast<uint64_t>(observed.st_size));
-            if (fstat(file.fd, &opened)) os_error(path);
-            if (!same_file(opened, observed)) throw std::runtime_error("file changed during inspection");
+            file_descriptor file{open_file(path, true)};
+            if (!same_snapshot(status_of(file.value), observed)) throw std::runtime_error("file changed during inspection");
+            auto metadata = read_engine_header(file.value, path, static_cast<uint64_t>(observed.size));
+            if (!same_snapshot(status_of(file.value), observed)) throw std::runtime_error("file changed during inspection");
             result.header = std::move(metadata.header);
             result.header_json = result.header.dump(-1, ' ', true);
             result.status = TENSORACLE_CACHE_RECOGNIZED;
         }
     } catch (const corrupt_engine_error& error) { result.reason = error.what();
-    } catch (const std::system_error& error) { result.reason = error.what();
+    } catch (const std::system_error& error) { result.reason = system_error_utf8(error);
     } catch (const std::runtime_error& error) { result.reason = error.what(); }
     return result;
 }
 cache_snapshot scan(const fs::path& directory) {
     cache_snapshot snapshot;
-    snapshot.directory = directory.string();
+    snapshot.directory = path_utf8(directory);
     snapshot.absolute_directory = fs::absolute(directory).lexically_normal();
     for (const auto& path : paths_in(snapshot.absolute_directory)) {
         if (path.extension() != ".engine") continue;
@@ -82,7 +68,7 @@ cache_snapshot scan(const fs::path& directory) {
 void add_weight_paths(cache_snapshot& snapshot) {
     std::map<std::string, std::set<std::string>> by_digest;
     for (const auto& path : paths_in(snapshot.absolute_directory)) {
-        if (path.filename().string().rfind("weight-", 0) != 0 || path.extension() != ".json") continue;
+        if (path_utf8(path.filename()).rfind("weight-", 0) != 0 || path.extension() != ".json") continue;
         if (auto record = read_weight_record(path))
             by_digest[record->at("sha256").get<std::string>()].insert(record->at("path").get<std::string>());
     }
@@ -147,19 +133,20 @@ std::unique_ptr<tensoracle_cache_result> plan_cache_prune(const tensoracle_cache
     }
     std::sort(candidates.begin(), candidates.end(), [&](size_t a, size_t b) {
         const auto& x = result->snapshot.entries[a]; const auto& y = result->snapshot.entries[b];
-        return std::make_tuple(x.observed->st_mtim.tv_sec, x.observed->st_mtim.tv_nsec, x.file)
-             < std::make_tuple(y.observed->st_mtim.tv_sec, y.observed->st_mtim.tv_nsec, y.file);
+        return std::make_tuple(x.observed->mtime, x.file)
+             < std::make_tuple(y.observed->mtime, y.file);
     });
     std::pair<int64_t, int64_t> cutoff;
     if (criterion.unused_for_ns) {
-        cutoff = {now / 1000000000 - *criterion.unused_for_ns / 1000000000,
-                  now % 1000000000 - *criterion.unused_for_ns % 1000000000};
+        auto instant = unix_time_parts(now);
+        auto duration = unix_time_parts(*criterion.unused_for_ns);
+        cutoff = {instant.first - duration.first, instant.second - duration.second};
         while (cutoff.second < 0) { --cutoff.first; cutoff.second += 1000000000; }
     }
     for (auto index : candidates) {
         const auto& entry = result->snapshot.entries[index];
         bool selected = criterion.unused_for_ns
-            ? std::make_pair(int64_t(entry.observed->st_mtim.tv_sec), int64_t(entry.observed->st_mtim.tv_nsec)) < cutoff
+            ? entry.observed->mtime < cutoff
             : result->projected_size > static_cast<uint64_t>(*criterion.max_size);
         if (selected) { result->targets.push_back(index); result->projected_size -= size_of(entry); }
     }
@@ -173,18 +160,19 @@ std::unique_ptr<tensoracle_cache_result> apply_cache_prune(const tensoracle_cach
     result->phase = TENSORACLE_CACHE_APPLIED; result->dry_run = dry_run;
     if (!dry_run) for (auto index : plan.targets) {
         auto entry = plan.snapshot.entries.at(index);
-        struct stat current{};
-        if (lstat(entry.path.c_str(), &current)) {
-            if (errno == ENOENT) { entry.reason = "file disappeared before removal"; result->missing.push_back(std::move(entry)); }
-            else { entry.reason = std::generic_category().message(errno); result->failed.push_back(std::move(entry)); }
-        } else if (!same_file(current, *entry.observed)) {
-            entry.reason = "file changed since inspection; not removed"; result->failed.push_back(std::move(entry));
-        } else if (::unlink(entry.path.c_str())) {
-            if (errno == ENOENT) { entry.reason = "file disappeared before removal"; result->missing.push_back(std::move(entry)); }
-            else { entry.reason = std::generic_category().message(errno); result->failed.push_back(std::move(entry)); }
-        } else {
-            result->removed_size = add_size(result->removed_size, size_of(entry));
-            result->removed.push_back(std::move(entry));
+        try {
+            if (!same_snapshot(status_of(entry.path, true), *entry.observed)) {
+                entry.reason = "file changed since inspection; not removed"; result->failed.push_back(std::move(entry));
+            } else if (!fs::remove(entry.path)) {
+                entry.reason = "file disappeared before removal"; result->missing.push_back(std::move(entry));
+            } else {
+                result->removed_size = add_size(result->removed_size, size_of(entry));
+                result->removed.push_back(std::move(entry));
+            }
+        } catch (const std::system_error& error) {
+            entry.reason = system_error_utf8(error);
+            if (error.code() == std::errc::no_such_file_or_directory) result->missing.push_back(std::move(entry));
+            else result->failed.push_back(std::move(entry));
         }
     }
     auto remaining = scan(plan.snapshot.absolute_directory);

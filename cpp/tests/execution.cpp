@@ -1,3 +1,4 @@
+#include "test_platform.hpp"
 #include <tensoracle/engine.hpp>
 #include "engine_internal.hpp"
 #include "cache.hpp"
@@ -12,11 +13,17 @@
 #include <memory>
 #include <vector>
 #include <fstream>
+#if !defined(_WIN32)
 #include <sys/wait.h>
+#endif
+#if !defined(_WIN32)
 #include <sys/syscall.h>
+#endif
 #include <sys/stat.h>
 #include <cerrno>
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 
 namespace {
 std::string denied_timestamp;
@@ -24,12 +31,30 @@ int denied_timestamp_calls = 0;
 }
 // Interpose the OS boundary used by libstdc++'s last_write_time, including calls
 // originating in shared libraries. All unrelated filesystem operations stay real.
+#if !defined(_WIN32)
 extern "C" int utimensat(int directory, const char* path, const timespec times[2], int flags) noexcept {
     if (path && path == denied_timestamp) {
         ++denied_timestamp_calls; errno = EACCES; return -1;
     }
     return int(syscall(SYS_utimensat, directory, path, times, flags));
 }
+#else
+namespace {
+struct install_timestamp_boundary {
+    install_timestamp_boundary() {
+        windows_boundary::deny_timestamp = [](HANDLE file) {
+            if (denied_timestamp.empty()) return false;
+            std::vector<wchar_t> path(32768);
+            auto count = GetFinalPathNameByHandleW(file, path.data(), DWORD(path.size()), FILE_NAME_NORMALIZED);
+            auto value = std::filesystem::path(std::wstring(path.data(), count)).u8string();
+            if (value.rfind("\\\\?\\", 0) == 0) value.erase(0, 4);
+            if (value != denied_timestamp) return false;
+            ++denied_timestamp_calls; return true;
+        };
+    }
+} install_timestamp;
+}
+#endif
 
 namespace {
 struct logger : nvinfer1::ILogger {
@@ -515,19 +540,18 @@ TEST_CASE("Cached engines reuse across processes validate IO and touch only succ
     using namespace tensoracle::detail;
     namespace fs = std::filesystem;
     device_context context;
-    char pattern[] = "/tmp/tensoracle-engine-XXXXXX";
-    auto* directory = mkdtemp(pattern);
-    REQUIRE(directory);
+    auto directory = test_platform::make_directory();
+    auto previous = test_platform::get_environment("XDG_CACHE_HOME");
     struct cleanup {
         fs::path path;
         std::string old;
         bool existed;
         ~cleanup() {
-            if (existed) setenv("XDG_CACHE_HOME", old.c_str(), 1); else unsetenv("XDG_CACHE_HOME");
+            if (existed) test_platform::set_environment("XDG_CACHE_HOME", old.c_str()); else test_platform::unset_environment("XDG_CACHE_HOME");
             fs::remove_all(path);
         }
-    } files{directory, std::getenv("XDG_CACHE_HOME") ? std::getenv("XDG_CACHE_HOME") : "", std::getenv("XDG_CACHE_HOME") != nullptr};
-    setenv("XDG_CACHE_HOME", directory, 1);
+    } files{directory, previous.value_or(""), previous.has_value()};
+    test_platform::set_environment("XDG_CACHE_HOME", directory.u8string());
     auto weights = files.path / "weights";
     std::ofstream(weights) << "weights";
     cache_request request;
@@ -556,21 +580,12 @@ TEST_CASE("Cached engines reuse across processes validate IO and touch only succ
     execution.enqueue(values.addresses(), values.stream);
     values.check(3, 2);
 
-    auto pid = fork();
-    REQUIRE(pid >= 0);
-    if (!pid) {
-        execl(TENSORACLE_CACHE_PROBE, TENSORACLE_CACHE_PROBE, "--engine", weights.c_str(), first.path.c_str(), nullptr);
-        _exit(127);
-    }
-    int status = 0;
-    REQUIRE(waitpid(pid, &status, 0) == pid);
-    REQUIRE(WIFEXITED(status));
-    REQUIRE(WEXITSTATUS(status) == 0);
+    REQUIRE(test_platform::run({TENSORACLE_CACHE_PROBE, "--engine", weights.u8string(), first.path.u8string()}) == 0);
 
     fs::last_write_time(first.path, old);
     {
         struct reset { ~reset() { denied_timestamp.clear(); } } restore;
-        denied_timestamp = first.path.string(); denied_timestamp_calls = 0;
+        denied_timestamp = first.path.u8string(); denied_timestamp_calls = 0;
         auto readonly = open_cached_engine(request, build);
         REQUIRE(denied_timestamp_calls == 1);
         REQUIRE(readonly.path == first.path);
@@ -600,7 +615,7 @@ TEST_CASE("Cached engines reuse across processes validate IO and touch only succ
             REQUIRE(message.find(fields[mismatch]) != std::string::npos);
             REQUIRE(message.find("observed=") != std::string::npos);
             REQUIRE(message.find("expected=") != std::string::npos);
-            REQUIRE(message.find(first.path.string()) != std::string::npos);
+            REQUIRE(message.find(first.path.u8string()) != std::string::npos);
             if (mismatch == 0) {
                 REQUIRE(message.find("observed=" + std::to_string(TENSORACLE_FLOAT32)) != std::string::npos);
                 REQUIRE(message.find("expected=" + std::to_string(TENSORACLE_FLOAT16)) != std::string::npos);
@@ -626,7 +641,7 @@ TEST_CASE("Cached engines reuse across processes validate IO and touch only succ
     }
     auto trt = tensoracle::tensorrt_version();
     auto trt_text = std::to_string(trt.major) + "." + std::to_string(trt.minor) + "." + std::to_string(trt.patch);
-    auto conditions = make_conditions(request, {}, gpu_identity(), trt_text, "Linux", "x86_64");
+    auto conditions = make_conditions(request, {}, gpu_identity(), trt_text, test_platform::os_name, "x86_64");
     REQUIRE(conditions["gpu"].contains("ecc_enabled"));
     REQUIRE(conditions["gpu"].contains("total_memory"));
     REQUIRE(conditions["gpu"].size() == 13);
@@ -649,7 +664,7 @@ TEST_CASE("Cached engines reuse across processes validate IO and touch only succ
     auto broken_request = request;
     broken_request.name = "broken-builder";
     REQUIRE_THROWS_AS(open_cached_engine(broken_request, []() -> built_plan { throw std::runtime_error("graph failed"); }), std::runtime_error);
-    auto broken_conditions = make_conditions(broken_request, {}, gpu_identity(), trt_text, "Linux", "x86_64");
+    auto broken_conditions = make_conditions(broken_request, {}, gpu_identity(), trt_text, test_platform::os_name, "x86_64");
     REQUIRE_FALSE(fs::exists(cache_path(broken_conditions)));
 
     // An invalid plan is distinguishable from both a builder failure and IO mismatch.

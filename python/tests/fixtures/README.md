@@ -7,7 +7,7 @@ The cases cover ordinary conditions, escaped Unicode and control characters,
 absent and present workspace limits, shape outputs, and unsigned 64-bit limits.
 The compatibility test builds the same cache functions with 3.11.3 and 3.12.0,
 checks both against these fixed bytes, and reads each writer's engine and weight
-record with the other reader. `cmake -P cpp/conan/prepare-tests.cmake` prepares
+record with the other reader. `python3 cpp/conan/prepare-tests.py` prepares
 both JSON packages; the test itself uses the prepared Conan cache offline.
 
 The 3.11.3 build uses `cpp/conan.lock` without selecting another recipe revision.

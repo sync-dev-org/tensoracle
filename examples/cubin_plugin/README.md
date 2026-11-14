@@ -28,6 +28,9 @@ The example owns `bindings.cpp`, which uses tensoracle's C++ interface to open a
 Build tensoracle's v2 wheel first. Its build obtains TensorRT SDK 11.2.1.2 from Conan:
 
 ```bash
+python3 cpp/conan/prepare.py --output build/cpp
+. ./build/cpp/conanbuild.sh
+export TENSORACLE_EXAMPLE_TOOLCHAIN="$PWD/build/cpp/conan_toolchain.cmake"
 uv build python --wheel --out-dir /tmp/tensoracle-wheels
 ```
 
@@ -41,13 +44,14 @@ Install the [host's TensorRT runtime](https://sync-dev-org.github.io/tensoracle/
 
 ```bash
 uv build examples/cubin_plugin --wheel --out-dir /tmp/example-wheels \
-  --build-constraints /tmp/tensoracle-build-constraints.txt
+  --build-constraints /tmp/tensoracle-build-constraints.txt \
+  -Ccmake.define.CMAKE_TOOLCHAIN_FILE="$TENSORACLE_EXAMPLE_TOOLCHAIN"
 uv venv --python 3.13 /tmp/tensoracle-example-runtime
 uv pip install --python /tmp/tensoracle-example-runtime/bin/python \
   /tmp/tensoracle-wheels/*.whl /tmp/example-wheels/*.whl
 ```
 
-The build requires CMake 3.26 or later and a C++17 compiler. Its Python build dependencies supply nanobind. The locked Conan recipes supply TensorRT and CUDA 13.2 headers and the driver link stub. `CUDAToolkit_ROOT` and `TENSORRT_ROOT` still accept existing verified SDK roots. The plugin links the CUDA Driver API stub and loads the installed driver at runtime. No OS CUDA Toolkit is required.
+The build uses CMake and Ninja from the activated Conan environment and a C++17 compiler. Its Python build dependencies supply nanobind. The locked Conan recipes supply TensorRT and CUDA 13.2 headers and the driver link stub. `CUDAToolkit_ROOT` and `TENSORRT_ROOT` still accept existing verified SDK roots. The plugin links the CUDA Driver API stub and loads the installed driver at runtime. No OS CUDA Toolkit is required.
 
 The CMake project uses `find_package(tensoracle 2 CONFIG REQUIRED)` against the installed wheel and `tensoracle_add_cubin_plugin` to compile the plugin. Its own nanobind extension links to `tensoracle::tensoracle`. The extension's RUNPATH is `$ORIGIN/../tensoracle/cpp/lib`; the example wheel contains no copy of tensoracle, TensorRT, or the CUDA driver. Importing the example does not initialize CUDA.
 

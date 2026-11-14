@@ -34,7 +34,12 @@ struct stream {
     ~stream() { cuStreamSynchronize(value); cuStreamDestroy(value); }
 };
 }
-extern "C" __attribute__((visibility("default"))) int embedded_model(const char* weights) {
+#if defined(_WIN32)
+#define MODEL_EXPORT __declspec(dllexport)
+#else
+#define MODEL_EXPORT __attribute__((visibility("default")))
+#endif
+extern "C" MODEL_EXPORT int embedded_model(const char* weights) {
     size_t file_count = 0;
     auto files = embedded_files(file_count);
     auto bundle = tensoracle::inspect_embedded_bundle(embedded_manifest(), files, file_count);
@@ -90,7 +95,8 @@ extern "C" __attribute__((visibility("default"))) int embedded_model(const char*
     for (size_t i = 0; i < actual.size(); ++i)
         if (std::abs(actual[i] - (input[i] + bias[i % 16])) > 1e-6f)
             throw std::runtime_error("embedded plugin output differs from CPU bias addition");
+    auto reported_path = std::filesystem::u8path(engine.path()).generic_u8string();
     std::printf("{\"identity\":\"%s\",\"path\":\"%s\",\"build_calls\":%d}\n",
-                identity.c_str(), engine.path().c_str(), builds);
+                identity.c_str(), reported_path.c_str(), builds);
     return 0;
 }

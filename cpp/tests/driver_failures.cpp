@@ -3,7 +3,9 @@
 #include <tensoracle/cache.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#if !defined(_WIN32)
 #include <dlfcn.h>
+#endif
 #include <cstring>
 #include <future>
 
@@ -30,16 +32,32 @@ struct reset_driver {
 
 // cache_open.cpp discovers these driver entry points through dlsym. Replace that
 // external boundary in this executable while retaining the complete cache path.
+#if !defined(_WIN32)
 extern "C" void* __real_dlsym(void*, const char*);
-extern "C" void* __wrap_dlsym(void* library, const char* symbol) {
+#endif
+void* driver_symbol(void* library, const char* symbol) {
     if (!std::strcmp(symbol, "cuInit")) return reinterpret_cast<void*>(&init);
     if (!std::strcmp(symbol, "cuCtxGetDevice")) return reinterpret_cast<void*>(&current);
     if (!std::strcmp(symbol, "cuDeviceGet")) return reinterpret_cast<void*>(&fallback);
     if (!std::strcmp(symbol, "cuDeviceGetName")) return reinterpret_cast<void*>(&name);
     if (!std::strcmp(symbol, "cuDeviceGetAttribute")) return reinterpret_cast<void*>(&attribute);
     if (!std::strcmp(symbol, "cuDeviceTotalMem_v2")) return reinterpret_cast<void*>(&memory);
+#if defined(_WIN32)
+    return reinterpret_cast<void*>(windows_boundary::real_get_proc(static_cast<HMODULE>(library), symbol));
+#else
     return __real_dlsym(library, symbol);
+#endif
 }
+
+#if defined(_WIN32)
+namespace {
+struct install_driver_boundary {
+    install_driver_boundary() { windows_boundary::resolve = [](HMODULE library, LPCSTR name) { return reinterpret_cast<FARPROC>(driver_symbol(library, name)); }; }
+} install_driver;
+}
+#else
+extern "C" void* __wrap_dlsym(void* library, const char* symbol) { return driver_symbol(library, symbol); }
+#endif
 
 TEST_CASE("Device identity falls back to device zero only without a current CUDA context", "[SP-TENSORACLE-009]") {
     reset_driver restore;
@@ -62,7 +80,7 @@ TEST_CASE("Unavailable GPU attributes prevent cached reuse and never invoke the 
     request.name = "gpu-identity"; request.graph_version = "1"; request.weights = {weight};
     auto version = tensoracle::tensorrt_version();
     auto version_text = std::to_string(version.major) + "." + std::to_string(version.minor) + "." + std::to_string(version.patch);
-    auto conditions = tensoracle::detail::make_conditions(request, {}, tensoracle::detail::gpu_identity(), version_text, "Linux", "x86_64");
+    auto conditions = tensoracle::detail::make_conditions(request, {}, tensoracle::detail::gpu_identity(), version_text, test_platform::os_name, "x86_64");
     auto path = tensoracle::detail::cache_path(conditions);
     tensoracle::detail::write_engine_file(path, conditions, {'p', 'l', 'a', 'n'}, {}, {});
     auto old = std::filesystem::last_write_time(path);

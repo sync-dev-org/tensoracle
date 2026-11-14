@@ -4,12 +4,20 @@ execute_process(COMMAND "${CMAKE_COMMAND}" --install "${BUILD_DIR}" --prefix "${
     COMMAND_ERROR_IS_FATAL ANY)
 # Shared installs need only the TensorRT link library; static installs also
 # resolve their external link dependencies with the toolchain that configured
-# the library build, whether bootstrap generated it or the caller passed it.
+# the library build, including a relative toolchain path supplied by a preset.
 file(RENAME "${prefix}" "${WORK_DIR}/relocated")
 set(prefix "${WORK_DIR}/relocated")
+if(WIN32)
+    cmake_path(CONVERT "$ENV{PATH}" TO_CMAKE_PATH_LIST _runtime_paths NORMALIZE)
+    list(REMOVE_ITEM _runtime_paths "${BUILD_DIR}" "${BUILD_DIR}/Release")
+    set(ENV{PATH} "${prefix}/bin;${_runtime_paths}")
+endif()
 file(COPY "${CONSUMER_SOURCE}/" DESTINATION "${WORK_DIR}/source")
 set(_dependency_options)
 if(NOT SHARED)
+    if(TOOLCHAIN_FILE AND NOT IS_ABSOLUTE "${TOOLCHAIN_FILE}")
+        get_filename_component(TOOLCHAIN_FILE "${TOOLCHAIN_FILE}" ABSOLUTE BASE_DIR "${BUILD_DIR}")
+    endif()
     if(NOT TOOLCHAIN_FILE OR NOT EXISTS "${TOOLCHAIN_FILE}")
         message(FATAL_ERROR "Static installed-consumer test needs the library build's CMake toolchain file; got '${TOOLCHAIN_FILE}'")
     endif()

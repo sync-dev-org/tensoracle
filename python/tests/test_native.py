@@ -1,7 +1,7 @@
 """The Python binding calls the shared C++ library without a CUDA device."""
 
 import ctypes
-from importlib.metadata import distribution
+import os
 
 import pytest
 
@@ -20,9 +20,7 @@ def test_native_versions_are_available_without_initializing_cuda():
     assert all(isinstance(value, int) for value in tensorrt)
     assert tensorrt[0] == 11
     assert tensorrt[1] >= 2
-    library = ctypes.CDLL(
-        str(distribution("tensorrt-cu13-libs").locate_file("tensorrt_libs/libnvinfer.so.11"))
-    )
+    library = ctypes.CDLL("nvinfer_11.dll" if os.name == "nt" else "libnvinfer.so.11")
     library.getInferLibVersion.argtypes = []
     library.getInferLibVersion.restype = ctypes.c_int32
     assert tensorrt[0] * 10000 + tensorrt[1] * 100 + tensorrt[2] == library.getInferLibVersion()

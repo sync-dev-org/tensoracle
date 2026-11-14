@@ -1,3 +1,8 @@
+#if defined(_WIN32)
+#define TENSORACLE_FIXTURE_EXPORT __declspec(dllexport)
+#else
+#define TENSORACLE_FIXTURE_EXPORT __attribute__((visibility("default")))
+#endif
 #include <NvInferRuntime.h>
 #include <string>
 
@@ -17,8 +22,9 @@ private:
 };
 creator first("RegistrationFirst"), second("RegistrationSecond"), conflict("RegistrationFirst");
 unsigned char bss[256 * 1024];
+nvinfer1::ILoggerFinder* logger_finder = nullptr;
 }
-#define EXPORT extern "C" __attribute__((visibility("default")))
+#define EXPORT extern "C" TENSORACLE_FIXTURE_EXPORT
 EXPORT void fixture_namespace(const char* value) { plugin_namespace = value; }
 EXPORT nvinfer1::IPluginCreatorInterface* const* fixture_creators(int32_t* count) {
     static nvinfer1::IPluginCreatorInterface* creators[]{&first, &second};
@@ -27,7 +33,8 @@ EXPORT nvinfer1::IPluginCreatorInterface* const* fixture_creators(int32_t* count
 EXPORT nvinfer1::IPluginCreatorInterface* fixture_conflict() { return &conflict; }
 EXPORT void* fixture_bss() { return bss + sizeof(bss) - 1; }
 #if !defined(TENSORACLE_NO_GET_CREATORS)
-EXPORT void setLoggerFinder(nvinfer1::ILoggerFinder*) noexcept {}
+EXPORT void setLoggerFinder(nvinfer1::ILoggerFinder* value) noexcept { logger_finder = value; }
+EXPORT bool fixture_logger_initialized() { return logger_finder != nullptr; }
 EXPORT nvinfer1::IPluginCreatorInterface* const* getCreators(int32_t* count) {
     return fixture_creators(count);
 }

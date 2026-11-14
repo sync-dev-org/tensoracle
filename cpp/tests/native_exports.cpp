@@ -12,7 +12,13 @@ TEST_CASE("Native library exports and constant bytes are inspected without loadi
     REQUIRE(names.count("tensoracle_test_constant") == 1);
     REQUIRE(tensoracle::detail::exported_data(bytes,"tensoracle_test_constant",4)==std::string("\1\2\0\4",4));
     REQUIRE_THROWS_AS(tensoracle::detail::exported_data(bytes,"absent",4),tensoracle::error);
+#if defined(_WIN32)
+    // PE exports have an address but no declared constant size.
+    REQUIRE(tensoracle::detail::exported_data(bytes,"tensoracle_test_constant",3)==std::string("\1\2\0",3));
+    REQUIRE_THROWS_AS(tensoracle::detail::exported_data(bytes,"tensoracle_test_constant"),tensoracle::error);
+#else
     REQUIRE_THROWS_AS(tensoracle::detail::exported_data(bytes,"tensoracle_test_constant",3),tensoracle::error);
+#endif
     REQUIRE_THROWS_AS(tensoracle::detail::native_exports(bytes.substr(0,32)),tensoracle::error);
 }
 

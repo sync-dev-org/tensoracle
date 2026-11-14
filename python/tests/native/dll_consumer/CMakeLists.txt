@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.26)
+project(tensoracle_dll_consumer LANGUAGES CXX)
+find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.SABIModule)
+find_package(tensoracle CONFIG REQUIRED)
+Python_add_library(_dll_consumer MODULE USE_SABI 3.12 consumer.cpp)
+target_link_libraries(_dll_consumer PRIVATE tensoracle::tensoracle)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/artifact.txt" CONTENT "$<TARGET_FILE:_dll_consumer>")

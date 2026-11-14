@@ -61,7 +61,8 @@ options.embedded_plugins = {registration.get()};
 // tensoracle::open_engine(options, define_network);
 ```
 
-The address must belong to the module containing the plugin implementation. On
+The address must belong to the module containing the plugin implementation.
+Registration is supported on Linux x86_64 and Windows x86_64. On
 Linux, tensoracle finds the owning module's file-backed segment in
 `/proc/self/maps`. It opens that mapping's absolute pathname, or `/proc/self/exe`
 when the plugin is linked into the executable, and checks the descriptor's device
@@ -70,11 +71,14 @@ descriptor. An address in a module's anonymous BSS is also accepted. Relative
 library paths remain usable after changing the working directory. If the loaded
 module cannot be matched to its current file, including after the file is replaced,
 registration fails before registering creators and asks for a process restart.
+On Windows, tensoracle locates the owning DLL or executable from the supplied
+address, checks that its mapped path matches the opened file, and hashes the
+complete file while excluding writes and replacements. Static and object plugins
+use the final DLL or executable containing their code as their identity.
 Registration uses
 the supplied creators through TensorRT's `registerCreator`; it does not call
 `loadLibrary`. Tensoracle reads the containing file to compute its complete
 SHA-256. `registration.digests()` returns that identity as a one-element vector.
-Windows currently reports `TENSORACLE_PLUGIN_LIBRARY_ERROR` for this operation.
 
 Use the same TensorRT namespace as the model's creators. Repeating registration
 with the same creators and namespace is valid; a conflicting creator is an error.

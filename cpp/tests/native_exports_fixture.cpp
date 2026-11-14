@@ -1,6 +1,7 @@
 #include <cstdlib>
 #if defined(_WIN32)
 #define EXPORT __declspec(dllexport)
+namespace { struct initializer { initializer() { std::abort(); } } never_load; }
 #else
 #define EXPORT __attribute__((visibility("default")))
 // Inspection must never load this file or execute its initializers.

@@ -1,5 +1,6 @@
 #pragma once
 #include "structure.hpp"
+#include "path.hpp"
 #include <cstring>
 #include <filesystem>
 #include <functional>

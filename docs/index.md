@@ -21,7 +21,7 @@ If your model package uses tensoracle 1.x, start with [Migrate from 1.x](migrati
 | Cubin plugin developer | [Produce cubins and build a plugin](#build-a-cubin-plugin). | `tensoracle[producer]` for generation, Conan TensorRT and CUDA SDKs, PyPI producer tools, and the plugin's C++ build. |
 | Output validation | Compare CPU NumPy outputs with [the comparison API](api/index.md#output-comparison). | The application runs the engines and chooses the quality limits. |
 
-v2 supplies a Linux x86_64 `manylinux_2_28` wheel, including WSL2, with the `cp312-abi3` tag. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and GPU generations sm86, sm89, and sm120 are the targets; fp8 requires sm89 or sm120. Windows x86_64 users must use tensoracle 1.x until a later v2 minor release supplies a Windows wheel. A Linux wheel runs under WSL2, not directly in Windows Python.
+Starting with v2.6.0, each release supplies `cp312-abi3` wheels for Linux x86_64 (`manylinux_2_28`, including WSL2) and Windows x86_64 (`win_amd64`), with the same version. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and GPU generations sm86, sm89, and sm120 are the targets; fp8 requires sm89 or sm120. Use the Windows wheel in native Windows Python and the Linux wheel in WSL2's Linux Python environment.
 
 The wheel includes the shared C++ library, public headers, CMake package configuration, and source-based cubin plugin helpers. TensorRT and the NVIDIA driver are not bundled. The C ABI uses opaque handles and structures with `struct_size`; the C++ headers add exceptions and automatic resource release. Public C++ interfaces and saved engine files remain compatible within the same major version.
 
@@ -35,12 +35,15 @@ sudo apt-get install libnvinfer11
 pip install tensoracle
 ```
 
-The host runtime must be TensorRT 11.2 or later, below 12, with builder resources; the wheel is built against SDK 11.2.1.2. A compatible NVIDIA driver is required, but neither the CUDA Toolkit nor TensorRT's Python bindings are needed for execution. TensorRT's pip wheel is optional: use `pip install 'tensoracle[tensorrt]'` to select it. Without that extra, tensoracle uses the host loader's normal TensorRT search. Model packages that use apt's runtime declare `tensoracle` without the extra.
+On Windows x86_64, install `tensoracle>=2.6.0` and the host's TensorRT 11 runtime. Follow the [Windows runtime instructions](tensorrt-sdk.md#windows-x86_64) to register TensorRT's DLL directory, or select the `tensorrt` extra and import `tensorrt` before loading native bindings.
+
+The host runtime must be TensorRT 11.2 or later, below 12, with builder resources; the wheel is built against SDK 11.2.1.2. A compatible NVIDIA driver is required, but neither the CUDA Toolkit nor TensorRT's Python bindings are needed for execution with a host runtime. TensorRT's pip wheel is optional: use `pip install 'tensoracle[tensorrt]'` to select it. Model packages that use the host runtime declare `tensoracle` without the extra.
 
 ### Connect a C++ model package
 
-Native applications can use the [prebuilt C and C++ SDK](cpp-sdk.md) attached to each release,
-then run against the host's TensorRT installation. The SDK retains the wheel's
+From v2.6.0, native applications can use the [prebuilt C and C++ SDK](cpp-sdk.md)
+attached to each release for Linux x86_64 and Windows x86_64, then run against
+the host's TensorRT installation. The SDK retains the wheel's
 `tensoracle/cpp/` layout when copied into an application prefix.
 
 Locate the installed SDK without importing tensoracle:
@@ -56,7 +59,7 @@ find_package(tensoracle 2 CONFIG REQUIRED)
 target_link_libraries(my_model PRIVATE tensoracle::tensoracle)
 ```
 
-`my_model` is your existing CMake target. Add TensorRT SDK headers to the target that defines the network; CUDA headers and driver linking are needed when the caller uses CUDA. The [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer) provides the complete nanobind project, including header discovery, CUDA helpers, and relative runtime library paths. Its `bindings.cpp` keeps all TensorRT construction and execution in C++; Python receives an inference function.
+`my_model` is your existing CMake target. Add TensorRT SDK headers to the target that defines the network; CUDA headers and driver linking are needed when the caller uses CUDA. The [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer) provides the complete nanobind project, including header discovery, CUDA helpers, and Linux relative runtime library paths. On Windows, import `tensoracle` before the model's native binding so its `os.add_dll_directory` registration makes the wheel's `tensoracle-2.dll` available. The model wheel does not copy that DLL. Its `bindings.cpp` keeps all TensorRT construction and execution in C++; Python receives an inference function.
 
 ### Read weights without a GPU
 

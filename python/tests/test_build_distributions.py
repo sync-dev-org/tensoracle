@@ -238,11 +238,17 @@ def test_cpu_lists_that_docker_does_not_accept_stop_before_any_command(
     assert host.commands == []
 
 
+@pytest.mark.parametrize("jobs", [None, "4"])
 def test_release_containers_select_source_built_dependencies_and_record_inputs(
-    script, host, monkeypatch
+    script, host, monkeypatch, jobs
 ):
     """All stages use the release profile, writable Conan paths, and a memory limit."""
     monkeypatch.setattr(sys, "argv", host.arguments)
+    monkeypatch.delenv("SKBUILD_BUILD_TOOL_ARGS", raising=False)
+    if jobs is None:
+        monkeypatch.delenv("CMAKE_BUILD_PARALLEL_LEVEL", raising=False)
+    else:
+        monkeypatch.setenv("CMAKE_BUILD_PARALLEL_LEVEL", jobs)
 
     script.main()
 
@@ -254,12 +260,13 @@ def test_release_containers_select_source_built_dependencies_and_record_inputs(
         assert not any("src=" + str(host.source) in value for value in command)
     for command in containers:
         environment = [value for flag, value in itertools.pairwise(command) if flag == "--env"]
-        assert "TENSORACLE_CONAN_PROFILE=linux-gcc14" in environment
+        assert "TENSORACLE_CONAN_PROFILE=linux-gcc-toolset-14" in environment
         assert "TENSORACLE_CONAN_ARGS=--build=*" in environment
         assert "CONAN_HOME=/output/_work/conan-home-original" in environment
         assert "TENSORACLE_CONAN_CACHE=/output/_work/conan-packages-original" in environment
         assert command[command.index("--memory") + 1] == "48g"
-        assert "CMAKE_BUILD_PARALLEL_LEVEL=8" in environment
+        assert f"CMAKE_BUILD_PARALLEL_LEVEL={jobs or '8'}" in environment
+        assert f"SKBUILD_BUILD_TOOL_ARGS=-j{jobs or '8'}" in environment
         assert not any("TENSORACLE_SDK_ROOT=" in value for value in environment)
         assert not any("dst=/sdk" in value for value in command)
     manifest = json.loads((Path(host.arguments[-1]) / "inputs.json").read_text())
@@ -335,7 +342,9 @@ def test_sdk_archive_preserves_the_sdk_and_records_the_recipe_update(script, tmp
         )
     import hashlib
 
-    release = json.loads((wheel.parent / "sdk-release.json").read_text())
+    releases = json.loads((wheel.parent / "sdk-release.json").read_text())
+    assert set(releases) == {"linux"}
+    release = releases["linux"]
     assert release == {
         "version": "2.1.2",
         "url": f"https://github.com/sync-dev-org/tensoracle/releases/download/v2.1.2/{sdk.name}",
@@ -455,7 +464,7 @@ def test_shared_recipe_revision_is_locked_with_a_new_sdk_version(script, tmp_pat
         release,
         manifest,
         tmp_path / "verification",
-        ROOT / "cpp/conan/profiles/linux-gcc13",
+        ROOT / "cpp/conan/profiles/linux-gcc-toolset-13",
     )
     assert record["recipe_bundle"] == manifest
     assert record["source_recipe_reference"].startswith("tensoracle/2.2.1#")
@@ -525,6 +534,6 @@ def test_sdk_acquisition_rejects_a_changed_shared_bundle(script, tmp_path):
             {"version": "2.3.0", "url": "https://example.invalid/sdk", "sha256": "a" * 64},
             {"tag": "fixture", "sha256": "0" * 64},
             tmp_path / "verification",
-            ROOT / "cpp/conan/profiles/linux-gcc13",
+            ROOT / "cpp/conan/profiles/linux-gcc-toolset-13",
         )
     assert not (tmp_path / "verification/conan-home").exists()

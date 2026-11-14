@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from native_build import ROOT
+from native_build import ROOT, prepare_native
 
 DAY_NS = 86_400_000_000_000
 OLD_NS = 1_000_000_000
@@ -27,6 +27,7 @@ def cache_writer(tmp_path_factory):
             str(Path(__file__).parent / "native/cache"),
             "-B",
             str(build),
+            prepare_native(build),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DTENSORACLE_CPP_ROOT={ROOT / 'cpp'}",
         ],

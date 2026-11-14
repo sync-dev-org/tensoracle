@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 from packaging.requirements import Requirement
 
+from native_build import build_native, python_code
 from tensoracle.bundle import inspect_bundle
 from tensoracle.producer import KernelSpec, compile_bundle
 
@@ -22,13 +24,29 @@ SPEC = KernelSpec(
 )
 
 
+def fake_ptxas(directory, version):
+    """Supply an executable version probe for each platform's process API."""
+    if os.name == "nt":
+        source = directory / "ptxas-version.cpp"
+        source.write_text(f'#include <cstdio>\nint main() {{ std::puts("ptxas V{version}"); }}\n')
+        executable = build_native(directory / "fixture", "ptxas_version", (source,))
+        tool = directory / "ptxas.exe"
+        shutil.copyfile(executable, tool)
+    else:
+        tool = directory / "ptxas"
+        tool.write_text(f"#!/bin/sh\nprintf 'ptxas V{version}\\n'\n")
+        tool.chmod(0o755)
+    return tool
+
+
 @pytest.fixture
 def producer_tools():
     root = Path(sysconfig.get_path("purelib")) / "nvidia/cu13"
     paths = {
-        "ptxas": root / "bin/ptxas",
-        "cuobjdump": root / "bin/cuobjdump",
-        "nvrtc": root / "lib/libnvrtc.so.13",
+        "ptxas": root / ("bin/ptxas.exe" if os.name == "nt" else "bin/ptxas"),
+        "cuobjdump": root / ("bin/cuobjdump.exe" if os.name == "nt" else "bin/cuobjdump"),
+        "nvrtc": root
+        / ("bin/x86_64/nvrtc64_130_0.dll" if os.name == "nt" else "lib/libnvrtc.so.13"),
     }
     if not all(path.is_file() for path in paths.values()):
         pytest.skip("requires tensoracle[producer] with CUDA 13.2 NVRTC and tools")
@@ -65,7 +83,7 @@ assert 'triton' not in sys.modules
         else []
     )
     subprocess.run(
-        [sys.executable, "-c", source, str(output), *arguments],
+        [sys.executable, "-c", python_code(source), str(output), *arguments],
         env=environment,
         cwd=ROOT,
         check=True,
@@ -126,9 +144,7 @@ def test_package_declares_cubin_tools_only_in_producer_extra():
 )
 def test_producer_checks_ptxas_range_before_writing(tmp_path, version, supported):
     """The actual C++ subprocess path checks ptxas before validating kernels or creating output."""
-    tool = tmp_path / "ptxas"
-    tool.write_text(f"#!/bin/sh\nprintf 'ptxas V{version}\\n'\n")
-    tool.chmod(0o755)
+    tool = fake_ptxas(tmp_path, version)
     output = tmp_path / "bundle"
     with pytest.raises(ValueError) as error:
         compile_bundle((), output, ptxas=tool, cuda_root=tmp_path)
@@ -146,7 +162,9 @@ def test_utility_imports_leave_producer_and_triton_unloaded():
         [
             sys.executable,
             "-c",
-            "import tensoracle,sys; from tensoracle import compare_outputs; assert 'tensoracle.producer' not in sys.modules; assert not any(n=='triton' or n.startswith('triton.') for n in sys.modules)",
+            python_code(
+                "import tensoracle,sys; from tensoracle import compare_outputs; assert 'tensoracle.producer' not in sys.modules; assert not any(n=='triton' or n.startswith('triton.') for n in sys.modules)"
+            ),
         ],
         text=True,
         capture_output=True,
@@ -162,9 +180,7 @@ def test_producer_uses_wheel_tools_without_cuda_home(tmp_path, monkeypatch, conf
     """C++ tool discovery uses the supplied wheel root independently of CUDA_HOME."""
     tools = tmp_path / "nvidia/cu13/bin"
     tools.mkdir(parents=True)
-    ptxas = tools / "ptxas"
-    ptxas.write_text("#!/bin/sh\nprintf 'ptxas V13.2.0\\n'\n")
-    ptxas.chmod(0o755)
+    fake_ptxas(tools, "13.2.0")
     if configured:
         monkeypatch.setenv("CUDA_HOME", str(tmp_path / "host-toolkit"))
     else:

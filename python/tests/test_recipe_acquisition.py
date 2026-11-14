@@ -185,16 +185,16 @@ def test_changed_archive_or_unlocked_recipe_fails_without_retaining_credentials(
         lock[field][0] = lock[field][0].split("#")[0] + "#" + "0" * 32
         lockfile.write_text(json.dumps(lock))
 
-    # Exercise the CMake entry point as well as the downloader: rejection must
+    # Exercise the shared Python entry point as well as the downloader: rejection must
     # stop preparation before its Conan install can run.
-    for name in ("install.cmake", "prepare-tests.cmake", "recipes.py"):
+    for name in ("prepare.py", "prepare-tests.py", "recipes.py"):
         shutil.copyfile(ROOT / "cpp/conan" / name, conan / name)
     shutil.copytree(ROOT / "cpp/conan/profiles", conan / "profiles")
     project = conan.parent.parent / "python"
     project.mkdir()
     (project / "pyproject.toml").write_text('[build-system]\nrequires = ["conan==2.34.0"]\n')
     result = subprocess.run(
-        ["cmake", "-P", str(conan / "prepare-tests.cmake")],
+        [sys.executable, str(conan / "prepare-tests.py")],
         env=acquisition[1],
         capture_output=True,
         text=True,

@@ -4,9 +4,9 @@ tensoracle v2 moves engine construction, saving and reuse, execution, and plugin
 
 ## Check the platform first
 
-v2 supplies only a Linux x86_64 `manylinux_2_28` wheel with the `cp312-abi3` tag. It includes the C++ shared library, public headers, and CMake package configuration. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and sm86, sm89, and sm120 remain the targets; fp8 requires sm89 or sm120.
+Starting with v2.6.0, releases supply Linux x86_64 (`manylinux_2_28`) and Windows x86_64 (`win_amd64`) wheels with the `cp312-abi3` tag and the same version. Both include the C++ shared library, public headers, and CMake package configuration. The package currently declares Python 3.12 and 3.13 support. TensorRT 11.2 or later (below 12) and sm86, sm89, and sm120 remain the targets; fp8 requires sm89 or sm120.
 
-Windows x86_64 users must stay on tensoracle 1.x until a later v2 minor release adds a Windows wheel. Use `tensoracle<2` in a Windows application's dependency declaration during that period. WSL2 can use the Linux wheel inside its Linux Python environment.
+Windows applications migrating to v2 declare `tensoracle>=2.6.0,<3` and use native Windows Python. v2 releases before 2.6.0 provide Linux wheels only. WSL2 uses the Linux wheel inside its Linux Python environment. Follow the [Windows runtime setup](tensorrt-sdk.md#windows-x86_64) for TensorRT's DLL directory and import `tensoracle` before loading the model's native binding.
 
 ## Replace the Python engine API
 
@@ -41,7 +41,7 @@ Use [examples/wheel_consumer](https://github.com/sync-dev-org/tensoracle/tree/ma
 2. Link the model extension to `tensoracle::tensoracle`. Supply TensorRT SDK headers for the network-building code and CUDA headers and driver linking for the caller's CUDA operations. The example uses CMake 3.26 or later and C++17.
 3. Define the TensorRT network in C++ using the callback's `tensoracle::weights_view`. Declare safetensors files in `builder_options.weights`; tensoracle keeps their values alive through engine serialization.
 4. Open with `tensoracle::open_engine`, create an execution unit, supply device buffers and a CUDA stream, and wait before releasing those resources. Expose the model's inference function through nanobind or your chosen binding.
-5. Package the model extension separately from tensoracle. Follow the example's relative RUNPATH setup so the extension finds `libtensoracle` from the installed tensoracle wheel. Do not copy tensoracle, TensorRT, or driver libraries into the model wheel.
+5. Package the model extension separately from tensoracle. On Linux, follow the example's relative RUNPATH setup so the extension finds `libtensoracle` from the installed tensoracle wheel. On Windows, import `tensoracle` before the extension so tensoracle registers its `cpp/bin` DLL directory. Keep the host's TensorRT DLL directory registered too, or import `tensorrt` first when selecting the optional extra. Do not copy tensoracle, TensorRT, or driver libraries into the model wheel.
 
 The example's Python entry is `tensoracle_consumer.infer(weights_path, input_array)`. Its C++ implementation owns the network, engine open, CUDA context, buffers, stream, and execution. The example README supplies build and installation commands and a separate-process reuse check. Importing it does not initialize CUDA. Applications call this model-specific inference entry instead of constructing engines through tensoracle's Python API.
 

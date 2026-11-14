@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from native_build import ROOT
+from native_build import ROOT, build_jobs, prepare_native
 
 
 def run(*command, **kwargs):
@@ -31,13 +31,14 @@ def embedded_sdk(tmp_path_factory):
         str(ROOT / "cpp"),
         "-B",
         str(build),
+        prepare_native(build),
         "-G",
         "Ninja",
         "-DBUILD_TESTING=OFF",
         "-DCMAKE_BUILD_TYPE=Release",
         env=environment,
     )
-    run("cmake", "--build", str(build), "--parallel", "8", env=environment)
+    run("cmake", "--build", str(build), "--parallel", build_jobs(), env=environment)
     prefix = work / "prefix"
     run("cmake", "--install", str(build), "--prefix", str(prefix), env=environment)
     return work, build, prefix, environment
@@ -66,8 +67,12 @@ def build_consumer(embedded_sdk, kind, shared, name=None):
     entries = json.loads(manifest)["entries"]
     generated = ["#include <tensoracle/cubin.h>\n#include <cstddef>\n"]
     for entry in entries:
-        generated.append(f'extern "C" const unsigned char {entry["embedded_symbol"]}[];\n')
-    generated.append(f"const char* embedded_manifest() {{ return {json.dumps(manifest)}; }}\n")
+        qualifier = "__declspec(dllimport) " if kind == "SHARED" and os.name == "nt" else ""
+        generated.append(
+            f'extern "C" {qualifier}const unsigned char {entry["embedded_symbol"]}[];\n'
+        )
+    literal = "\n".join(json.dumps(manifest[i : i + 2000]) for i in range(0, len(manifest), 2000))
+    generated.append(f"const char* embedded_manifest() {{ return {literal}; }}\n")
     generated.append("const tensoracle_bundle_file* const* embedded_files(size_t& count) {\n")
     for i, entry in enumerate(entries):
         generated.append(
@@ -95,7 +100,7 @@ def build_consumer(embedded_sdk, kind, shared, name=None):
         *(("-DCMAKE_EXE_LINKER_FLAGS=-no-pie",) if kind == "STATIC" and not shared else ()),
         env=environment,
     )
-    run("cmake", "--build", str(build), "--parallel", "8", env=environment)
+    run("cmake", "--build", str(build), "--parallel", build_jobs(), env=environment)
     shutil.rmtree(source)
     import tensorrt_libs
 

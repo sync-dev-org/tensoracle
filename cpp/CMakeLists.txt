@@ -1,9 +1,7 @@
 cmake_minimum_required(VERSION 3.26)
-option(BUILD_TESTING "Build tensoracle tests" ON)
-if(BUILD_TESTING)
-    set(TENSORACLE_CONAN_OFFLINE ON CACHE BOOL "Use prepared test dependencies")
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT CMAKE_TOOLCHAIN_FILE)
+    message(FATAL_ERROR "Prepare dependencies first: python cpp/conan/prepare.py --output build/cpp; then apply conanbuild and use cmake --preset conan-release in cpp/")
 endif()
-include("${CMAKE_CURRENT_LIST_DIR}/conan/bootstrap.cmake")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/tensoracle/tensoracle.h")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/tensoracle/tensoracle.h" _tensoracle_header)
@@ -12,6 +10,12 @@ foreach(_component MAJOR MINOR PATCH)
     set(_tensoracle_${_component} "${CMAKE_MATCH_1}")
 endforeach()
 project(tensoracle VERSION ${_tensoracle_MAJOR}.${_tensoracle_MINOR}.${_tensoracle_PATCH} LANGUAGES C CXX)
+option(BUILD_TESTING "Build tensoracle tests" ON)
+
+if(MSVC)
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+    add_compile_options(/utf-8)
+endif()
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -32,7 +36,11 @@ include(cmake/TensoracleDependencies.cmake)
 find_path(TENSORACLE_TENSORRT_INCLUDE NvInfer.h
     PATHS ${TensorRT_INCLUDE_DIRS} NO_DEFAULT_PATH REQUIRED NO_CACHE)
 get_filename_component(_tensoracle_tensorrt_root "${TENSORACLE_TENSORRT_INCLUDE}" DIRECTORY)
-set(TENSORACLE_TENSORRT_LIBRARY "${_tensoracle_tensorrt_root}/lib/libnvinfer.so.11")
+if(WIN32)
+    set(TENSORACLE_TENSORRT_LIBRARY "${_tensoracle_tensorrt_root}/lib/nvinfer_11.lib")
+else()
+    set(TENSORACLE_TENSORRT_LIBRARY "${_tensoracle_tensorrt_root}/lib/libnvinfer.so.11")
+endif()
 message(STATUS "TensorRT SDK from Conan: ${TENSORACLE_TENSORRT_INCLUDE}; ${TENSORACLE_TENSORRT_LIBRARY}")
 
 add_library(tensoracle src/abi.cpp src/error.cpp src/bundle.cpp src/producer.cpp src/comparison.cpp)
@@ -47,6 +55,9 @@ add_library(tensoracle::tensoracle ALIAS tensoracle)
 target_compile_features(tensoracle PUBLIC cxx_std_17)
 if(BUILD_SHARED_LIBS)
     target_compile_definitions(tensoracle PRIVATE TENSORACLE_BUILDING_LIBRARY)
+    if(WIN32)
+        set_target_properties(tensoracle PROPERTIES RUNTIME_OUTPUT_NAME "tensoracle-${PROJECT_VERSION_MAJOR}" ARCHIVE_OUTPUT_NAME tensoracle)
+    endif()
 else()
     target_compile_definitions(tensoracle PUBLIC TENSORACLE_STATIC_LIBRARY)
     set_target_properties(tensoracle PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -108,7 +119,7 @@ install(TARGETS tensoracle EXPORT tensoracleTargets
     ARCHIVE DESTINATION "${TENSORACLE_LIBRARY_DIR}")
 install(DIRECTORY include/ DESTINATION "${TENSORACLE_INCLUDE_DIR}")
 # Resolve notices from the same packages as the headers, including when the
-# caller supplies CMakeDeps instead of running this project's bootstrap.
+# caller supplies CMakeDeps with its own toolchain.
 find_file(TENSORACLE_NLOHMANN_JSON_LICENSE LICENSE.MIT
     PATHS ${nlohmann_json_INCLUDE_DIRS} PATH_SUFFIXES ../licenses
     NO_DEFAULT_PATH REQUIRED NO_CACHE)
@@ -132,14 +143,15 @@ if(NOT BUILD_SHARED_LIBS)
     _tensoracle_find_cuda()
 ]=])
 endif()
+# Install-only configs must not shadow an installed SDK in the Conan generators directory.
 configure_package_config_file(cmake/tensoracleConfig.cmake.in
-    "${CMAKE_CURRENT_BINARY_DIR}/tensoracleConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/tensoracleConfig.cmake"
     INSTALL_DESTINATION "${TENSORACLE_PACKAGE_DIR}" PATH_VARS TENSORACLE_HELPER_DIR)
-write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/tensoracleConfigVersion.cmake"
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/tensoracleConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(EXPORT tensoracleTargets NAMESPACE tensoracle:: DESTINATION "${TENSORACLE_PACKAGE_DIR}")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/tensoracleConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/tensoracleConfigVersion.cmake"
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/tensoracleConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/tensoracleConfigVersion.cmake"
     DESTINATION "${TENSORACLE_PACKAGE_DIR}")
 
 include(CTest)

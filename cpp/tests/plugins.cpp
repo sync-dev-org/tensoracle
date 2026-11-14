@@ -1,11 +1,16 @@
+#include "test_platform.hpp"
 #include <tensoracle/plugins.hpp>
 #include "sha256.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <fstream>
 #include <cstdio>
+#if !defined(_WIN32)
 #include <dlfcn.h>
+#endif
+#if !defined(_WIN32)
 #include <unistd.h>
+#endif
 #include <NvInferRuntime.h>
 
 namespace fs = std::filesystem;
@@ -13,12 +18,9 @@ namespace {
 struct fixture {
     fs::path directory;
     fixture() {
-        char pattern[] = "/tmp/tensoracle-plugin-XXXXXX";
-        auto* path = mkdtemp(pattern);
-        REQUIRE(path);
-        directory = path;
+        directory = test_platform::make_directory();
     }
-    ~fixture() { unsetenv("TENSORACLE_TEST_PLUGIN_MARKER"); fs::remove_all(directory); }
+    ~fixture() { test_platform::unset_environment("TENSORACLE_TEST_PLUGIN_MARKER"); std::error_code ignored; fs::remove_all(directory, ignored); }
 };
 std::string bytes(const fs::path& path) {
     std::ifstream stream(path, std::ios::binary);
@@ -40,23 +42,24 @@ struct linked_fixture {
     std::string plugin_namespace;
     std::vector<void*> creators;
     explicit linked_fixture(const fs::path& path, const std::string& suffix) {
-        module = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        module = test_platform::load_library(path);
         REQUIRE(module);
-        anchor = dlsym(module, "fixture_creators"); REQUIRE(anchor);
+        anchor = test_platform::symbol(module, "fixture_creators"); REQUIRE(anchor);
         plugin_namespace = "tensoracle.tests." + suffix;
-        auto set_namespace = reinterpret_cast<void(*)(const char*)>(dlsym(module, "fixture_namespace"));
+        auto set_namespace = reinterpret_cast<void(*)(const char*)>(test_platform::symbol(module, "fixture_namespace"));
         REQUIRE(set_namespace); set_namespace(plugin_namespace.c_str());
         auto get = reinterpret_cast<nvinfer1::IPluginCreatorInterface* const*(*)(int32_t*)>(anchor);
         int32_t count = 0; auto* pointers = get(&count);
         creators.assign(pointers, pointers + count);
     }
     // Registration borrows creators and their module for the process lifetime.
-    void* symbol(const char* name) const { auto* value = dlsym(module, name); REQUIRE(value); return value; }
+    void* symbol(const char* name) const { auto* value = test_platform::symbol(module, name); REQUIRE(value); return value; }
 };
 void library_error(const fs::path& path, const char* element) {
     auto* result = reinterpret_cast<tensoracle_plugin_libraries*>(1);
     tensoracle_error* diagnostic = nullptr;
-    const char* paths[]{path.c_str()};
+    auto path_text = path.u8string();
+    const char* paths[]{path_text.c_str()};
     auto status = tensoracle_register_libraries(paths, 1, &result, &diagnostic);
     tensoracle::plugin_libraries result_owner(result);
     tensoracle::error_handle error(diagnostic);
@@ -105,6 +108,22 @@ TEST_CASE("Different modules can use direct and whole library registration toget
     REQUIRE(tensoracle::register_embedded_plugins(plugin.anchor, plugin.creators, plugin.plugin_namespace.c_str()).digests().size() == 1);
     REQUIRE(tensoracle::register_libraries({TENSORACLE_OTHER_REGISTRATION_PLUGIN}).size() == 1);
     REQUIRE(getPluginRegistry()->getCreator("RegistrationSecond", "1", "tensoracle.tests.other_registration"));
+    auto* library = test_platform::load_library(TENSORACLE_OTHER_REGISTRATION_PLUGIN);
+    REQUIRE(library);
+    auto initialized = reinterpret_cast<bool(*)()>(test_platform::symbol(library, "fixture_logger_initialized"));
+    REQUIRE(initialized);
+    REQUIRE(initialized());
+    test_platform::close_library(library);
+}
+TEST_CASE("A failed whole-library registration rolls back only its newly registered creators",
+          "[SP-TENSORACLE-054][SP-TENSORACLE-077]") {
+    fixture files; auto path = files.directory / "rollback.so";
+    fs::copy_file(TENSORACLE_REGISTRATION_PLUGIN, path);
+    linked_fixture plugin(path, "rollback-library");
+    tensoracle::register_embedded_plugins(plugin.anchor, {plugin.creators[1]}, plugin.plugin_namespace.c_str());
+    library_error(path, "register");
+    REQUIRE(getPluginRegistry()->getCreator("RegistrationFirst", "1", plugin.plugin_namespace.c_str()) == nullptr);
+    REQUIRE(getPluginRegistry()->getCreator("RegistrationSecond", "1", plugin.plugin_namespace.c_str()) == plugin.creators[1]);
 }
 TEST_CASE("Embedded registration rejects a replaced module file before registering creators",
           "[SP-TENSORACLE-078][SP-TENSORACLE-002][SP-TENSORACLE-009]") {
@@ -114,6 +133,10 @@ TEST_CASE("Embedded registration rejects a replaced module file before registeri
     linked_fixture plugin(path, "replaced-module");
     fs::copy_file(TENSORACLE_OTHER_REGISTRATION_PLUGIN, replacement);
     REQUIRE(bytes(path) != bytes(replacement));
+#if defined(_WIN32)
+    // Windows permits renaming a loaded image, but refuses overwriting it.
+    fs::rename(path, fs::u8path(path.u8string() + ".loaded"));
+#endif
     fs::rename(replacement, path);
     auto* result = reinterpret_cast<tensoracle_plugin_libraries*>(1);
     tensoracle_error* diagnostic = nullptr;
@@ -135,6 +158,7 @@ TEST_CASE("Static objects in anonymous BSS still identify their containing modul
     fs::copy_file(TENSORACLE_REGISTRATION_PLUGIN, path);
     linked_fixture plugin(path, "anonymous-bss");
     auto address = reinterpret_cast<void*(*)()>(plugin.symbol("fixture_bss"))();
+#if !defined(_WIN32)
     bool anonymous = false;
     std::ifstream maps("/proc/self/maps");
     for (std::string line; std::getline(maps, line);) {
@@ -144,6 +168,11 @@ TEST_CASE("Static objects in anonymous BSS still identify their containing modul
             anonymous = inode == 0;
     }
     REQUIRE(anonymous);
+#else
+    MEMORY_BASIC_INFORMATION region{};
+    REQUIRE(VirtualQuery(address, &region, sizeof(region)) == sizeof(region));
+    REQUIRE(region.Type == MEM_IMAGE);
+#endif
     auto partial = tensoracle::register_embedded_plugins(address, {plugin.creators[0]}, plugin.plugin_namespace.c_str());
     auto result = tensoracle::register_embedded_plugins(address, plugin.creators, plugin.plugin_namespace.c_str());
     REQUIRE(result.digests() == partial.digests());
@@ -156,7 +185,7 @@ TEST_CASE("Embedded creators register in process and identify the complete execu
     static embedded_creator creator, conflict;
     nvinfer1::IPluginCreatorInterface* interface = &creator;
     std::vector<void*> creators{interface};
-    auto data = bytes("/proc/self/exe");
+    auto data = bytes(test_platform::executable_path());
     auto expected = tensoracle::detail::sha256(data.data(), data.size());
     auto result = tensoracle::register_embedded_plugins(&creator, creators, creator.getPluginNamespace());
     REQUIRE(result.digests() == std::vector<std::string>{expected});
@@ -186,7 +215,7 @@ TEST_CASE("Embedded registration clears its result when inputs cannot identify a
 TEST_CASE("Plugin export checks reject unsafe libraries before initializers run", "[SP-TENSORACLE-054][SP-TENSORACLE-011]") {
     fixture files;
     auto marker = files.directory / "loaded";
-    setenv("TENSORACLE_TEST_PLUGIN_MARKER", marker.c_str(), 1);
+    test_platform::set_environment("TENSORACLE_TEST_PLUGIN_MARKER", marker.u8string());
     try {
         tensoracle::register_libraries({TENSORACLE_INVALID_PLUGIN});
         FAIL("missing getCreators was accepted");
@@ -195,29 +224,37 @@ TEST_CASE("Plugin export checks reject unsafe libraries before initializers run"
         REQUIRE(std::string(failure.what()).find("getCreators") != std::string::npos);
     }
     REQUIRE_FALSE(fs::exists(marker));
-    auto* library = dlopen(TENSORACLE_INVALID_PLUGIN, RTLD_NOW | RTLD_LOCAL);
+    auto* library = test_platform::load_library(TENSORACLE_INVALID_PLUGIN);
     REQUIRE(library);
     REQUIRE(fs::exists(marker));
-    dlclose(library);
-    REQUIRE_THROWS_AS(tensoracle::register_libraries({(files.directory / "missing.so").string()}), tensoracle::error);
+    test_platform::close_library(library);
+    REQUIRE_THROWS_AS(tensoracle::register_libraries({(files.directory / "missing.so").u8string()}), tensoracle::error);
 }
 TEST_CASE("Plugin registration retains and deduplicates loaded bytes and rejects changes", "[SP-TENSORACLE-054][SP-TENSORACLE-009]") {
     fixture files;
     auto marker = files.directory / "loaded";
-    setenv("TENSORACLE_TEST_PLUGIN_MARKER", marker.c_str(), 1);
-    auto path = files.directory / "first.so";
-    auto copy = files.directory / "same.so";
+    test_platform::set_environment("TENSORACLE_TEST_PLUGIN_MARKER", marker.u8string());
+    auto path = files.directory / fs::u8path(u8"最初-\U0001f310.so");
+    auto copy = files.directory / fs::u8path(u8"同じ.so");
     fs::copy_file(TENSORACLE_VALID_PLUGIN, path);
     fs::copy_file(path, copy);
     auto data = bytes(path);
     auto expected = tensoracle::detail::sha256(data.data(), data.size());
-    REQUIRE(tensoracle::register_libraries({path.string(), path.string(), copy.string()}) ==
+    REQUIRE(tensoracle::register_libraries({path.u8string(), path.u8string(), copy.u8string()}) ==
             std::vector<std::string>{expected, expected, expected});
-    REQUIRE(tensoracle::register_libraries({path.string()}) == std::vector<std::string>{expected});
+    REQUIRE(tensoracle::register_libraries({path.u8string()}) == std::vector<std::string>{expected});
     REQUIRE(bytes(marker) == "x");
-    { std::ofstream output(path, std::ios::binary | std::ios::app); output << "changed"; }
+#if defined(_WIN32)
+    auto replacement = files.directory / "changed.so";
+    fs::copy_file(path, replacement);
+    { std::ofstream output(replacement, std::ios::binary | std::ios::app); output << "changed"; REQUIRE(output.good()); }
+    fs::rename(path, fs::u8path(path.u8string() + ".loaded"));
+    fs::rename(replacement, path);
+#else
+    { std::ofstream output(path, std::ios::binary | std::ios::app); output << "changed"; REQUIRE(output.good()); }
+#endif
     try {
-        tensoracle::register_libraries({path.string()});
+        tensoracle::register_libraries({path.u8string()});
         FAIL("changed plugin was accepted");
     } catch (const tensoracle::error& failure) {
         REQUIRE(failure.status() == TENSORACLE_PLUGIN_LIBRARY_ERROR);
@@ -240,6 +277,16 @@ TEST_CASE("Plugin ABI returns owned diagnostics and validates digest indexes", "
     REQUIRE(digest == nullptr);
     REQUIRE(tensoracle_plugin_libraries_destroy(result) == TENSORACLE_SUCCESS);
     REQUIRE(tensoracle_plugin_libraries_destroy(nullptr) == TENSORACLE_SUCCESS);
+}
+
+TEST_CASE("Whole-library registration preserves legacy creator namespaces at Unicode paths",
+          "[SP-TENSORACLE-015][SP-TENSORACLE-054]") {
+    fixture files;
+    auto path = files.directory / fs::u8path(u8"従来-\U0001f310.so");
+    fs::copy_file(TENSORACLE_LEGACY_PLUGIN, path);
+    REQUIRE(tensoracle::register_libraries({path.u8string()}).size() == 1);
+    REQUIRE(getPluginRegistry()->getCreator("TensoracleLegacyFixture", "1", "tensoracle.tests.legacy"));
+    REQUIRE(tensoracle::register_libraries({path.u8string()}).size() == 1);
 }
 
 TEST_CASE("A library with exports but a rejected TensorRT contract reports a plugin error", "[SP-TENSORACLE-011][SP-TENSORACLE-054]") {

@@ -1,4 +1,5 @@
 #include "error.hpp"
+#include "path.hpp"
 
 #include <string>
 
@@ -28,6 +29,19 @@ tensoracle_status tensoracle::detail::fail(tensoracle_status status, const char*
     }
     return status;
 }
+#if defined(_WIN32)
+tensoracle_status tensoracle::detail::fail_system_error(const std::system_error& failure,
+                                                      tensoracle_error** error) noexcept {
+    try {
+        auto message = system_error_utf8(failure);
+        return fail(TENSORACLE_INTERNAL_ERROR, message.c_str(), error);
+    } catch (const std::bad_alloc&) {
+        return fail(TENSORACLE_OUT_OF_MEMORY, "tensoracle allocation failed", error);
+    } catch (...) {
+        return fail(TENSORACLE_INTERNAL_ERROR, "could not encode filesystem error path as UTF-8", error);
+    }
+}
+#endif
 
 extern "C" tensoracle_status tensoracle_error_message(
     const tensoracle_error* error, const char** message, tensoracle_error** diagnostic) noexcept {

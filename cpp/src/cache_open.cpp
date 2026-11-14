@@ -1,9 +1,17 @@
 #include "cache.hpp"
 #include "engine_internal.hpp"
+#include "path.hpp"
 #include <tensoracle/plugins.hpp>
 #include <cuda.h>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #include <sys/utsname.h>
+#endif
 #include <cerrno>
 #include <map>
 #include <set>
@@ -14,11 +22,20 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 namespace {
 struct driver_library {
+#if defined(_WIN32)
+    HMODULE value = LoadLibraryExW(L"nvcuda.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    ~driver_library() { if (value) FreeLibrary(value); }
+#else
     void* value = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
     ~driver_library() { if (value) dlclose(value); }
+#endif
     template<class T> T get(const char* name) {
         if (!value) throw std::runtime_error("CUDA driver library was not found");
+#if defined(_WIN32)
+        auto pointer = GetProcAddress(value, name);
+#else
         auto pointer = dlsym(value, name);
+#endif
         if (!pointer) throw std::runtime_error(std::string("CUDA driver symbol was not found: ") + name);
         return reinterpret_cast<T>(pointer);
     }
@@ -30,7 +47,7 @@ std::vector<int64_t> dimensions(const nvinfer1::Dims& value) {
 [[noreturn]] void mismatch(const fs::path& path, const std::string& name, const std::string& field,
                            const json& observed, const json& expected) {
     throw engine_io_error("TensorRT engine tensor '" + name + "' " + field + " differs: observed="
-        + observed.dump() + ", expected=" + expected.dump() + "; path=" + path.string());
+        + observed.dump() + ", expected=" + expected.dump() + "; path=" + path_utf8(path));
 }
 void validate_io(const engine_handle& engine, const fs::path& path, const cache_request& request) {
     auto& native = *engine.get()->state->engine;
@@ -87,7 +104,7 @@ engine_handle open_plan(const std::vector<uint8_t>& plan, const fs::path& path, 
     try { result = deserialize_engine(plan); }
     catch (const tensoracle::error& failure) {
         if (failure.status() == TENSORACLE_CORRUPT_ENGINE)
-            throw corrupt_engine_error(std::string(failure.what()) + "; path=" + path.string());
+            throw corrupt_engine_error(std::string(failure.what()) + "; path=" + path_utf8(path));
         throw;
     }
     validate_io(result, path, request);
@@ -136,13 +153,17 @@ json gpu_identity() {
 
 cached_engine open_cached_engine(const cache_request& request, const std::function<built_plan()>& build) {
     std::vector<std::string> paths;
-    for (const auto& path : request.plugins) paths.push_back(path.string());
+    for (const auto& path : request.plugins) paths.push_back(path_utf8(path));
     auto plugins = tensoracle::register_libraries(paths);
     auto version = tensoracle::tensorrt_version();
     auto version_text = std::to_string(version.major) + "." + std::to_string(version.minor) + "." + std::to_string(version.patch);
+#if defined(_WIN32)
+    auto conditions = make_conditions(request, plugins, gpu_identity(), version_text, "Windows", "x86_64");
+#else
     struct utsname system{};
     if (uname(&system)) throw std::system_error(errno, std::generic_category(), "uname");
     auto conditions = make_conditions(request, plugins, gpu_identity(), version_text, system.sysname, system.machine);
+#endif
     auto path = cache_path(conditions);
     fs::create_directories(path.parent_path());
     engine_file_lock lock(path);

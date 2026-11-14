@@ -1,14 +1,15 @@
 {
     "version": "0.5",
     "requires": [
+        "tensorrt/11.2.1.2#b13e1bf243c17a21d10b17d4a9469d9c%1794657402.5521438",
         "nlohmann_json/3.11.3#45828be26eb619a2e04ca517bb7b828d%1701220705.259",
         "miniz/3.1.1#ae48ea4c4ee773386b496b9722e3b66a%1778764964.632",
-        "catch2/3.16.1#0dc3f5041f5a681061a45f17e7be0fed%1793091288.859",
-        "tensorrt/11.2.1.2#e33fcad653baa75e40e8323cc94a0fda"
+        "catch2/3.16.1#0dc3f5041f5a681061a45f17e7be0fed%1793091288.859"
     ],
     "build_requires": [
-        "cuda-toolkit/13.2.2#eabd6f2ae9bfe251179e26fb81238c01",
-        "cmake/system#platform"
+        "ninja/1.13.2#c8c5dc2a52ed6e4e42a66d75b4717ceb%1764096931.974",
+        "cuda-toolkit/13.2.2#610d7e3984f0fc4835768ab05d0c019b%1794657406.4413667",
+        "cmake/3.31.12#71c3a0c80cc89cde62956db9e69550e0%1793881533.662"
     ],
     "python_requires": [],
     "config_requires": []
