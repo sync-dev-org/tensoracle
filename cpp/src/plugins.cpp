@@ -181,7 +181,7 @@ module_file identify_module_file(const void* address) {
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             reinterpret_cast<LPCWSTR>(address), &module)) module_file_error();
-    std::vector<wchar_t> name(32768), mapped(32768), opened(32768);
+    std::vector<wchar_t> name(32768), mapped(32768);
     auto length = GetModuleFileNameW(module, name.data(), DWORD(name.size()));
     if (!length || length >= name.size()) module_file_error();
     std::filesystem::path path(std::wstring(name.data(), length));
@@ -190,9 +190,30 @@ module_file identify_module_file(const void* address) {
     if (handle == INVALID_HANDLE_VALUE) module_file_error(path);
     struct owner { HANDLE handle; ~owner() { CloseHandle(handle); } } file{handle};
     auto mapped_size = K32GetMappedFileNameW(GetCurrentProcess(), module, mapped.data(), DWORD(mapped.size()));
-    auto opened_size = GetFinalPathNameByHandleW(handle, opened.data(), DWORD(opened.size()), FILE_NAME_NORMALIZED | VOLUME_NAME_NT);
-    if (!mapped_size || mapped_size >= mapped.size() || !opened_size || opened_size >= opened.size()
-        || _wcsicmp(mapped.data(), opened.data()) != 0) module_file_error(path);
+    if (!mapped_size || mapped_size >= mapped.size()) module_file_error(path);
+    // A shared image section can retain another process's hardlink name.
+    // Compare the files behind the two names, keeping both handles open.
+    auto mapped_path = L"\\\\?\\GLOBALROOT" + std::wstring(mapped.data(), mapped_size);
+    auto mapped_handle = CreateFileW(mapped_path.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (mapped_handle == INVALID_HANDLE_VALUE) module_file_error(path);
+    owner mapped_file{mapped_handle};
+    FILE_ID_INFO opened_id{}, mapped_id{};
+    if (GetFileInformationByHandleEx(handle, FileIdInfo, &opened_id, sizeof(opened_id))
+        && GetFileInformationByHandleEx(mapped_handle, FileIdInfo, &mapped_id, sizeof(mapped_id))) {
+        if (opened_id.VolumeSerialNumber != mapped_id.VolumeSerialNumber
+            || std::memcmp(opened_id.FileId.Identifier, mapped_id.FileId.Identifier, sizeof(opened_id.FileId.Identifier)))
+            module_file_error(path);
+    } else {
+        // File systems without 128-bit IDs can expose the legacy file index.
+        BY_HANDLE_FILE_INFORMATION opened_info{}, mapped_info{};
+        if (!GetFileInformationByHandle(handle, &opened_info)
+            || !GetFileInformationByHandle(mapped_handle, &mapped_info)
+            || opened_info.dwVolumeSerialNumber != mapped_info.dwVolumeSerialNumber
+            || opened_info.nFileIndexHigh != mapped_info.nFileIndexHigh
+            || opened_info.nFileIndexLow != mapped_info.nFileIndexLow)
+            module_file_error(path);
+    }
     tensoracle::detail::sha256_state hash;
     std::array<char, 64 * 1024> buffer{};
     for (;;) {

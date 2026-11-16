@@ -185,6 +185,22 @@ if(WIN32)
     add_executable(tensoracle_old_ptxas old_ptxas.cpp)
     target_compile_definitions(tensoracle_cubin_test PRIVATE TENSORACLE_OLD_PTXAS="$<TARGET_FILE:tensoracle_old_ptxas>")
     add_dependencies(tensoracle_cubin_test tensoracle_old_ptxas)
+
+    add_executable(tensoracle_hardlink_probe embedded_plugin/hardlink_probe.cpp)
+    target_include_directories(tensoracle_hardlink_probe PRIVATE
+        "${TENSORACLE_TENSORRT_INCLUDE}" "${TENSORACLE_CUDA_INCLUDE}")
+    target_link_libraries(tensoracle_hardlink_probe PRIVATE tensoracle::tensoracle
+        tensoracle_json "${TENSORACLE_TENSORRT_LIBRARY}")
+    add_executable(tensoracle_windows_module_identity_test windows_module_identity.cpp)
+    target_include_directories(tensoracle_windows_module_identity_test PRIVATE ../src)
+    target_link_libraries(tensoracle_windows_module_identity_test PRIVATE tensoracle::tensoracle
+        tensoracle_json Catch2::Catch2WithMain)
+    target_compile_definitions(tensoracle_windows_module_identity_test PRIVATE
+        TENSORACLE_HARDLINK_PROBE="$<TARGET_FILE:tensoracle_hardlink_probe>"
+        TENSORACLE_REGISTRATION_PLUGIN="$<TARGET_FILE:tensoracle_registration_plugin>")
+    add_dependencies(tensoracle_windows_module_identity_test tensoracle_hardlink_probe tensoracle_registration_plugin)
+    catch_discover_tests(tensoracle_windows_module_identity_test DL_PATHS ${_tensoracle_test_dl_paths}
+        ADD_TAGS_AS_LABELS PROPERTIES ${_tensoracle_test_properties} TIMEOUT 60)
 endif()
 
 # These exercise the actual file locks without creating a CUDA context.
