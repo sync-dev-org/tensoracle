@@ -26,7 +26,7 @@ dependencies = [
 tensoracle = "tensoracle._cli:main"
 
 [project.urls]
-documentation = "https://sync-dev-org.github.io/tensoracle/"
+documentation = "https://sync-dev-org.github.io/tensoracle/docs/"
 repository = "https://github.com/sync-dev-org/tensoracle"
 issues = "https://github.com/sync-dev-org/tensoracle/issues"
 

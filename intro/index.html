@@ -1,0 +1,854 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="tensoracle は、PyTorch の model を TensorRT engine で速く動かすまでの道のりを、一本の標準の手順と、それを支える C++ の library にまとめました。fp32 の正解との照合から、減精度、自前の kernel まで。品質の基準を下げずに、速さを積み上げます。">
+  <title>tensoracle — 速さは上げる。基準は下げない。</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      --paper: #f3f0e8;
+      --paper-2: #e9e4d8;
+      --card: #fbfaf6;
+      --ink: #141619;
+      --ink-2: #34373c;
+      --muted: #62656a;
+      --line: #d6d0c2;
+      --line-2: #b9b2a2;
+      --red: #e8452c;
+      --night: #111214;
+      --night-2: #1a1b1e;
+
+      --bg: var(--paper);
+      --fg: var(--ink);
+      --fg-2: var(--ink-2);
+      --sub: var(--muted);
+      --rule: var(--line);
+      --rule-2: var(--line-2);
+      --surface: var(--card);
+      --accent-text: #b02e1b;
+      --grid: #1416190a;
+
+      --sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", YuGothic, "Yu Gothic", "BIZ UDPGothic", Meiryo, "Noto Sans CJK JP", "Noto Sans JP", system-ui, sans-serif;
+      --display: "Helvetica Neue", "Arial Nova", Arial, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+      --gutter: clamp(20px, 5vw, 72px);
+      --max: 1240px;
+    }
+    .dark {
+      --bg: var(--night);
+      --fg: #f1ede5;
+      --fg-2: #d2cdc3;
+      --sub: #9e9c95;
+      --rule: #2c2e33;
+      --rule-2: #46484e;
+      --surface: var(--night-2);
+      --accent-text: #ff6a4d;
+      --grid: #ffffff0a;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; scroll-padding-top: 76px; }
+    body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); font: 400 16px/1.9 var(--sans); -webkit-font-smoothing: antialiased; line-break: strict; }
+    h1, h2, h3, p, figure, dl, dd, ol, ul { margin: 0; }
+    ol, ul { padding: 0; list-style: none; }
+    a { color: inherit; text-underline-offset: .28em; }
+    a:focus-visible, summary:focus-visible { outline: 2px solid var(--red); outline-offset: 4px; border-radius: 2px; }
+    code { font-family: var(--mono); font-size: .9em; }
+    svg { display: block; max-width: 100%; }
+    .defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+    .wrap { max-width: calc(var(--max) + 2 * var(--gutter)); margin-inline: auto; padding-inline: var(--gutter); }
+    .skip { position: absolute; z-index: 20; top: 10px; left: 12px; padding: 8px 14px; background: var(--red); color: var(--ink); font-size: 14px; font-weight: 700; transform: translateY(-200%); }
+    .skip:focus { transform: none; }
+    .nw { white-space: nowrap; }
+
+    /* type */
+    .eyebrow { display: flex; align-items: flex-start; gap: 12px; color: var(--accent-text); font: 500 12px/1.6 var(--mono); letter-spacing: .08em; }
+    .eyebrow::before { content: ""; flex: 0 0 30px; height: 9px; margin-top: .45em; background: linear-gradient(currentColor, currentColor) left bottom / 100% 2px no-repeat, repeating-linear-gradient(90deg, currentColor 0 1px, transparent 1px 7px) left bottom / 100% 9px no-repeat; }
+    h1, h2, h3 { font-family: var(--sans); font-feature-settings: "palt"; word-break: auto-phrase; }
+    h2 { margin-top: 20px; font-size: clamp(26px, 3.9vw, 52px); font-weight: 800; line-height: 1.24; letter-spacing: -.035em; }
+    h3 { font-size: 19px; font-weight: 700; line-height: 1.55; letter-spacing: -.01em; }
+    .lede { color: var(--fg-2); font-size: clamp(15px, 1.25vw, 17px); line-height: 2; word-break: auto-phrase; }
+    .small { color: var(--sub); font-size: 13px; line-height: 1.85; }
+
+    /* buttons */
+    .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 26px; }
+    .btn { display: inline-flex; align-items: center; gap: 14px; min-height: 50px; padding: 0 22px; border-radius: 999px; background: var(--red); color: var(--ink); font-size: 15px; font-weight: 700; text-decoration: none; }
+    .btn:hover { background: #ff5a3d; }
+    .btn .arr, .link .arr { font-family: var(--mono); }
+    .link { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; font-weight: 600; text-decoration: none; border-bottom: 1px solid currentColor; }
+    .link:hover { color: var(--accent-text); }
+
+    /* top bar */
+    .topbar { position: sticky; top: 0; z-index: 10; background: #111214f0; border-bottom: 1px solid var(--rule); color: var(--fg); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+    .topbar .wrap { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 64px; }
+    .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 800; letter-spacing: -.045em; text-decoration: none; font-family: var(--display); }
+    .brand svg { width: 26px; height: 26px; }
+    .nav { display: flex; align-items: center; gap: 4px 26px; font-size: 13px; }
+    .nav a { padding-block: 10px; text-decoration: none; color: var(--fg-2); }
+    .nav a:hover { color: var(--fg); }
+    .nav .nav-cta { padding: 6px 16px; border: 1px solid var(--rule-2); border-radius: 999px; color: var(--fg); }
+
+    /* sections */
+    .section { padding-block: clamp(76px, 9.5vw, 136px); background: var(--bg); color: var(--fg); }
+    .band { background: var(--paper-2); }
+    .sec-head { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: end; gap: 28px 72px; margin-bottom: clamp(44px, 5vw, 68px); }
+    .fig-cap { display: flex; gap: 14px; margin-top: 18px; color: var(--sub); font-size: 13px; line-height: 1.8; }
+    .fig-no { flex-shrink: 0; color: var(--accent-text); font: 500 12px/1.95 var(--mono); letter-spacing: .06em; }
+    .v-narrow { display: none; }
+
+    /* hero */
+    .hero { position: relative; padding-block: clamp(56px, 7vw, 96px) clamp(72px, 8vw, 112px); background-color: var(--night); background-image: radial-gradient(46% 52% at 92% 0%, #e8452c1f, transparent 70%), linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: auto, 32px 32px, 32px 32px; color: var(--fg); }
+    .hero h1 { margin-top: 28px; font-size: clamp(36px, 9.2vw, 116px); font-weight: 800; line-height: 1.14; letter-spacing: -.045em; }
+    .hero h1 em { font-style: normal; color: var(--red); }
+    .ruler { height: 16px; margin-top: clamp(18px, 2.4vw, 30px); background: linear-gradient(var(--red), var(--red)) left bottom / 100% 3px no-repeat, repeating-linear-gradient(90deg, var(--red) 0 1px, transparent 1px 12px) left bottom / 100% 8px no-repeat, repeating-linear-gradient(90deg, var(--red) 0 2px, transparent 2px 60px) left bottom / 100% 16px no-repeat; opacity: .9; }
+    .hero-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 40px 72px; align-items: start; margin-top: clamp(36px, 4vw, 56px); }
+    .hero-copy .lede { font-size: clamp(15px, 1.3vw, 18px); color: var(--fg-2); }
+    .hero-copy .actions { margin-top: 34px; }
+    .hero-fig { min-width: 0; padding: clamp(18px, 2vw, 28px); border: 1px solid var(--rule); border-radius: 14px; background: #15161980; }
+    .hero-fig .fig-cap { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rule); }
+
+    /* chart vocabulary */
+    .ch text { font-family: var(--sans); fill: var(--fg); }
+    .ch .t-lab { font-size: 15px; font-weight: 700; }
+    .ch .t-stage { font-size: 14px; font-weight: 600; }
+    .ch .t-sub { font-size: 11.5px; fill: var(--sub); }
+    .ch .t-note { font-size: 12px; fill: var(--sub); }
+    .ch .t-red { fill: var(--accent-text); }
+    .ch .t-num { font-family: var(--mono); font-weight: 600; fill: var(--accent-text); }
+    .ch .col { stroke: var(--rule-2); stroke-dasharray: 3 5; fill: none; }
+    .ch .axis { stroke: var(--rule-2); fill: none; }
+    .ch .speed { fill: none; stroke: var(--fg); stroke-width: 3; stroke-linejoin: round; }
+    .ch .speed-area { fill: var(--fg); opacity: .07; }
+    .ch .dot { fill: var(--fg); }
+    .ch .target { stroke: var(--fg-2); stroke-width: 1.5; stroke-dasharray: 7 6; fill: none; }
+    .ch .bar { stroke: var(--red); stroke-width: 3; fill: none; }
+    .ch .fail { fill: var(--red); opacity: .13; }
+    .ch .maru { color: var(--red); }
+
+    /* 01 quality */
+    .quality-grid { display: grid; grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); gap: 48px 72px; align-items: start; }
+    .sheet { position: relative; margin: 0; padding: clamp(20px, 2.4vw, 32px); border: 1px solid var(--rule-2); border-radius: 6px; background: var(--card); box-shadow: 0 1px 0 #00000008, 0 18px 40px -28px #4a3a1f40; }
+    .sheet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 16px; border-bottom: 2px solid var(--ink); }
+    .sheet-head p { font-size: 17px; font-weight: 800; line-height: 1.5; letter-spacing: -.01em; }
+    .sheet-head p span { display: block; color: var(--sub); font: 400 12px/1.7 var(--mono); letter-spacing: .04em; }
+    .stamp { flex-shrink: 0; display: grid; place-items: center; width: 74px; height: 74px; border: 2px solid var(--red); border-radius: 50%; color: var(--red); font-size: 12px; font-weight: 800; line-height: 1.3; text-align: center; transform: rotate(-12deg); }
+    .stamp b { display: block; font: 800 15px/1.1 var(--mono); }
+    .sheet table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.55; }
+    .sheet th, .sheet td { padding: 13px 10px 13px 0; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: middle; }
+    .sheet thead th { padding-block: 12px 10px; color: var(--sub); font-size: 12px; font-weight: 500; font-family: var(--mono); letter-spacing: .06em; }
+    .sheet tbody th { font: 600 16px/1.4 var(--mono); white-space: nowrap; }
+    .sheet small { display: block; color: var(--sub); font: 400 11.5px/1.5 var(--sans); white-space: normal; }
+    .sheet td.ref { color: var(--fg-2); font-size: 14px; }
+    .ditto { color: var(--sub); font-size: 18px; }
+    .verdict { width: 1%; white-space: nowrap; padding-right: 0; }
+    .verdict span { display: inline-flex; align-items: center; gap: 8px; color: var(--accent-text); font-size: 12px; font-weight: 700; }
+    .verdict svg { flex-shrink: 0; width: 34px; height: 34px; color: var(--red); }
+    .verdict em { font-style: normal; }
+    .verdict.ng span { color: var(--accent-text); }
+    tr.rejected th, tr.rejected td.ref { color: var(--sub); text-decoration: line-through; text-decoration-color: #e8452c99; }
+    .points { display: grid; grid-template-columns: minmax(0, 1fr); }
+    .points li { padding: 22px 0; border-top: 1px solid var(--rule); }
+    .points li:last-child { border-bottom: 1px solid var(--rule); }
+    .points p { margin-top: 8px; color: var(--sub); font-size: 15px; line-height: 1.9; }
+    .measures { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .measures + p { margin-top: 14px; }
+    .measures span { padding: 3px 10px; border: 1px solid var(--rule-2); border-radius: 4px; font-size: 12.5px; line-height: 1.6; color: var(--fg-2); }
+
+    /* 02 kernel */
+    .flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 36px; counter-reset: flow; }
+    .flow > li { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 20px 18px 22px; border: 1px solid var(--rule-2); border-radius: 10px; background: var(--surface); }
+    .flow > li + li::before { content: "→"; position: absolute; top: 50%; left: -29px; transform: translateY(-50%); color: var(--red); font: 600 20px/1 var(--mono); }
+    .flow .tag { color: var(--sub); font: 500 11px/1.6 var(--mono); letter-spacing: .1em; }
+    .flow b { font-size: 18px; font-weight: 800; line-height: 1.35; letter-spacing: -.01em; }
+    .flow b code { font-size: 1em; }
+    .flow span.d { color: var(--sub); font-size: 13px; line-height: 1.7; }
+    .flow .ours { border-color: var(--red); background: linear-gradient(180deg, #e8452c1f, #e8452c08); }
+    .flow .ours .tag { color: var(--accent-text); }
+    .flow-note { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 36px; margin-top: 14px; }
+    .flow-note p { grid-column: 2 / 5; padding-top: 12px; border-top: 2px solid var(--red); color: var(--fg-2); font-size: 14px; font-weight: 600; text-align: center; position: relative; }
+    .flow-note p::before, .flow-note p::after { content: ""; position: absolute; top: -9px; width: 2px; height: 9px; background: var(--red); }
+    .flow-note p::before { left: 0; }
+    .flow-note p::after { right: 0; }
+    .run { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: clamp(64px, 7vw, 96px); }
+    .run > div { min-width: 0; padding: clamp(22px, 2.6vw, 36px); border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); }
+    .run h3 { font-size: clamp(20px, 2vw, 26px); font-weight: 800; line-height: 1.45; letter-spacing: -.025em; }
+    .run p { margin-top: 12px; color: var(--sub); font-size: 14.5px; line-height: 1.9; }
+    .mini { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 22px; font: 500 12.5px/1.5 var(--mono); }
+    .mini i { font-style: normal; padding: 6px 11px; border: 1px solid var(--rule-2); border-radius: 6px; color: var(--fg); }
+    .mini i.hot { border-color: var(--red); background: #e8452c22; }
+    .mini i.ghost { border-style: dashed; color: var(--sub); }
+    .mini b { color: var(--red); font-weight: 600; }
+
+    /* 03 reuse */
+    .timeline { padding: clamp(18px, 2.4vw, 34px); border: 1px solid var(--rule-2); border-radius: 12px; background: var(--card); }
+    .tl text { font-family: var(--sans); fill: var(--fg); }
+    .tl .t-lab { font-size: 16px; font-weight: 700; }
+    .tl .t-sub { font-size: 13px; fill: var(--sub); }
+    .tl .t-in { font-size: 14px; font-weight: 600; fill: var(--paper); }
+    .tl .t-in-ink { font-size: 14px; font-weight: 700; fill: var(--ink); }
+    .tl .t-wait { font-size: 14px; fill: var(--sub); }
+    .tl .t-mono { font-family: var(--mono); font-size: 14px; font-weight: 500; }
+    .tl .t-red { fill: var(--accent-text); font-size: 14px; font-weight: 700; }
+    .tl .build { fill: var(--ink); }
+    .tl .save { fill: var(--ink-2); }
+    .tl .load { fill: var(--ink-2); }
+    .tl .infer { fill: var(--red); }
+    .tl .wait { fill: none; stroke: var(--line-2); stroke-width: 1.5; stroke-dasharray: 6 5; }
+    .tl .sep { stroke: var(--line); stroke-dasharray: 2 6; }
+    .tl .brace { fill: none; stroke: var(--red); stroke-width: 2; }
+    .assure { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 40px; margin-top: clamp(40px, 4.5vw, 60px); }
+    .assure > div { min-width: 0; padding-top: 22px; border-top: 2px solid var(--ink); }
+    .assure p { margin-top: 10px; color: var(--sub); font-size: 14.5px; line-height: 1.9; }
+    .cache { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 40px 72px; align-items: center; margin-top: clamp(72px, 8vw, 112px); padding-top: clamp(48px, 5vw, 64px); border-top: 1px solid var(--rule); }
+    .cache h3 { font-size: clamp(22px, 2.4vw, 32px); font-weight: 800; line-height: 1.4; letter-spacing: -.03em; }
+    .cache p { margin-top: 14px; color: var(--fg-2); font-size: 15px; line-height: 1.95; }
+    .cache .small { margin-top: 16px; }
+    .cache .eyebrow { margin-top: 0; color: var(--accent-text); font-size: 12px; }
+    .term { margin: 0; overflow: hidden; border-radius: 12px; background: var(--night); color: #e9e5dc; box-shadow: 0 24px 50px -30px #00000080; }
+    .term-head { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid #2a2c30; color: #8f8d86; font: 500 11px/1 var(--mono); letter-spacing: .08em; }
+    .term-head i { width: 9px; height: 9px; border-radius: 50%; background: #34363b; }
+    .term-head span { margin-left: 8px; }
+    .term pre { margin: 0; padding: 20px 22px 22px; overflow-x: auto; font: 400 14px/1.95 var(--mono); white-space: pre; }
+    .term .c { color: #8f8d86; }
+    .term .p { color: var(--red); }
+    .term .v { color: #ffb49f; }
+
+    /* 04 integrate */
+    .integrate { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 48px 72px; align-items: start; }
+    .stack { display: grid; gap: 10px; }
+    .layer { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 4px 18px; padding: 16px 20px; border: 1px solid var(--rule-2); border-radius: 10px; background: var(--card); }
+    .layer .who { grid-row: 1 / 3; color: var(--sub); font: 500 11px/1.5 var(--mono); letter-spacing: .1em; }
+    .layer b { font-size: 17px; font-weight: 800; line-height: 1.45; }
+    .layer span.d { color: var(--sub); font-size: 13.5px; line-height: 1.7; }
+    .layer.mine { border-color: var(--ink); }
+    .layer.core { border-color: var(--red); background: linear-gradient(90deg, #e8452c1c, #e8452c08); }
+    .layer.core .who { color: var(--accent-text); }
+    .layer.host { border-style: dashed; background: transparent; }
+    .abi { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: 6px 4px; color: var(--accent-text); font-size: 13.5px; font-weight: 700; }
+    .abi::before { content: ""; flex: 1 1 40px; order: 2; height: 0; border-top: 2px dashed var(--red); }
+    .abi b { order: 1; font: 700 13px/1.6 var(--mono); letter-spacing: .06em; }
+
+    /* 05 install */
+    .install { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .install .term { background: #0b0c0e; border: 1px solid var(--rule); box-shadow: none; }
+    .install-note { margin-top: 14px; color: var(--sub); font-size: 13.5px; line-height: 1.85; }
+    .specs { width: 100%; margin-top: clamp(56px, 6vw, 80px); border-collapse: collapse; }
+    .specs th, .specs td { padding: 16px 0; border-top: 1px solid var(--rule); text-align: left; vertical-align: top; }
+    .specs tr:last-child th, .specs tr:last-child td { border-bottom: 1px solid var(--rule); }
+    .specs th { width: 24%; padding-right: 24px; color: var(--sub); font-size: 14px; font-weight: 500; }
+    .specs td { font-size: 15px; line-height: 1.8; }
+    .specs td small { display: block; color: var(--sub); font-size: 12.5px; }
+
+    /* links to the documentation */
+    .docs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 40px; margin-top: clamp(48px, 5vw, 72px); padding-top: 14px; border-top: 1px solid var(--rule); }
+    .docs-label { flex: 0 0 auto; color: var(--accent-text); font: 500 12px/1.6 var(--mono); letter-spacing: .06em; }
+    .docs ul { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 32px; min-width: 0; }
+    .docs a { display: inline-block; padding-block: 10px; font-size: 14.5px; font-weight: 600; line-height: 1.65; text-decoration: underline; text-decoration-color: var(--rule-2); text-decoration-thickness: 1px; text-underline-offset: .34em; }
+    .docs a:hover { color: var(--accent-text); text-decoration-color: currentColor; }
+    .docs .arr { margin-left: 6px; font-family: var(--mono); }
+
+    /* closing */
+    .cta { padding-block: clamp(72px, 9vw, 128px); background: var(--red); color: var(--ink); }
+    .cta h2 { margin-top: 0; font-size: clamp(30px, 5.6vw, 80px); line-height: 1.18; }
+    .cta .lede { margin-top: 24px; max-width: 36em; color: #2a1610; }
+    .cta .actions { margin-top: 36px; }
+    .cta .btn { background: var(--ink); color: var(--paper); }
+    .cta .btn:hover { background: #000; }
+    .cta .link { color: var(--ink); }
+    .cta .link:hover { color: #000; }
+    .cta .docs { border-top-color: #14161966; }
+    .cta .docs-label { color: var(--ink); }
+    .cta .docs a { text-decoration-color: #14161980; }
+    .cta .docs a:hover { color: #000; }
+    footer { padding-block: 34px; background: var(--night); color: #9e9c95; font-size: 13px; }
+    footer .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 32px; }
+    footer .brand { color: #f1ede5; font-size: 19px; }
+    footer .brand svg { width: 22px; height: 22px; }
+    footer a.top { text-decoration: none; font-family: var(--mono); font-size: 12px; }
+    footer a.top:hover { color: #f1ede5; }
+
+    @media (max-width: 1100px) {
+      .flow { gap: 0 30px; }
+      .flow > li + li::before { left: -24px; }
+      .flow > li { padding: 18px 14px 20px; }
+      .flow b { font-size: 16px; }
+      .flow-note { gap: 0 30px; }
+    }
+    @media (max-width: 960px) {
+      .nav .opt { display: none; }
+      .sec-head, .hero-grid, .quality-grid, .cache, .integrate { grid-template-columns: minmax(0, 1fr); }
+      .sec-head { gap: 20px; }
+      .flow { grid-template-columns: minmax(0, 1fr); gap: 34px; }
+      .flow > li + li::before { content: "↓"; top: -27px; left: 50%; transform: translateX(-50%); }
+      .flow-note { display: block; }
+      .flow-note p { text-align: left; border-top: 0; border-left: 2px solid var(--red); padding: 2px 0 2px 14px; }
+      .flow-note p::before, .flow-note p::after { display: none; }
+      .run { grid-template-columns: minmax(0, 1fr); }
+      .assure { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+    }
+    @media (max-width: 640px) {
+      html { scroll-padding-top: 64px; }
+      body { font-size: 15px; }
+      .topbar .wrap { min-height: 56px; gap: 12px; }
+      .brand { font-size: 20px; }
+      .nav { gap: 4px 14px; font-size: 12px; }
+      .nav .mid { display: none; }
+      .v-wide { display: none; }
+      .v-narrow { display: block; }
+      .hero h1 { margin-top: 22px; }
+      .hero-fig { padding: 16px 14px; border-radius: 10px; }
+      .fig-cap { flex-direction: column; gap: 2px; font-size: 12.5px; }
+      .btn { min-height: 48px; padding: 0 20px; font-size: 14px; }
+      .sheet { padding: 18px 14px; }
+      .sheet table { font-size: 13.5px; }
+      .sheet th, .sheet td { padding: 11px 8px 11px 0; }
+      .sheet tbody th { font-size: 14px; }
+      .sheet td.ref { font-size: 12.5px; }
+      .verdict span em { display: none; }
+      .verdict svg { width: 30px; height: 30px; }
+      .stamp { width: 60px; height: 60px; font-size: 10.5px; }
+      .stamp b { font-size: 13px; }
+      .timeline { padding: 16px 12px; }
+      .term pre { padding: 16px; font-size: 12.5px; }
+      .layer { grid-template-columns: minmax(0, 1fr); padding: 14px 16px; }
+      .layer .who { grid-row: auto; }
+      .install { grid-template-columns: minmax(0, 1fr); }
+      .specs th, .specs td { display: block; width: auto; padding: 0; }
+      .specs th { padding: 14px 0 2px; }
+      .specs td { padding: 0 0 14px; border-top: 0; }
+      .specs tr:last-child th { border-bottom: 0; }
+      .docs { flex-direction: column; align-items: stretch; gap: 2px; }
+      .docs ul { flex-direction: column; }
+      footer .wrap { flex-direction: column; align-items: flex-start; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+    @media print {
+      @page { size: A4; margin: 12mm; }
+      html { scroll-padding-top: 0; }
+      body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 12.5px; }
+      .dark { --bg: #fff; --fg: var(--ink); --fg-2: var(--ink-2); --sub: var(--muted); --rule: var(--line); --rule-2: var(--line-2); --surface: var(--card); --accent-text: #b02e1b; --grid: transparent; }
+      .skip, .nav, .hero .actions, .cta .btn .arr, .cta .link .arr { display: none !important; }
+      .cta .btn { min-height: 0; padding: 0; background: none; color: var(--ink); text-decoration: underline; }
+      .cta .link { border: 0; text-decoration: underline; }
+      .cta .actions { display: block; }
+      .cta .actions a { display: block; min-height: 0; margin-top: 6px; font-size: 12px; }
+      .topbar { position: static; background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; }
+      .topbar .wrap { min-height: 48px; }
+      .hero { padding-block: 28px 32px; background: #fff; break-after: page; }
+      .hero h1 { font-size: 54px; }
+      .hero-fig { background: #fff; }
+      .section { padding-block: 40px; background: #fff; }
+      .band { background: #fff; }
+      .v-wide { display: block !important; }
+      .v-narrow { display: none !important; }
+      .sec-head { margin-bottom: 28px; }
+      .sec-head h2, .eyebrow { break-after: avoid; }
+      .sheet, .flow-fig, .flow > li, .run > div, .timeline, .assure > div, .cache, .layer, .term, .specs tr, .points li { break-inside: avoid; }
+      .install { grid-template-columns: minmax(0, 1fr); }
+      .term pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .term { background: #fff; color: var(--ink); border: 1px solid var(--line-2); box-shadow: none; }
+      .term .c { color: var(--muted); }
+      .term .v { color: #b02e1b; }
+      .install .term { background: #fff; }
+      .cta { padding-block: 40px; background: #fff; border-top: 3px solid var(--red); break-inside: avoid; }
+      .cta .lede { color: var(--ink-2); }
+      .docs { display: block; margin-top: 24px; padding-top: 10px; break-inside: avoid; }
+      .docs ul { display: block; }
+      .docs a { display: block; padding-block: 2px; font-size: 12px; text-decoration: none; }
+      .docs .arr { display: none; }
+      .cta .docs { border-top-color: var(--line); }
+      footer { background: #fff; color: var(--muted); border-top: 1px solid var(--line); }
+      footer .brand { color: var(--ink); }
+      a[href^="https:"]::after { content: " (" attr(href) ")"; font-size: 10px; color: var(--muted); word-break: break-all; }
+    }
+  </style>
+</head>
+<body id="top">
+  <svg class="defs" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="maru" viewBox="0 0 40 40"><path d="M11.7 8.1 13.9 6.9 16.3 6.1 18.8 5.8 21.2 5.9 23.6 6.5 25.9 7.4 28 8.6 29.8 10.2 31.4 12 32.8 14 33.8 16.3 34.4 18.7 34.7 21.3 34.4 23.9 33.7 26.4 32.5 28.7 30.8 30.8 28.8 32.6 26.5 33.9 23.9 34.7 21.3 35.1 18.7 34.9 16.2 34.4 13.8 33.4 11.5 32.1 9.6 30.4 7.8 28.5 6.4 26.3 5.4 23.9 4.7 21.3 4.5 18.6 4.7 15.9 5.5 13.2 6.8 10.8 8.5 8.5 10.7 6.7 13.2 5.3" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="batsu" viewBox="0 0 40 40"><path d="M9.5 9.5Q20 19 31 31.5M31.5 9Q19.5 20.5 8.5 31" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></symbol>
+      <symbol id="mark" viewBox="0 0 26 26"><path d="M3 14h4.5v5H3zM10.75 9h4.5v10h-4.5zM18.5 4H23v15h-4.5z" fill="currentColor"/><path d="M1.5 22.2h23" stroke="#e8452c" stroke-width="2.6" stroke-linecap="square"/></symbol>
+    </defs>
+  </svg>
+  <a class="skip" href="#main">本文へ移動</a>
+
+  <header class="topbar dark">
+    <div class="wrap">
+      <a class="brand" href="#top" aria-label="tensoracle ページの先頭へ"><svg aria-hidden="true"><use href="#mark"/></svg>tensoracle</a>
+      <nav class="nav" aria-label="案内">
+        <a class="opt" href="#quality">品質</a>
+        <a class="opt" href="#kernel">kernel</a>
+        <a class="mid" href="#reuse">再利用</a>
+        <a class="opt" href="#integrate">組み込み</a>
+        <a href="#install">導入</a>
+        <a class="nav-cta" href="https://sync-dev-org.github.io/tensoracle/docs/">ドキュメント <span aria-hidden="true">↗</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero dark" aria-labelledby="hero-title">
+      <div class="wrap">
+        <p class="eyebrow">tensoracle 2.6.1</p>
+        <h1 id="hero-title">速さは上げる。<br><em>基準は、下げない。</em></h1>
+        <div class="ruler" aria-hidden="true"></div>
+
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="lede">PyTorch の model を、TensorRT engine で速く動かす。その道のりを、tensoracle は一本の標準の手順と、手順で使う C++ の library にまとめました。</p>
+            <div class="actions">
+              <a class="btn" href="#quality">手順を見る <span class="arr" aria-hidden="true">↓</span></a>
+              <a class="link" href="https://sync-dev-org.github.io/tensoracle/docs/optimization/">四段の手順を読む <span class="arr" aria-hidden="true">↗</span></a>
+            </div>
+          </div>
+
+          <figure class="hero-fig">
+            <svg class="ch v-wide" viewBox="0 0 640 342" role="img" aria-labelledby="f1w-t f1w-d">
+              <title id="f1w-t">四段の標準の手順で、速さを上げても品質の基準は動かさない</title>
+              <desc id="f1w-d">図の上半分は速さを表す。速さの線は、正解との照合、減精度の選択、自前の kernel への置き換え、負荷なしでの計測の四つの工程を進むにつれて階段状に上がり、使う側が決めた目標を越える。図の下半分は品質を表す。品質の基準の線は、四つの工程を通して同じ高さのまま動かない。どの工程の品質も基準の線より上にあり、赤い丸で合格を示す。基準の線を下回る候補は採らない。</desc>
+              <path class="col" d="M212 24V302M352 24V302M492 24V302"/>
+              <text class="t-lab" x="0" y="40">速さ</text>
+              <text class="t-sub" x="0" y="60">↑ 上がる</text>
+              <path class="speed-area" d="M72 176V150H212V112H352V70H632V176Z"/>
+              <path class="axis" d="M72 176H632"/>
+              <path class="target" d="M72 86H632"/>
+              <text class="t-note" x="626" y="104" text-anchor="end">目標 · 使う側が決める</text>
+              <path class="speed" d="M72 150H212V112H352V70H632"/>
+              <circle class="dot" cx="142" cy="150" r="5"/>
+              <circle class="dot" cx="282" cy="112" r="5"/>
+              <circle class="dot" cx="422" cy="70" r="5"/>
+              <circle class="dot" cx="562" cy="70" r="5"/>
+
+              <text class="t-lab" x="0" y="214">品質</text>
+              <use class="maru" href="#maru" x="125" y="214" width="34" height="34"/>
+              <use class="maru" href="#maru" x="265" y="214" width="34" height="34"/>
+              <use class="maru" href="#maru" x="405" y="214" width="34" height="34"/>
+              <use class="maru" href="#maru" x="545" y="214" width="34" height="34"/>
+              <circle class="dot" cx="142" cy="231" r="3.5"/>
+              <circle class="dot" cx="282" cy="231" r="3.5"/>
+              <circle class="dot" cx="422" cy="231" r="3.5"/>
+              <circle class="dot" cx="562" cy="231" r="3.5"/>
+              <rect class="fail" x="72" y="264" width="560" height="36"/>
+              <path class="bar" d="M72 262.5H632"/>
+              <text class="t-lab t-red" x="0" y="268">基準</text>
+              <text class="t-note t-red" x="84" y="287">この線を下回る候補は採らない</text>
+
+              <text class="t-stage" x="142" y="332" text-anchor="middle"><tspan class="t-num">1</tspan> 正解と照合</text>
+              <text class="t-stage" x="282" y="332" text-anchor="middle"><tspan class="t-num">2</tspan> 減精度を選ぶ</text>
+              <text class="t-stage" x="422" y="332" text-anchor="middle"><tspan class="t-num">3</tspan> 自前の kernel</text>
+              <text class="t-stage" x="562" y="332" text-anchor="middle"><tspan class="t-num">4</tspan> 負荷なしで測る</text>
+            </svg>
+            <svg class="ch v-narrow" viewBox="0 0 340 300" role="img" aria-labelledby="f1n-t f1n-d">
+              <title id="f1n-t">四段の標準の手順で、速さを上げても品質の基準は動かさない</title>
+              <desc id="f1n-d">図の上半分は速さを表す。速さの線は、正解との照合、減精度の選択、自前の kernel への置き換え、負荷なしでの計測の四つの工程を進むにつれて階段状に上がり、使う側が決めた目標を越える。図の下半分は品質を表す。品質の基準の線は、四つの工程を通して同じ高さのまま動かない。どの工程の品質も基準の線より上にあり、赤い丸で合格を示す。基準の線を下回る候補は採らない。</desc>
+              <path class="col" d="M85 26V262M170 26V262M255 26V262"/>
+              <text class="t-lab" x="0" y="16">速さ <tspan class="t-sub">↑ 上がる</tspan></text>
+              <path class="speed-area" d="M0 150V128H85V100H170V64H340V150Z"/>
+              <path class="axis" d="M0 150H340"/>
+              <path class="target" d="M0 78H340"/>
+              <text class="t-note" x="334" y="96" text-anchor="end" style="font-size:11px">目標 · 使う側が決める</text>
+              <path class="speed" d="M0 128H85V100H170V64H340"/>
+              <circle class="dot" cx="42.5" cy="128" r="4.5"/>
+              <circle class="dot" cx="127.5" cy="100" r="4.5"/>
+              <circle class="dot" cx="212.5" cy="64" r="4.5"/>
+              <circle class="dot" cx="297.5" cy="64" r="4.5"/>
+
+              <text class="t-lab" x="0" y="180">品質</text>
+              <use class="maru" href="#maru" x="27.5" y="189" width="30" height="30"/>
+              <use class="maru" href="#maru" x="112.5" y="189" width="30" height="30"/>
+              <use class="maru" href="#maru" x="197.5" y="189" width="30" height="30"/>
+              <use class="maru" href="#maru" x="282.5" y="189" width="30" height="30"/>
+              <circle class="dot" cx="42.5" cy="204" r="3"/>
+              <circle class="dot" cx="127.5" cy="204" r="3"/>
+              <circle class="dot" cx="212.5" cy="204" r="3"/>
+              <circle class="dot" cx="297.5" cy="204" r="3"/>
+              <rect class="fail" x="0" y="234" width="340" height="28"/>
+              <path class="bar" d="M0 232.5H340"/>
+              <text class="t-note t-red" x="8" y="253" style="font-size:11.5px">基準の線 · 下回る候補は採らない</text>
+
+              <text class="t-stage" x="42.5" y="292" text-anchor="middle" style="font-size:12px"><tspan class="t-num">1</tspan> 照合</text>
+              <text class="t-stage" x="127.5" y="292" text-anchor="middle" style="font-size:12px"><tspan class="t-num">2</tspan> 減精度</text>
+              <text class="t-stage" x="205" y="292" text-anchor="middle" style="font-size:12px"><tspan class="t-num">3</tspan> kernel</text>
+              <text class="t-stage" x="340" y="292" text-anchor="end" style="font-size:12px"><tspan class="t-num">4</tspan> 負荷なしで測る</text>
+            </svg>
+            <figcaption class="fig-cap"><span class="fig-no">図 1</span><span>tensoracle の手順の四段。模式図で、速さの値は model と GPU で変わります。</span></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="quality" aria-labelledby="quality-title">
+      <div class="wrap">
+        <div class="sec-head">
+          <div>
+            <p class="eyebrow">01 — 品質への安心</p>
+            <h2 id="quality-title">fp16 も fp8 も、<br>答え合わせを済ませてから。</h2>
+          </div>
+          <p class="lede">減精度の engine は速い。でも、出力がずれていないかは、比べるまで分かりません。</p>
+        </div>
+
+        <div class="quality-grid">
+          <figure class="sheet" aria-labelledby="sheet-title">
+            <div class="sheet-head">
+              <p id="sheet-title">答え合わせの記録<span>記入例 · tensoracle の手順の二段目まで</span></p>
+              <div class="stamp" aria-hidden="true"><span><b>fp32</b>基準</span></div>
+            </div>
+            <table>
+              <thead>
+                <tr><th scope="col">候補の engine</th><th scope="col">比べる相手</th><th scope="col" class="verdict">判定</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row">fp32</th><td class="ref">公式 PyTorch 実装の fp32 の出力<small>tensoracle の外で作って固定</small></td><td class="verdict"><span><svg aria-hidden="true"><use href="#maru"/></svg><em>許容誤差の内</em><i class="sr-only">合格</i></span></td></tr>
+                <tr><th scope="row">fp16</th><td class="ref">受け入れた fp32 の engine</td><td class="verdict"><span><svg aria-hidden="true"><use href="#maru"/></svg><em>許容誤差の内</em><i class="sr-only">合格</i></span></td></tr>
+                <tr class="rejected"><th scope="row">fp8<small>候補 A</small></th><td class="ref"><span class="ditto" aria-hidden="true">〃</span><span class="sr-only">受け入れた fp32 の engine</span></td><td class="verdict ng"><span><svg aria-hidden="true"><use href="#batsu"/></svg>採らない<i class="sr-only">。許容誤差の外</i></span></td></tr>
+                <tr><th scope="row">fp8<small>候補 B</small></th><td class="ref"><span class="ditto" aria-hidden="true">〃</span><span class="sr-only">受け入れた fp32 の engine</span></td><td class="verdict"><span><svg aria-hidden="true"><use href="#maru"/></svg><em>許容誤差の内</em><i class="sr-only">合格</i></span></td></tr>
+              </tbody>
+            </table>
+          </figure>
+
+          <ul class="points">
+            <li>
+              <h3>fp32 は、本物の fp32。</h3>
+              <p>fp32 の engine は TF32 を使わずに組み立てます。答え合わせの基準そのものが、ぶれません。</p>
+            </li>
+            <li>
+              <h3>物差しは共通。線は、あなたが引く。</h3>
+              <p>画像の model にも音声の model にも、共通の尺度で出力を比べられます。</p>
+              <div class="measures"><span>非有限値の数</span><span>最大絶対誤差</span><span>相対 L2 誤差</span><span>コサイン類似度</span><span>許容誤差の外の数と割合</span></div>
+              <p>合否の基準値と、PSNR のような model に固有の尺度は、用途を知るあなたが決めます。</p>
+            </li>
+            <li>
+              <h3>int8 と fp8 も、同じ手順で。</h3>
+              <p>graph に置く quantize / dequantize の層と、safetensors で渡す scale から組み立てます。scale はあなたが用意します。</p>
+            </li>
+          </ul>
+        </div>
+        <div class="docs">
+          <p class="docs-label">ドキュメント · 英語</p>
+          <ul>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/precision/">減精度の engine を作る<span class="arr" aria-hidden="true">↗</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section dark" id="kernel" aria-labelledby="kernel-title">
+      <div class="wrap">
+        <div class="sec-head">
+          <div>
+            <p class="eyebrow">02 — 速さ</p>
+            <h2 id="kernel-title">TensorRT の先は、<br>自前の kernel で。</h2>
+          </div>
+          <p class="lede">標準の層では遅さが残る所だけを、CUDA C++ で書いた kernel に置き換える。kernel を TensorRT に差し込むまでの仕組みは tensoracle が持つので、あなたは、速くする計算そのものに集中できます。</p>
+        </div>
+
+        <figure class="flow-fig" aria-labelledby="flow-cap">
+          <ol class="flow">
+            <li><span class="tag">あなたが書く</span><b><code>kernel.cu</code></b><span class="d">kernel の計算と、plugin の振る舞い</span></li>
+            <li class="ours"><span class="tag">tensoracle</span><b>cubin を作る</b><span class="d">GPU 世代ごとの cubin と manifest を作り、配る前に整合を検査</span></li>
+            <li class="ours"><span class="tag">あなたの library</span><b>plugin を組み込む</b><span class="d">file を読まずに、process の中で TensorRT に登録</span></li>
+            <li><span class="tag">TensorRT</span><b>engine</b><span class="d">plugin を収めた file の SHA-256 で見分け、kernel を直せば組み立て直す</span></li>
+          </ol>
+          <div class="flow-note"><p>cubin 作りから engine の実行まで、OS に CUDA Toolkit は要りません</p></div>
+          <figcaption class="fig-cap" id="flow-cap"><span class="fig-no">図 2</span><span>自前の kernel が、TensorRT engine の一部になるまで。赤い枠が tensoracle の仕組みです。</span></figcaption>
+        </figure>
+
+        <div class="run">
+          <div>
+            <h3>一回の推論を、<br>CUDA Graph で丸ごと再生。</h3>
+            <p>enqueue の一回を CUDA の stream capture で記録し、その graph を再生できることを、tensoracle が保証します。記録の前にすること、graph に固定される物、記録できない engine は文書で示しているので、迷わず使えます。</p>
+            <div class="mini" aria-label="記録して再生する流れ"><i>enqueue × 1</i><b>→</b><i class="hot">記録</i><b>→</b><i class="hot">再生</i><i class="hot">再生</i><i class="hot">再生</i><i class="ghost">…</i></div>
+          </div>
+          <div>
+            <h3>scratch の memory は、<br>あなたが配る。</h3>
+            <p>実行に要る scratch の device memory の大きさを問い合わせ、自分で確保した領域を渡して execution を作れます。同時に動かさない execution どうしなら、一つの領域を使い回せます。</p>
+            <div class="mini" aria-label="一つの scratch の memory を二つの execution が順に使う"><i class="hot">scratch · あなたが確保</i><b>→</b><i>execution 1</i><b>→</b><i>execution 2</i><span class="small" style="font-family:var(--sans)">順に使う</span></div>
+          </div>
+        </div>
+        <div class="docs">
+          <p class="docs-label">ドキュメント · 英語</p>
+          <ul>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#build-a-cubin-plugin">cubin plugin を作る<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/embedded-plugins/">plugin を model module に組み込む<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#capture-and-replay-with-cuda-graphs">CUDA Graph で記録して再生する<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#share-execution-scratch-memory">scratch の memory を共有する<span class="arr" aria-hidden="true">↗</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="reuse" aria-labelledby="reuse-title">
+      <div class="wrap">
+        <div class="sec-head">
+          <div>
+            <p class="eyebrow">03 — 時間</p>
+            <h2 id="reuse-title">同じ engine を、<br>二度と待たない。</h2>
+          </div>
+          <p class="lede">TensorRT engine の組み立ては、起動のたびに繰り返したくない処理です。tensoracle は組み立てた engine を disk に保存し、process を起動し直しても、別の process からでも、同じ条件なら組み立てずに読み込みます。</p>
+        </div>
+
+        <figure class="timeline" aria-labelledby="tl-cap">
+          <svg class="tl v-wide" viewBox="0 0 1120 326" role="img" aria-labelledby="f3w-t f3w-d">
+            <title id="f3w-t">初めて開く時、次に開く時、同時に開く時の流れ</title>
+            <desc id="f3w-d">初めて開く時は、組み立てて保存してから推論する。次に開く時は、再起動の後や別の process でも、保存した engine を読み込んで推論し、組み立てを省く。同じ条件で三つの process が同時に開く時は、process A だけが組み立てて保存し、process B と C はその終わりを待ってから読み込んで推論する。</desc>
+            <text class="t-sub" x="1120" y="16" text-anchor="end">時間 →</text>
+            <text class="t-lab" x="0" y="60">初めて開く</text>
+            <rect class="build" x="230" y="38" width="520" height="36" rx="5"/>
+            <text class="t-in" x="490" y="61" text-anchor="middle">組み立て</text>
+            <rect class="save" x="754" y="38" width="56" height="36" rx="5"/>
+            <text class="t-in" x="782" y="61" text-anchor="middle">保存</text>
+            <rect class="infer" x="816" y="38" width="92" height="36" rx="5"/>
+            <text class="t-in-ink" x="862" y="61" text-anchor="middle">推論</text>
+
+            <text class="t-lab" x="0" y="117">次に開く</text>
+            <rect class="load" x="230" y="94" width="96" height="36" rx="5"/>
+            <text class="t-in" x="278" y="117" text-anchor="middle">読み込み</text>
+            <rect class="infer" x="330" y="94" width="92" height="36" rx="5"/>
+            <text class="t-in-ink" x="376" y="117" text-anchor="middle">推論</text>
+
+            <path class="sep" d="M0 158H1120"/>
+            <text class="t-lab" x="0" y="190">同じ条件で、同時に開く</text>
+            <text class="t-mono" x="0" y="225">process A</text>
+            <rect class="build" x="230" y="204" width="520" height="32" rx="5"/>
+            <text class="t-in" x="490" y="225" text-anchor="middle">組み立て</text>
+            <rect class="save" x="754" y="204" width="56" height="32" rx="5"/>
+            <text class="t-in" x="782" y="225" text-anchor="middle">保存</text>
+            <rect class="infer" x="816" y="204" width="92" height="32" rx="5"/>
+            <text class="t-in-ink" x="862" y="225" text-anchor="middle">推論</text>
+
+            <text class="t-mono" x="0" y="265">process B</text>
+            <rect class="wait" x="230.75" y="244.75" width="578.5" height="30.5" rx="5"/>
+            <text class="t-wait" x="520" y="265" text-anchor="middle">組み立ての終わりを待つ</text>
+            <rect class="load" x="816" y="244" width="96" height="32" rx="5"/>
+            <text class="t-in" x="864" y="265" text-anchor="middle">読み込み</text>
+            <rect class="infer" x="916" y="244" width="92" height="32" rx="5"/>
+            <text class="t-in-ink" x="962" y="265" text-anchor="middle">推論</text>
+
+            <text class="t-mono" x="0" y="305">process C</text>
+            <rect class="wait" x="310.75" y="284.75" width="498.5" height="30.5" rx="5"/>
+            <text class="t-wait" x="560" y="305" text-anchor="middle">組み立ての終わりを待つ</text>
+            <rect class="load" x="816" y="284" width="96" height="32" rx="5"/>
+            <text class="t-in" x="864" y="305" text-anchor="middle">読み込み</text>
+            <rect class="infer" x="916" y="284" width="92" height="32" rx="5"/>
+            <text class="t-in-ink" x="962" y="305" text-anchor="middle">推論</text>
+
+            <path class="brace" d="M1024 206H1032V314H1024"/>
+            <text class="t-red" x="1042" y="254">組み立ては</text>
+            <text class="t-red" x="1042" y="274">一つだけ</text>
+          </svg>
+          <svg class="tl v-narrow" viewBox="0 0 340 368" role="img" aria-labelledby="f3n-t f3n-d">
+            <title id="f3n-t">初めて開く時、次に開く時、同時に開く時の流れ</title>
+            <desc id="f3n-d">初めて開く時は、組み立てて保存してから推論する。次に開く時は、再起動の後や別の process でも、保存した engine を読み込んで推論し、組み立てを省く。同じ条件で三つの process が同時に開く時は、process A だけが組み立てて保存し、process B と C はその終わりを待ってから読み込んで推論する。</desc>
+            <text class="t-sub" x="340" y="14" text-anchor="end" style="font-size:12px">時間 →</text>
+            <text class="t-lab" x="0" y="34" style="font-size:15px">初めて開く</text>
+            <rect class="build" x="0" y="44" width="196" height="30" rx="4"/>
+            <text class="t-in" x="98" y="64" text-anchor="middle" style="font-size:13px">組み立て</text>
+            <rect class="save" x="200" y="44" width="44" height="30" rx="4"/>
+            <text class="t-in" x="222" y="64" text-anchor="middle" style="font-size:12px">保存</text>
+            <rect class="infer" x="248" y="44" width="60" height="30" rx="4"/>
+            <text class="t-in-ink" x="278" y="64" text-anchor="middle" style="font-size:13px">推論</text>
+
+            <text class="t-lab" x="0" y="106" style="font-size:15px">次に開く</text>
+            <rect class="load" x="0" y="116" width="68" height="30" rx="4"/>
+            <text class="t-in" x="34" y="136" text-anchor="middle" style="font-size:12px">読み込み</text>
+            <rect class="infer" x="72" y="116" width="60" height="30" rx="4"/>
+            <text class="t-in-ink" x="102" y="136" text-anchor="middle" style="font-size:13px">推論</text>
+
+            <path class="sep" d="M0 166H340"/>
+            <text class="t-lab" x="0" y="196" style="font-size:15px">同じ条件で、同時に開く</text>
+            <text class="t-mono" x="0" y="227" style="font-size:13px">A</text>
+            <rect class="build" x="22" y="208" width="176" height="28" rx="4"/>
+            <text class="t-in" x="110" y="227" text-anchor="middle" style="font-size:13px">組み立て</text>
+            <rect class="save" x="202" y="208" width="40" height="28" rx="4"/>
+            <text class="t-in" x="222" y="227" text-anchor="middle" style="font-size:11.5px">保存</text>
+            <rect class="infer" x="246" y="208" width="56" height="28" rx="4"/>
+            <text class="t-in-ink" x="274" y="227" text-anchor="middle" style="font-size:12px">推論</text>
+
+            <text class="t-mono" x="0" y="265" style="font-size:13px">B</text>
+            <rect class="wait" x="22.75" y="246.75" width="218.5" height="26.5" rx="4"/>
+            <text class="t-wait" x="132" y="265" text-anchor="middle" style="font-size:12px">待つ</text>
+            <rect class="load" x="246" y="246" width="56" height="28" rx="4"/>
+            <text class="t-in" x="274" y="265" text-anchor="middle" style="font-size:11px">読み込み</text>
+            <rect class="infer" x="306" y="246" width="34" height="28" rx="4"/>
+            <text class="t-in-ink" x="323" y="265" text-anchor="middle" style="font-size:11px">推論</text>
+
+            <text class="t-mono" x="0" y="303" style="font-size:13px">C</text>
+            <rect class="wait" x="64.75" y="284.75" width="176.5" height="26.5" rx="4"/>
+            <text class="t-wait" x="153" y="303" text-anchor="middle" style="font-size:12px">待つ</text>
+            <rect class="load" x="246" y="284" width="56" height="28" rx="4"/>
+            <text class="t-in" x="274" y="303" text-anchor="middle" style="font-size:11px">読み込み</text>
+            <rect class="infer" x="306" y="284" width="34" height="28" rx="4"/>
+            <text class="t-in-ink" x="323" y="303" text-anchor="middle" style="font-size:11px">推論</text>
+
+            <path class="brace" d="M22 326V334H340V326"/>
+            <text class="t-red" x="0" y="358" style="font-size:13px">組み立ては A の一つだけ。B と C は待って読み込む</text>
+          </svg>
+          <figcaption class="fig-cap" id="tl-cap"><span class="fig-no">図 3</span><span>保存した engine を開く時の流れ。模式図で、帯の長さは実際の時間の比ではありません。</span></figcaption>
+        </figure>
+
+        <div class="assure">
+          <div><h3>条件が変われば、別の engine に。</h3><p>重み、名前、graph の version、入力の形、GPU、TensorRT の version。どれかが変われば、別の engine として組み立てます。graph を変えた時は、名前か graph の version を変えるだけです。</p></div>
+          <div><h3>壊れた engine は、読み込まない。</h3><p>壊れた engine や条件の合わない engine は読み込まず、ほかの誤りと見分けられる誤りで返します。組み立て直すか止まるかは、あなたが決められます。</p></div>
+          <div><h3>組み立てが落ちても、待ち続けない。</h3><p>組み立てていた側が失敗した時は、待っていた側の一つが組み立て直します。process ごと落ちた時も、待つ側は止まったままになりません。</p></div>
+        </div>
+
+        <div class="cache">
+          <div>
+            <p class="eyebrow">保存した engine の管理</p>
+            <h3 style="margin-top:18px">溜まった engine は、<br>見て、選んで、片付ける。</h3>
+            <p>一覧は、engine ごとに組み立ての条件、大きさ、記録時刻 (保存した時刻か、最後に開いた時刻) を示します。片付けは、消す前に、消す engine と、次に使う時は組み立て直しになることを示します。どちらも GPU を使わずに動きます。</p>
+            <p class="small">片付けは、同じ置き場所で組み立てと読み込みが動いていない保守の時に使います。記録時刻は、その後も推論しているかを表しません。</p>
+          </div>
+          <figure class="term" aria-label="保存した engine の一覧と片付けの command の例">
+            <div class="term-head" aria-hidden="true"><i></i><i></i><i></i><span>shell</span></div>
+<pre><code><span class="c"># 保存した engine を一覧にする</span>
+<span class="p">$</span> tensoracle cache list
+
+<span class="c"># 30 日を超えて開いていない engine を、消さずに確かめる</span>
+<span class="p">$</span> tensoracle cache prune --unused-for <span class="v">30</span> --dry-run
+
+<span class="c"># 合計を 10GiB 以下にする</span>
+<span class="p">$</span> tensoracle cache prune --max-size <span class="v">10GiB</span></code></pre>
+          </figure>
+        </div>
+        <div class="docs">
+          <p class="docs-label">ドキュメント · 英語</p>
+          <ul>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#save-and-reuse-an-engine">engine を保存して再利用する<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#manage-saved-engines">保存した engine を管理する<span class="arr" aria-hidden="true">↗</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section band" id="integrate" aria-labelledby="integrate-title">
+      <div class="wrap">
+        <div class="sec-head">
+          <div>
+            <p class="eyebrow">04 — 手戻りの無さ</p>
+            <h2 id="integrate-title">minor を上げても、<br>build し直さない。</h2>
+          </div>
+          <p class="lede">tensoracle の C++ の公開 interface は、C の ABI を境界にしています。major version が同じ間は、前の minor の header で build した program と library が、後の minor の tensoracle でそのまま動きます。保存した engine の file の形式も、同じ間は互換を保ちます。</p>
+        </div>
+
+        <div class="integrate">
+          <figure aria-labelledby="stack-cap">
+            <div class="stack">
+              <div class="layer"><span class="who">あなた</span><b>application</b><span class="d">Python から推論の関数を呼ぶ</span></div>
+              <div class="layer"><span class="who">あなた</span><b>binding</b><span class="d">nanobind などで、推論の関数を Python に出す</span></div>
+              <div class="layer mine"><span class="who">あなた</span><b>C++ の model module</b><span class="d">network を組む関数 · engine を開く処理 · plugin</span></div>
+              <p class="abi"><b>C の ABI</b></p>
+              <div class="layer core"><span class="who">tensoracle</span><b>共有 library</b><span class="d">組み立て · 保存と再利用 · 実行 · plugin の登録 · 出力の比較</span></div>
+              <div class="layer host"><span class="who">host</span><b>TensorRT · NVIDIA driver</b></div>
+            </div>
+            <figcaption class="fig-cap" id="stack-cap"><span class="fig-no">図 4</span><span>tensoracle は、あなたの C++ の module に組み込む部品です。</span></figcaption>
+          </figure>
+
+          <ul class="points">
+            <li><h3>推論の環境に、torch は要らない。</h3><p>重みは safetensors で受け取ります。torch は、<code>.pth</code> を safetensors に変換する時だけ、extra の <code>tensoracle[convert]</code> で入れます。</p></li>
+            <li><h3>重みは、GPU なしでも開ける。</h3><p>safetensors の file を GPU も CUDA も使わずに開き、tensor の名前、型、形、値と、header の metadata を読めます。</p></li>
+            <li><h3>静的に組み込むことも。</h3><p>共有 library に link するほか、source から build して自分の成果物に静的に組み込めます。静的に組み込んだ時は、更新の時に link し直します。</p></li>
+          </ul>
+        </div>
+        <div class="docs">
+          <p class="docs-label">ドキュメント · 英語</p>
+          <ul>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#connect-a-c-model-package">C++ の model module をつなぐ<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#read-weights-without-a-gpu">GPU なしで重みを読む<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/#convert-a-pytorch-checkpoint">checkpoint を safetensors に変換する<span class="arr" aria-hidden="true">↗</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="section dark" id="install" aria-labelledby="install-title">
+      <div class="wrap">
+        <div class="sec-head">
+          <div>
+            <p class="eyebrow">05 — 配布の楽さ</p>
+            <h2 id="install-title">Linux も Windows も、<br>pip install から。</h2>
+          </div>
+          <p class="lede">wheel には、C++ の header、共有 library、CMake の設定も入っています。tensoracle を source から build する必要はありません。</p>
+        </div>
+
+        <div class="install">
+          <div>
+            <figure class="term" aria-label="Python から入れる command の例">
+              <div class="term-head" aria-hidden="true"><i></i><i></i><i></i><span>PYTHON · LINUX</span></div>
+<pre><code><span class="c"># NVIDIA の CUDA の apt repository を登録した後</span>
+<span class="p">$</span> sudo apt-get install libnvinfer11
+<span class="p">$</span> pip install tensoracle
+
+<span class="c"># TensorRT も pip でそろえる時</span>
+<span class="p">$</span> pip install <span class="v">'tensoracle[tensorrt]'</span></code></pre>
+            </figure>
+            <p class="install-note">TensorRT は同梱せず、host に入れた runtime を読みます。</p>
+          </div>
+          <div>
+            <figure class="term" aria-label="C++ の CMake から使う例">
+              <div class="term-head" aria-hidden="true"><i></i><i></i><i></i><span>C++ · CMAKE</span></div>
+<pre><code>find_package(tensoracle <span class="v">2</span> CONFIG REQUIRED)
+target_link_libraries(my_model
+  PRIVATE tensoracle::tensoracle)</code></pre>
+            </figure>
+            <p class="install-note">C++ だけで使うなら、build 済みの C++ の SDK を。OS ごとの archive を release ごとに配り、Conan の package としても取れます。</p>
+          </div>
+        </div>
+
+        <table class="specs" aria-label="tensoracle の対応環境と license">
+          <tbody>
+            <tr><th scope="row">GPU</th><td>NVIDIA の sm86、sm89、sm120<small>fp8 は sm89 と sm120 で使えます。</small></td></tr>
+            <tr><th scope="row">OS</th><td>Linux x86_64 (WSL2 を含む)、Windows x86_64</td></tr>
+            <tr><th scope="row">TensorRT</th><td>11.2 以上、12 未満</td></tr>
+            <tr><th scope="row">精度</th><td>fp32、fp16、bf16、int8、fp8</td></tr>
+            <tr><th scope="row">Python</th><td>CPython 3.12、3.13<small>Linux は <code>manylinux_2_28</code>、Windows は <code>win_amd64</code> の <code>cp312-abi3</code> の wheel を、同じ version で出します。</small></td></tr>
+            <tr><th scope="row">License</th><td>MIT</td></tr>
+          </tbody>
+        </table>
+        <div class="docs">
+          <p class="docs-label">ドキュメント · 英語</p>
+          <ul>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/tensorrt-sdk/#install-the-runtime">TensorRT の runtime を入れる<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/cpp-python-repositories/">wheel の C++ の SDK を使う<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/cpp-sdk/">build 済みの C++ の SDK を使う<span class="arr" aria-hidden="true">↗</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta" aria-labelledby="cta-title">
+      <div class="wrap">
+        <h2 id="cta-title">あなたの model で、<br>一段目から。</h2>
+        <p class="lede">手順の進め方と、C++ の SDK の使い方は、ドキュメントにまとめています。</p>
+        <div class="actions">
+          <a class="btn" href="https://sync-dev-org.github.io/tensoracle/docs/">ドキュメントを読む <span class="arr" aria-hidden="true">↗</span></a>
+          <a class="link" href="https://pypi.org/project/tensoracle/">PyPI <span class="arr" aria-hidden="true">↗</span></a>
+          <a class="link" href="https://github.com/sync-dev-org/tensoracle/releases">Releases <span class="arr" aria-hidden="true">↗</span></a>
+        </div>
+        <div class="docs">
+          <p class="docs-label">API reference · 英語</p>
+          <ul>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/api/">C++ の interface と出力の比較<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/api/bundle/">cubin bundle の検査<span class="arr" aria-hidden="true">↗</span></a></li>
+            <li><a href="https://sync-dev-org.github.io/tensoracle/docs/api/producer/">cubin producer<span class="arr" aria-hidden="true">↗</span></a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <a class="brand" href="#top" aria-label="tensoracle ページの先頭へ"><svg aria-hidden="true"><use href="#mark"/></svg>tensoracle</a>
+      <a class="top" href="#top">ページの先頭へ ↑</a>
+    </div>
+  </footer>
+</body>
+</html>

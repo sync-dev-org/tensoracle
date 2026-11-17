@@ -30,7 +30,7 @@ from native_build import cuda_root, sdk_version, tensorrt_recipe, tensorrt_root
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parent if PROJECT.name == "python" else PROJECT
 PUBLIC_REPOSITORY = "https://github.com/sync-dev-org/tensoracle"
-DOCUMENTATION_SITE = "https://sync-dev-org.github.io/tensoracle"
+DOCUMENTATION_SITE = "https://sync-dev-org.github.io/tensoracle/docs"
 PAGES_WORKFLOW = ".github/workflows/pages.yml"
 
 
@@ -133,7 +133,16 @@ def test_sdist_contains_public_sources_without_development_files(distributions):
             if member.isfile()
         ]
 
-    private = {".nf", ".github", "AGENTS.md", "CLAUDE.md", "tools", "noren.yaml", "noren-words.txt"}
+    private = {
+        ".nf",
+        ".github",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "intro",
+        "tools",
+        "noren.yaml",
+        "noren-words.txt",
+    }
     assert not [str(path) for path in paths if path.parts[0] in private]
     assert {"src", "tests", "docs", "examples", "cpp"} <= {path.parts[0] for path in paths}
     assert {"README.md", "LICENSE", "pyproject.toml"} <= {str(path) for path in paths}
@@ -151,7 +160,7 @@ def test_sdist_contains_public_sources_without_development_files(distributions):
 
 
 def test_sdist_exclusions_match_the_public_snapshot(publication_config, tmp_path):
-    """Source archives exclude development paths and the public Pages workflow."""
+    """Source archives exclude development paths, the Pages workflow, and the introduction."""
     config = tomllib.loads((PROJECT / "pyproject.toml").read_text(encoding="utf-8"))
     exclusions = config["tool"]["scikit-build"]["sdist"]["exclude"]
     paths = (
@@ -161,11 +170,22 @@ def test_sdist_exclusions_match_the_public_snapshot(publication_config, tmp_path
         .stdout.rstrip("\0")
         .split("\0")
     )
-    paths.append(PAGES_WORKFLOW)
+    paths.extend([PAGES_WORKFLOW, "intro/index.html"])
 
     assert matching_paths(tmp_path, "\n".join(exclusions), paths) == matching_paths(
         tmp_path, publication_config["exclude"], paths
-    ) | {PAGES_WORKFLOW}
+    ) | {PAGES_WORKFLOW, "intro/index.html"}
+
+
+@pytest.mark.req("SP-TENSORACLE-030")
+def test_public_snapshot_includes_the_introduction(publication_config, tmp_path):
+    """The public repository receives the introduction used as the site's entry page."""
+    paths = {"intro/index.html"}
+    included = matching_paths(tmp_path, publication_config["include"], paths)
+    excluded = matching_paths(tmp_path, publication_config["exclude"], paths)
+
+    assert included == paths
+    assert not excluded
 
 
 def test_public_snapshot_includes_only_the_pages_workflow(publication_config, tmp_path):
@@ -227,10 +247,9 @@ def test_pages_workflow_builds_the_public_snapshot(publication_config):
         assert job["if"] == "github.repository == 'sync-dev-org/tensoracle'"
         steps.extend(job["steps"])
     commands = [step["run"] for step in steps if "run" in step]
-    assert commands == [
-        "uv sync --locked --only-group docs",
-        "uv run --no-sync mkdocs build --strict --config-file ../mkdocs.yml",
-    ]
+    assert len(commands) == 2
+    assert commands[0] == "uv sync --locked --only-group docs"
+    assert "uv run --no-sync mkdocs build --strict --config-file ../mkdocs.yml" in commands[1]
     for job in workflow["jobs"].values():
         if any("run" in step for step in job["steps"]):
             assert job["defaults"]["run"]["working-directory"] == "python"
@@ -259,6 +278,38 @@ def test_pages_workflow_builds_the_public_snapshot(publication_config):
     deployment_permissions = deployment.get("permissions", workflow["permissions"])
     assert deployment_permissions["pages"] == "write"
     assert deployment_permissions["id-token"] == "write"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The GitHub Pages workflow runs on Ubuntu")
+@pytest.mark.req("SP-TENSORACLE-032")
+def test_pages_build_places_the_introduction_above_the_documentation(publication_config, tmp_path):
+    """The uploaded site opens with the introduction and serves guides and API pages under docs/."""
+    workflow = yaml.safe_load((ROOT / PAGES_WORKFLOW).read_text(encoding="utf-8"))
+    command = next(
+        step["run"]
+        for step in workflow["jobs"]["build"]["steps"]
+        if "mkdocs build" in step.get("run", "")
+    )
+    workspace = tmp_path / "pages workspace"
+    workspace.mkdir()
+    result = subprocess.run(
+        ["bash", "-e", "-c", command],
+        cwd=PROJECT,
+        env={**os.environ, "GITHUB_WORKSPACE": str(workspace)},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    site = workspace / "site"
+    assert (site / "index.html").read_bytes() == (ROOT / "intro/index.html").read_bytes()
+    assert (site / "docs/index.html").is_file()
+    assert (site / "docs/optimization/index.html").is_file()
+    producer = site / "docs/api/producer/index.html"
+    assert "compile_bundle" in producer.read_text(encoding="utf-8")
+    sitemap = (site / "docs/sitemap.xml").read_text(encoding="utf-8")
+    assert f"<loc>{DOCUMENTATION_SITE}/api/producer/</loc>" in sitemap
 
 
 def test_docs_dependencies_are_separate_from_gpu_development_packages(publication_config):
@@ -1006,7 +1057,7 @@ def test_wheel_metadata_describes_the_public_package(distributions):
         "Topic :: Software Development :: Libraries",
     }
     assert set(metadata.get_all("Project-URL", [])) == {
-        "documentation, https://sync-dev-org.github.io/tensoracle/",
+        f"documentation, {DOCUMENTATION_SITE}/",
         f"repository, {PUBLIC_REPOSITORY}",
         f"issues, {PUBLIC_REPOSITORY}/issues",
     }
@@ -1026,6 +1077,7 @@ def test_wheel_metadata_describes_the_public_package(distributions):
 
 
 @pytest.mark.req("SP-TENSORACLE-016")
+@pytest.mark.req("SP-TENSORACLE-032")
 def test_readme_links_and_images_resolve_on_pypi():
     """README links and images use absolute URLs or same-page anchors on the PyPI page."""
 
@@ -1052,7 +1104,21 @@ def test_readme_links_and_images_resolve_on_pypi():
         if not (target and (urlsplit(target).scheme or target.startswith("#")))
     ]
     assert {
+        f"{DOCUMENTATION_SITE}/",
         f"{DOCUMENTATION_SITE}/optimization/",
         f"{DOCUMENTATION_SITE}/tensorrt-sdk/",
         f"{DOCUMENTATION_SITE}/#build-a-cubin-plugin",
     } <= set(parser.targets)
+    assert all(
+        target.startswith(f"{DOCUMENTATION_SITE}/")
+        for target in parser.targets
+        if target.startswith("https://sync-dev-org.github.io/tensoracle/")
+    )
+
+
+@pytest.mark.req("SP-TENSORACLE-032")
+@pytest.mark.parametrize("example", ["wheel_consumer", "cubin_plugin"])
+def test_example_readmes_link_to_the_documentation(example):
+    """Example installation instructions link to the runtime guide under docs/."""
+    readme = (ROOT / "examples" / example / "README.md").read_text(encoding="utf-8")
+    assert f"{DOCUMENTATION_SITE}/tensorrt-sdk/#install-the-runtime" in readme

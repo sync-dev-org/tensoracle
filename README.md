@@ -4,7 +4,7 @@ Build, save, reuse, and execute TensorRT engines through a C++ library embedded 
 
 Engine building, reuse, execution, output comparison, and cubin production do not require torch. Only the optional converter requires `tensoracle[convert]`.
 
-Read the [v2 user guide](https://sync-dev-org.github.io/tensoracle/) and [Migrate from 1.x](https://sync-dev-org.github.io/tensoracle/migration/).
+Read the [v2 user guide](https://sync-dev-org.github.io/tensoracle/docs/) and [Migrate from 1.x](https://sync-dev-org.github.io/tensoracle/docs/migration/).
 
 ## Terms and workflows
 
@@ -20,7 +20,7 @@ Read the [v2 user guide](https://sync-dev-org.github.io/tensoracle/) and [Migrat
 
 Starting with v2.6.0, each release supplies `cp312-abi3` wheels for Linux x86_64 (`manylinux_2_28`, including WSL2) and Windows x86_64 (`win_amd64`), with the same version. The package currently declares Python 3.12 and 3.13 support. Target GPUs are sm86, sm89, and sm120 with TensorRT 11.2 or later (below 12); fp8 requires sm89 or sm120.
 
-The wheel contains the C++ public headers, shared library (`libtensoracle.so.2` on Linux; `tensoracle-2.dll` and its `tensoracle.lib` import library on Windows), CMake package configuration, and cubin plugin helper sources. Each release also supplies [prebuilt C and C++ SDK archives](https://sync-dev-org.github.io/tensoracle/cpp-sdk/) for both operating systems under the same release tag. TensorRT and the NVIDIA driver are not bundled. Public C++ interfaces and saved engine files remain compatible within a major version.
+The wheel contains the C++ public headers, shared library (`libtensoracle.so.2` on Linux; `tensoracle-2.dll` and its `tensoracle.lib` import library on Windows), CMake package configuration, and cubin plugin helper sources. Each release also supplies [prebuilt C and C++ SDK archives](https://sync-dev-org.github.io/tensoracle/docs/cpp-sdk/) for both operating systems under the same release tag. TensorRT and the NVIDIA driver are not bundled. Public C++ interfaces and saved engine files remain compatible within a major version.
 
 ## Install
 
@@ -34,9 +34,9 @@ pip install tensoracle
 
 Use TensorRT 11.2 or later, below 12, including its builder resources. The wheel is built against TensorRT SDK 11.2.1.2. A full CUDA Toolkit and TensorRT's Python bindings are not required for execution. The host must supply a compatible NVIDIA driver.
 
-On Windows x86_64, install `tensoracle>=2.6.0` and a host TensorRT 11 runtime. Register the directory containing `nvinfer_11.dll` with `os.add_dll_directory` before importing native bindings and keep that registration alive. Import `tensoracle` before a model package's native binding; tensoracle registers its own `cpp/bin` directory. See the [Windows runtime instructions](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/#windows-x86_64) for complete examples.
+On Windows x86_64, install `tensoracle>=2.6.0` and a host TensorRT 11 runtime. Register the directory containing `nvinfer_11.dll` with `os.add_dll_directory` before importing native bindings and keep that registration alive. Import `tensoracle` before a model package's native binding; tensoracle registers its own `cpp/bin` directory. See the [Windows runtime instructions](https://sync-dev-org.github.io/tensoracle/docs/tensorrt-sdk/#windows-x86_64) for complete examples.
 
-If you prefer pip to supply TensorRT, install `pip install 'tensoracle[tensorrt]'`. The extra declares `tensorrt-cu13>=11.2,<12`. On Linux, the wheel checks that extra's `tensorrt_libs` directory before the host loader's normal search for `libnvinfer.so.11`. On Windows, import `tensorrt` before using tensoracle's native utilities or a model binding to establish TensorRT's DLL lookup. Applications that use the host's TensorRT installation depend on `tensoracle` without the extra. See [runtime installation](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/#install-the-runtime) for verification.
+If you prefer pip to supply TensorRT, install `pip install 'tensoracle[tensorrt]'`. The extra declares `tensorrt-cu13>=11.2,<12`. On Linux, the wheel checks that extra's `tensorrt_libs` directory before the host loader's normal search for `libnvinfer.so.11`. On Windows, import `tensorrt` before using tensoracle's native utilities or a model binding to establish TensorRT's DLL lookup. Applications that use the host's TensorRT installation depend on `tensoracle` without the extra. See [runtime installation](https://sync-dev-org.github.io/tensoracle/docs/tensorrt-sdk/#install-the-runtime) for verification.
 
 ## Build and reopen an engine in C++
 
@@ -48,7 +48,7 @@ python -c 'from importlib.metadata import distribution; print(distribution("tens
 
 Pass that directory in `CMAKE_PREFIX_PATH`. The model package supplies a callback taking `nvinfer1::INetworkDefinition&` and `const tensoracle::weights_view&`. tensoracle reads declared safetensors and keeps their values alive through the build.
 
-This excerpt follows the [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer). It assumes the example's `build_network` function, four-element float32 `bias.safetensors`, and caller-owned current CUDA context. The [user guide](https://sync-dev-org.github.io/tensoracle/#build-and-reopen-an-engine) shows the callback; the complete example supplies allocation, error handling, and nanobind integration.
+This excerpt follows the [separate consumer wheel](https://github.com/sync-dev-org/tensoracle/tree/main/examples/wheel_consumer). It assumes the example's `build_network` function, four-element float32 `bias.safetensors`, and caller-owned current CUDA context. The [user guide](https://sync-dev-org.github.io/tensoracle/docs/#build-and-reopen-an-engine) shows the callback; the complete example supplies allocation, error handling, and nanobind integration.
 
 ```cpp
 #include <tensoracle/builder.hpp>
@@ -67,15 +67,15 @@ auto engine = tensoracle::open_engine(options, build_network);
 
 On a valid cache hit, `tensoracle::open_engine` skips the callback, including after a process restart. Engine identity includes weights, plugin bytes, name, graph version, input profiles, builder optimization level, GPU compatibility properties, OS, CPU architecture, and TensorRT version. Update the graph version when network code changes; use separate names or versions for different precisions. Tensor types in the network determine precision, and TF32 is disabled.
 
-Leave `workspace_limit` unset to use TensorRT's default or supply a positive byte count. It does not enter the cache identity; set `options.force_rebuild = true` to rebuild with a changed limit. Saved files live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when unset. The [user guide](https://sync-dev-org.github.io/tensoracle/#save-and-reuse-an-engine) describes integrity checks, errors, and weight digest reuse.
+Leave `workspace_limit` unset to use TensorRT's default or supply a positive byte count. It does not enter the cache identity; set `options.force_rebuild = true` to rebuild with a changed limit. Saved files live under `XDG_CACHE_HOME/tensoracle`, or `~/.cache/tensoracle` when unset. The [user guide](https://sync-dev-org.github.io/tensoracle/docs/#save-and-reuse-an-engine) describes integrity checks, errors, and weight digest reuse.
 
 ## Execute through the model package
 
 The C++ model package calls `engine.create_execution()`, sets ranged input shapes together, queries output shapes and types, and enqueues every I/O device address on its own CUDA stream. Each execution unit retains the engine and owns an independent TensorRT context. The caller owns allocation, transfers, stream ordering, and completion checks. tensoracle does not synchronize enqueue or release; wait before changing shapes, freeing buffers, or closing the unit.
 
-The [execution guide](https://sync-dev-org.github.io/tensoracle/#execute-an-engine) follows the consumer wheel's C++ API usage. The model package exposes its inference function to Python. Python applications do not construct or execute engines through tensoracle's Python utilities.
+The [execution guide](https://sync-dev-org.github.io/tensoracle/docs/#execute-an-engine) follows the consumer wheel's C++ API usage. The model package exposes its inference function to Python. Python applications do not construct or execute engines through tensoracle's Python utilities.
 
-For CUDA Graphs, warm up one enqueue after each shape change before capturing on a nondefault stream. The graph fixes shapes, addresses, and execution unit; keep resources alive until work completes and the graph is destroyed. The caller creates and recreates graphs. Engines with loops, conditionals, or host-synchronizing layers or plugins cannot be captured. See the [capture guide](https://sync-dev-org.github.io/tensoracle/#capture-and-replay-with-cuda-graphs).
+For CUDA Graphs, warm up one enqueue after each shape change before capturing on a nondefault stream. The graph fixes shapes, addresses, and execution unit; keep resources alive until work completes and the graph is destroyed. The caller creates and recreates graphs. Engines with loops, conditionals, or host-synchronizing layers or plugins cannot be captured. See the [capture guide](https://sync-dev-org.github.io/tensoracle/docs/#capture-and-replay-with-cuda-graphs).
 
 ## Manage saved engines
 
@@ -90,17 +90,17 @@ These commands use the same cache directory as the C++ engine opener. They inspe
 
 An engine file's modification time records its initial save or last successful open. It does not indicate whether inference continues. Failed loads and management commands do not change it. Timestamp write failures do not prevent a successful load; records that could not be written, or predate timestamp recording, may be stale.
 
-Pruning requires exactly one of `--unused-for DAYS` and `--max-size SIZE`. It prints a plan and rebuild notice before deletion and separates removed, excluded, missing, and failed files in its result. `--dry-run` changes nothing. Run pruning during maintenance without concurrent builds or opens. The [management guide](https://sync-dev-org.github.io/tensoracle/#manage-saved-engines) describes sizes, selection, and exit statuses.
+Pruning requires exactly one of `--unused-for DAYS` and `--max-size SIZE`. It prints a plan and rebuild notice before deletion and separates removed, excluded, missing, and failed files in its result. `--dry-run` changes nothing. Run pruning during maintenance without concurrent builds or opens. The [management guide](https://sync-dev-org.github.io/tensoracle/docs/#manage-saved-engines) describes sizes, selection, and exit statuses.
 
 ## Build a cubin plugin
 
-Install `tensoracle[producer]` to generate sm86, sm89, and sm120 cubins from CUDA C++ source. The C++ producer uses NVRTC, `ptxas >=13.2,<14`, and `cuobjdump` from PyPI CUDA 13.2 wheels, without a GPU or OS-installed CUDA Toolkit. Triton kernels are not accepted. See the [producer API](https://sync-dev-org.github.io/tensoracle/api/producer/) for `KernelSpec` and `compile_bundle`.
+Install `tensoracle[producer]` to generate sm86, sm89, and sm120 cubins from CUDA C++ source. The C++ producer uses NVRTC, `ptxas >=13.2,<14`, and `cuobjdump` from PyPI CUDA 13.2 wheels, without a GPU or OS-installed CUDA Toolkit. Triton kernels are not accepted. See the [producer API](https://sync-dev-org.github.io/tensoracle/docs/api/producer/) for `KernelSpec` and `compile_bundle`.
 
-Build the native plugin with [the wheel's C++ sources and CMake helpers](https://sync-dev-org.github.io/tensoracle/cpp-python-repositories/) and a separately prepared [TensorRT SDK](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/). Export TensorRT's `getCreators` and list all required libraries in `tensoracle::builder_options::plugins`. tensoracle inspects and registers them before construction or deserialization and hashes their bytes into the engine identity. Explicit registration is also available through `tensoracle/plugins.hpp`.
+Build the native plugin with [the wheel's C++ sources and CMake helpers](https://sync-dev-org.github.io/tensoracle/docs/cpp-python-repositories/) and a separately prepared [TensorRT SDK](https://sync-dev-org.github.io/tensoracle/docs/tensorrt-sdk/). Export TensorRT's `getCreators` and list all required libraries in `tensoracle::builder_options::plugins`. tensoracle inspects and registers them before construction or deserialization and hashes their bytes into the engine identity. Explicit registration is also available through `tensoracle/plugins.hpp`.
 
-Package the plugin library and cubin bundle in your model wheel. `tensoracle.bundle.inspect_bundle` and `inspect_wheel` verify the manifest, cubin digests and actual architectures, declared argument ABI, and the plugin's embedded cubins without loading it. The manifest records NVRTC and ptxas versions and kernel source digests. The [plugin guide](https://sync-dev-org.github.io/tensoracle/#build-a-cubin-plugin) describes tensor types, formats, and the common lifecycle helper.
+Package the plugin library and cubin bundle in your model wheel. `tensoracle.bundle.inspect_bundle` and `inspect_wheel` verify the manifest, cubin digests and actual architectures, declared argument ABI, and the plugin's embedded cubins without loading it. The manifest records NVRTC and ptxas versions and kernel source digests. The [plugin guide](https://sync-dev-org.github.io/tensoracle/docs/#build-a-cubin-plugin) describes tensor types, formats, and the common lifecycle helper.
 
-Follow the [four-stage optimization workflow](https://sync-dev-org.github.io/tensoracle/optimization/) and [precision guide](https://sync-dev-org.github.io/tensoracle/precision/) when validating a model or plugin.
+Follow the [four-stage optimization workflow](https://sync-dev-org.github.io/tensoracle/docs/optimization/) and [precision guide](https://sync-dev-org.github.io/tensoracle/docs/precision/) when validating a model or plugin.
 
 ## Convert a PyTorch checkpoint
 

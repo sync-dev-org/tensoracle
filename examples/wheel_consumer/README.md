@@ -32,7 +32,7 @@ absolute file URI of the wheel just built:
 tensoracle @ file:///tmp/tensoracle-wheels/<tensoracle-wheel-filename>.whl
 ```
 
-Install the [host's TensorRT runtime](https://sync-dev-org.github.io/tensoracle/tensorrt-sdk/#install-the-runtime) with apt, then build and install the two wheels into a new environment:
+Install the [host's TensorRT runtime](https://sync-dev-org.github.io/tensoracle/docs/tensorrt-sdk/#install-the-runtime) with apt, then build and install the two wheels into a new environment:
 
 ```bash
 uv build examples/wheel_consumer --wheel --out-dir /tmp/consumer-wheels \
