@@ -6,12 +6,22 @@ import pickle
 from collections.abc import Mapping
 
 
-def pth_to_safetensors(source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+def pth_to_safetensors(
+    source: str | os.PathLike[str],
+    destination: str | os.PathLike[str],
+    *,
+    metadata: Mapping[str, str] | None = None,
+) -> None:
     """Write a tensor mapping to safetensors without unrestricted pickle loading.
 
     Nested string keys are joined with ``.``. Invalid mapping keys or leaves
     raise ``TypeError``; duplicate flattened names raise ``ValueError``.
     Both are rejected before the destination is written.
+    Optional ``metadata`` writes a string-to-string mapping to ``__metadata__``.
+    Non-mappings and non-string keys or values raise ``TypeError``. Invalid
+    UTF-8 strings or a header exceeding 100000000 bytes raise ``ValueError``
+    before writing. Empty strings and embedded NUL characters are accepted.
+    Omitting metadata or passing ``None`` preserves the original output bytes.
     Torch is required only when this function is called.
     """
     try:
@@ -20,7 +30,22 @@ def pth_to_safetensors(source: str | os.PathLike[str], destination: str | os.Pat
         raise ImportError(
             "Checkpoint conversion requires torch; install it with pip install 'tensoracle[convert]'"
         ) from exc
-    from safetensors.torch import save_file
+    from safetensors import SafetensorError
+    from safetensors.torch import save, save_file
+
+    if metadata is not None:
+        if not isinstance(metadata, Mapping):
+            raise TypeError("Metadata must be a mapping of strings to strings")
+        normalized = {}
+        for key, value in metadata.items():
+            if not isinstance(key, str):
+                raise TypeError("Metadata keys must be strings")
+            if not isinstance(value, str):
+                raise TypeError("Metadata values must be strings")
+            key.encode("utf-8")
+            value.encode("utf-8")
+            normalized[key] = value
+        metadata = normalized
 
     try:
         checkpoint = torch.load(source, map_location="cpu", weights_only=True)
@@ -53,7 +78,21 @@ def pth_to_safetensors(source: str | os.PathLike[str], destination: str | os.Pat
         active_mappings.remove(id(mapping))
 
     flatten(checkpoint, ())
-    save_file(tensors, destination)
+    if metadata is None:
+        save_file(tensors, destination)
+    else:
+        # Serialize first so the complete padded UTF-8 header is checked before
+        # opening the destination, including with older safetensors writers.
+        try:
+            serialized = save(tensors, metadata=metadata)
+        except SafetensorError as exc:
+            raise ValueError(
+                f"Cannot serialize safetensors (header limit is 100000000 bytes): {exc}"
+            ) from exc
+        if int.from_bytes(serialized[:8], "little") > 100_000_000:
+            raise ValueError("Safetensors header exceeds 100000000 bytes")
+        with open(destination, "wb") as file:
+            file.write(serialized)
 
 
 def _main() -> None:

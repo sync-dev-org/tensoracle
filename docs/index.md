@@ -265,9 +265,18 @@ Build scripts can call the same converter:
 from tensoracle.convert import pth_to_safetensors
 
 pth_to_safetensors("model.pth", "model.safetensors")
+
+# Store inference settings in the safetensors header.
+pth_to_safetensors(
+    "model.pth",
+    "model.safetensors",
+    metadata={"scale": "4", "input_color": '{"space": "rgb"}'},
+)
 ```
 
-The input must be a mapping with string keys whose values are tensors or nested mappings. Nested keys are joined with `.`: `{"state_dict": {"layer.weight": tensor}}` becomes `state_dict.layer.weight`. The converter preserves each tensor's dtype, shape, and values, including shared or noncontiguous dense tensors. It rejects non-tensor metadata and duplicate flattened names before writing the destination. Weight renaming and model-specific preprocessing belong to the model package.
+The input must be a mapping with string keys whose values are tensors or nested mappings. Nested keys are joined with `.`: `{"state_dict": {"layer.weight": tensor}}` becomes `state_dict.layer.weight`. The converter preserves each tensor's dtype, shape, and values, including shared or noncontiguous dense tensors. It rejects non-tensor checkpoint leaves and duplicate flattened names before writing the destination. Weight renaming and model-specific preprocessing belong to the model package.
+
+The optional keyword argument `metadata` accepts a mapping of strings to strings and writes it to the header's `__metadata__`. Both `safetensors.safe_open(...).metadata()` and tensoracle's C++ weights interface read these entries. Metadata keys and values may contain empty strings, Unicode, and embedded NUL characters. Non-mappings and non-string keys or values raise `TypeError`; invalid UTF-8 strings or a complete padded header exceeding 100,000,000 bytes raise `ValueError` before the destination is written. Omitting `metadata` or passing `None` preserves the previous output bytes and writes no user metadata. The model package defines what its metadata means.
 
 The converter loads weights on the CPU with `torch.load(..., weights_only=True)` and rejects checkpoint objects instead of falling back to unrestricted pickle loading. The extra requires torch 2.6 or later, which includes the fix for [CVE-2025-32434](https://github.com/pytorch/pytorch/security/advisories/GHSA-53q9-r3pm-6pq6). Torch is imported only when conversion is called; it is absent from the package's required dependencies and is not imported by engine building or reuse. Calling the converter without torch raises `ImportError` with the installation command for `tensoracle[convert]`.
 
